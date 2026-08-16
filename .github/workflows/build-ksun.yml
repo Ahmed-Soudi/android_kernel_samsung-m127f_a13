@@ -1,0 +1,464 @@
+name: Build M127F - KSUN v3.3.0
+
+on:
+  push:
+    branches:
+      - ksun-3.3.0-susfs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    env:
+      ARCH: arm64
+      PLATFORM_VERSION: "13"
+      ANDROID_MAJOR_VERSION: t
+      DEFCONFIG: exynos850-m12nsxx_defconfig
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ksun-3.3.0-susfs
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Show repository state
+        run: |
+          set -euxo pipefail
+
+          echo "=== Branch ==="
+          git branch --show-current
+
+          echo "=== Kernel commit ==="
+          git log -1 --oneline
+
+          echo "=== Submodules ==="
+          git submodule status
+
+          echo "=== KernelSU-Next ==="
+          git -C KernelSU-Next rev-parse HEAD
+          git -C KernelSU-Next log -1 --oneline
+          git -C KernelSU-Next describe --tags --exact-match
+
+          EXPECTED_KSUN_SHA="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+          ACTUAL_KSUN_SHA="$(git -C KernelSU-Next rev-parse HEAD)"
+
+          test "$ACTUAL_KSUN_SHA" = "$EXPECTED_KSUN_SHA"
+          test "$(git -C KernelSU-Next describe --tags --exact-match)" = "v3.3.0"
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            curl \
+            flex \
+            git \
+            libelf-dev \
+            libssl-dev \
+            python3 \
+            unzip \
+            zip \
+            gcc-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu
+
+      - name: Download Android Clang r383902
+        run: |
+          set -euxo pipefail
+
+          mkdir -p "$HOME/toolchain"
+
+          curl -L \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902.tar.gz" \
+            -o /tmp/clang-r383902.tar.gz
+
+          tar -xf /tmp/clang-r383902.tar.gz \
+            -C "$HOME/toolchain"
+
+          echo "=== clang ==="
+          "$HOME/toolchain/bin/clang" --version
+
+          echo "=== GNU linker ==="
+          aarch64-linux-gnu-ld --version | head
+
+          echo "=== GNU assembler ==="
+          aarch64-linux-gnu-as --version | head
+
+      - name: Verify source integration
+        run: |
+          set -euxo pipefail
+
+          echo "=== drivers/kernelsu ==="
+          ls -ld drivers/kernelsu
+          readlink drivers/kernelsu
+
+          test -L drivers/kernelsu
+          test -f drivers/kernelsu/Kbuild
+          test -f drivers/kernelsu/Kconfig
+
+          echo
+          echo "=== drivers Makefile wiring ==="
+
+          grep -n -F \
+            'obj-$(CONFIG_KSU) += kernelsu/' \
+            drivers/Makefile
+
+          echo
+          echo "=== drivers Kconfig wiring ==="
+
+          grep -n -F \
+            'source "drivers/kernelsu/Kconfig"' \
+            drivers/Kconfig
+
+          echo
+          echo "=== SELinux Hide build entry ==="
+
+          grep -n \
+            'feature/selinux_hide.o' \
+            KernelSU-Next/kernel/Kbuild
+
+          test -f \
+            KernelSU-Next/kernel/feature/selinux_hide.c
+
+      - name: Show requested M127F configuration
+        run: |
+          set -euxo pipefail
+
+          CFG="arch/arm64/configs/$DEFCONFIG"
+
+          echo "=== Requested KSUN settings ==="
+
+          grep -n -E \
+            'CONFIG_(KPROBES|KRETPROBES|KSU|EXT4_FS|HAVE_SYSCALL_TRACEPOINTS)' \
+            "$CFG" \
+            || true
+
+          echo
+          echo "=== Relevant source capabilities ==="
+
+          grep -n \
+            'select HAVE_SYSCALL_TRACEPOINTS' \
+            arch/arm64/Kconfig \
+            || true
+
+          grep -n \
+            'select HAVE_KPROBES' \
+            arch/arm64/Kconfig \
+            || true
+
+          grep -n \
+            'select HAVE_KRETPROBES' \
+            arch/arm64/Kconfig \
+            || true
+
+      - name: Configure M127F kernel
+        run: |
+          set -euxo pipefail
+
+          export PATH="$HOME/toolchain/bin:$PATH"
+
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          make \
+            ARCH="$ARCH" \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            "$DEFCONFIG" \
+            2>&1 | tee configure.log
+
+          echo
+          echo "=== Generated KSUN configuration ==="
+
+          grep -E \
+            'CONFIG_(KSU|KPROBES|KRETPROBES|EXT4_FS|HAVE_SYSCALL_TRACEPOINTS)' \
+            .config \
+            || true
+
+          echo
+          echo "=== SELinux configuration ==="
+
+          grep \
+            'CONFIG_SECURITY_SELINUX' \
+            .config \
+            || true
+
+      - name: Validate generated configuration
+        run: |
+          set -euxo pipefail
+
+          echo "=== Required ==="
+
+          grep '^CONFIG_KSU=y$' .config
+          grep '^CONFIG_KPROBES=y$' .config
+          grep '^CONFIG_EXT4_FS=y$' .config
+
+          echo
+          echo "=== Kretprobes must remain disabled ==="
+
+          if grep -q '^CONFIG_KRETPROBES=y$' .config; then
+            echo "ERROR: CONFIG_KRETPROBES became enabled"
+            exit 1
+          fi
+
+          grep \
+            '^# CONFIG_KRETPROBES is not set$' \
+            .config \
+            || true
+
+          echo
+          echo "=== Syscall tracepoints ==="
+
+          grep \
+            '^CONFIG_HAVE_SYSCALL_TRACEPOINTS=y$' \
+            .config
+
+          echo
+          echo "Configuration accepted."
+
+      - name: Verify compiler target
+        run: |
+          set -euxo pipefail
+
+          export PATH="$HOME/toolchain/bin:$PATH"
+
+          which clang
+          clang --version
+
+          echo | clang \
+            --target=aarch64-linux-gnu \
+            -dM \
+            -E \
+            - \
+            | grep -E \
+              '__aarch64__|__AARCH64'
+
+      - name: Build M127F kernel
+        id: kernel_build
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          export PATH="$HOME/toolchain/bin:$PATH"
+
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          echo "=== Starting build ==="
+
+          set +e
+
+          make \
+            ARCH="$ARCH" \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            -j"$(nproc)" \
+            2>&1 | tee build.log
+
+          BUILD_RC=${PIPESTATUS[0]}
+
+          set -e
+
+          echo
+          echo "=== Build exit code ==="
+          echo "$BUILD_RC"
+
+          echo "build_rc=$BUILD_RC" >> "$GITHUB_OUTPUT"
+
+          echo
+          echo "=== First compiler errors ==="
+
+          grep -n -m 40 -E \
+            '(^|: )(fatal error:|error:|undefined reference|Error [0-9]+|No rule to make target)' \
+            build.log \
+            || true
+
+          echo
+          echo "=== KernelSU-related output ==="
+
+          grep -n -E \
+            'KernelSU|kernelsu|selinux_hide|SELinux Hide' \
+            build.log \
+            | tail -n 200 \
+            || true
+
+          echo
+          echo "=== Last 250 build lines ==="
+
+          tail -n 250 build.log
+
+          exit "$BUILD_RC"
+
+      - name: Inspect KernelSU build products
+        if: always()
+        run: |
+          set +e
+
+          echo "=== KernelSU object files ==="
+
+          find KernelSU-Next/kernel drivers/kernelsu \
+            -type f \
+            -name '*.o' \
+            -print \
+            2>/dev/null \
+            | sort \
+            | head -n 300
+
+          echo
+          echo "=== SELinux Hide object ==="
+
+          find . \
+            -type f \
+            -name 'selinux_hide.o' \
+            -print \
+            2>/dev/null
+
+          echo
+          echo "=== KernelSU aggregate object ==="
+
+          find . \
+            -type f \
+            \( \
+              -name 'kernelsu.o' \
+              -o -name 'built-in.a' \
+            \) \
+            -path '*kernelsu*' \
+            -print \
+            2>/dev/null \
+            | head -n 100
+
+      - name: Verify native SELinux Hide compiled
+        if: steps.kernel_build.outputs.build_rc == '0'
+        run: |
+          set -euxo pipefail
+
+          SELINUX_HIDE_OBJECT="$(
+            find . \
+              -type f \
+              -name 'selinux_hide.o' \
+              -print -quit
+          )"
+
+          if [ -z "$SELINUX_HIDE_OBJECT" ]; then
+            echo "ERROR: kernel built but selinux_hide.o does not exist"
+            exit 1
+          fi
+
+          echo "=== Native SELinux Hide object ==="
+          echo "$SELINUX_HIDE_OBJECT"
+
+          ls -lh "$SELINUX_HIDE_OBJECT"
+
+      - name: Verify final kernel Image
+        if: steps.kernel_build.outputs.build_rc == '0'
+        run: |
+          set -euxo pipefail
+
+          echo "=== arch/arm64/boot ==="
+          ls -lah arch/arm64/boot
+
+          test -f arch/arm64/boot/Image
+
+          echo
+          echo "=== Kernel Image ==="
+          ls -lh arch/arm64/boot/Image
+
+      - name: Create diagnostics directory
+        if: always()
+        run: |
+          set +e
+
+          rm -rf diagnostics
+          mkdir -p diagnostics
+
+          cp .config \
+            diagnostics/config.txt \
+            2>/dev/null || true
+
+          cp configure.log \
+            diagnostics/configure.log \
+            2>/dev/null || true
+
+          cp build.log \
+            diagnostics/build.log \
+            2>/dev/null || true
+
+          git log -5 --oneline \
+            > diagnostics/kernel-commits.txt \
+            2>/dev/null || true
+
+          git submodule status \
+            > diagnostics/submodules.txt \
+            2>/dev/null || true
+
+          {
+            echo "=== KernelSU tag ==="
+            git -C KernelSU-Next describe --tags --exact-match \
+              2>/dev/null || true
+
+            echo
+            echo "=== KernelSU SHA ==="
+            git -C KernelSU-Next rev-parse HEAD \
+              2>/dev/null || true
+
+            echo
+            echo "=== Generated KSU config ==="
+            grep -E \
+              'CONFIG_(KSU|KPROBES|KRETPROBES|EXT4_FS|HAVE_SYSCALL_TRACEPOINTS)' \
+              .config \
+              2>/dev/null || true
+
+            echo
+            echo "=== SELinux Hide source entry ==="
+            grep -n \
+              'feature/selinux_hide.o' \
+              KernelSU-Next/kernel/Kbuild \
+              2>/dev/null || true
+
+            echo
+            echo "=== SELinux Hide object ==="
+            find . \
+              -type f \
+              -name 'selinux_hide.o' \
+              -print \
+              2>/dev/null || true
+          } > diagnostics/ksun-state.txt
+
+          echo "=== Diagnostics files ==="
+          find diagnostics \
+            -maxdepth 1 \
+            -type f \
+            -ls
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: M127F-KSUN-v3.3.0-Build-Diagnostics
+          path: diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload kernel Image
+        if: steps.kernel_build.outputs.build_rc == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: M127F-KSUN-v3.3.0-Image
+          path: arch/arm64/boot/Image
+          if-no-files-found: error
+          compression-level: 0
