@@ -1,6 +1,9 @@
 name: Bootstrap KSUN v3.3.0 Source
 
 on:
+  push:
+    branches:
+      - ksun-3.3.0-susfs
   workflow_dispatch:
 
 permissions:
@@ -31,7 +34,21 @@ jobs:
           echo "=== Current commit ==="
           git log -1 --oneline
 
+      - name: Check whether KSUN is already bootstrapped
+        id: state
+        run: |
+          set -euxo pipefail
+
+          if [ -e KernelSU-Next ] || [ -e drivers/kernelsu ]; then
+            echo "already_bootstrapped=true" >> "$GITHUB_OUTPUT"
+            echo "KernelSU integration already exists; bootstrap will be skipped."
+          else
+            echo "already_bootstrapped=false" >> "$GITHUB_OUTPUT"
+            echo "Clean branch detected; bootstrap will proceed."
+          fi
+
       - name: Add KernelSU-Next v3.3.0 submodule
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -53,20 +70,21 @@ jobs:
 
           test "$(git -C KernelSU-Next describe --tags --exact-match)" = "v3.3.0"
 
-          git -C KernelSU-Next rev-parse HEAD
-          git -C KernelSU-Next log -1 --oneline
-
           EXPECTED_SHA="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           ACTUAL_SHA="$(git -C KernelSU-Next rev-parse HEAD)"
 
+          echo "Expected: $EXPECTED_SHA"
+          echo "Actual:   $ACTUAL_SHA"
+
           if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
             echo "ERROR: Unexpected KernelSU-Next v3.3.0 commit"
-            echo "Expected: $EXPECTED_SHA"
-            echo "Actual:   $ACTUAL_SHA"
             exit 1
           fi
 
+          git -C KernelSU-Next log -1 --oneline
+
       - name: Add KernelSU driver symlink
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -84,6 +102,7 @@ jobs:
           readlink drivers/kernelsu
 
       - name: Integrate KernelSU into kernel build system
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -145,6 +164,7 @@ jobs:
           grep -F 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
       - name: Configure KSUN for M127F
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -158,13 +178,6 @@ jobs:
 
           s = p.read_text()
 
-          settings = [
-              "CONFIG_KPROBES=y",
-              "# CONFIG_KRETPROBES is not set",
-              "CONFIG_KSU=y",
-          ]
-
-          # Remove any previous conflicting entries before appending
           prefixes = [
               "CONFIG_KPROBES=",
               "# CONFIG_KPROBES is not set",
@@ -174,27 +187,29 @@ jobs:
               "# CONFIG_KSU is not set",
           ]
 
-          lines = s.splitlines()
-
           cleaned = []
 
-          for line in lines:
-              if any(
-                  line == prefix or
-                  (
-                      prefix.endswith("=") and
-                      line.startswith(prefix)
-                  )
-                  for prefix in prefixes
-              ):
-                  continue
+          for line in s.splitlines():
+              remove = False
 
-              cleaned.append(line)
+              for prefix in prefixes:
+                  if prefix.endswith("="):
+                      if line.startswith(prefix):
+                          remove = True
+                          break
+                  elif line == prefix:
+                      remove = True
+                      break
+
+              if not remove:
+                  cleaned.append(line)
 
           cleaned += [
               "",
               "# KernelSU-Next v3.3.0",
-              *settings,
+              "CONFIG_KPROBES=y",
+              "# CONFIG_KRETPROBES is not set",
+              "CONFIG_KSU=y",
           ]
 
           p.write_text("\n".join(cleaned) + "\n")
@@ -219,6 +234,7 @@ jobs:
             arch/arm64/configs/exynos850-m12nsxx_defconfig
 
       - name: Verify native SELinux Hide remains included
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -238,6 +254,7 @@ jobs:
           echo "=== Native SELinux Hide retained ==="
 
       - name: Show complete source changes
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -245,13 +262,13 @@ jobs:
           git status --short
 
           echo "=== Diff ==="
-          git diff -- . \
-            ':!KernelSU-Next'
+          git diff -- . ':!KernelSU-Next'
 
           echo "=== Submodule status ==="
           git submodule status
 
       - name: Commit source integration
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -272,6 +289,7 @@ jobs:
           git log -1 --stat --oneline
 
       - name: Push target branch
+        if: steps.state.outputs.already_bootstrapped == 'false'
         run: |
           set -euxo pipefail
 
@@ -279,3 +297,10 @@ jobs:
             HEAD:ksun-3.3.0-susfs
 
           echo "=== Bootstrap complete ==="
+
+      - name: Already bootstrapped
+        if: steps.state.outputs.already_bootstrapped == 'true'
+        run: |
+          echo "KSUN bootstrap already exists."
+          echo "No source changes were made."
+          echo "This prevents the workflow from repeatedly bootstrapping itself."
