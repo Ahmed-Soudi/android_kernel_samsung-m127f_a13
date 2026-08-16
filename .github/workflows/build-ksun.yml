@@ -109,21 +109,18 @@ jobs:
 
           echo
           echo "=== drivers Makefile wiring ==="
-
           grep -n -F \
             'obj-$(CONFIG_KSU) += kernelsu/' \
             drivers/Makefile
 
           echo
           echo "=== drivers Kconfig wiring ==="
-
           grep -n -F \
             'source "drivers/kernelsu/Kconfig"' \
             drivers/Kconfig
 
           echo
           echo "=== SELinux Hide build entry ==="
-
           grep -n \
             'feature/selinux_hide.o' \
             KernelSU-Next/kernel/Kbuild
@@ -204,27 +201,10 @@ jobs:
 
           grep '^CONFIG_KSU=y$' .config
           grep '^CONFIG_KPROBES=y$' .config
+          grep '^CONFIG_KRETPROBES=y$' .config
           grep '^CONFIG_EXT4_FS=y$' .config
-
-          echo
-          echo "=== Kretprobes must remain disabled ==="
-
-          if grep -q '^CONFIG_KRETPROBES=y$' .config; then
-            echo "ERROR: CONFIG_KRETPROBES became enabled"
-            exit 1
-          fi
-
-          grep \
-            '^# CONFIG_KRETPROBES is not set$' \
-            .config \
-            || true
-
-          echo
-          echo "=== Syscall tracepoints ==="
-
-          grep \
-            '^CONFIG_HAVE_SYSCALL_TRACEPOINTS=y$' \
-            .config
+          grep '^CONFIG_HAVE_SYSCALL_TRACEPOINTS=y$' .config
+          grep '^CONFIG_SECURITY_SELINUX=y$' .config
 
           echo
           echo "Configuration accepted."
@@ -283,7 +263,7 @@ jobs:
           echo
           echo "=== First compiler errors ==="
 
-          grep -n -m 40 -E \
+          grep -n -m 60 -E \
             '(^|: )(fatal error:|error:|undefined reference|Error [0-9]+|No rule to make target)' \
             build.log \
             || true
@@ -294,13 +274,13 @@ jobs:
           grep -n -E \
             'KernelSU|kernelsu|selinux_hide|SELinux Hide' \
             build.log \
-            | tail -n 200 \
+            | tail -n 250 \
             || true
 
           echo
-          echo "=== Last 250 build lines ==="
+          echo "=== Last 300 build lines ==="
 
-          tail -n 250 build.log
+          tail -n 300 build.log
 
           exit "$BUILD_RC"
 
@@ -317,7 +297,7 @@ jobs:
             -print \
             2>/dev/null \
             | sort \
-            | head -n 300
+            | head -n 400
 
           echo
           echo "=== SELinux Hide object ==="
@@ -340,7 +320,7 @@ jobs:
             -path '*kernelsu*' \
             -print \
             2>/dev/null \
-            | head -n 100
+            | head -n 150
 
       - name: Verify native SELinux Hide compiled
         if: steps.kernel_build.outputs.build_rc == '0'
@@ -424,6 +404,13 @@ jobs:
               2>/dev/null || true
 
             echo
+            echo "=== SELinux config ==="
+            grep \
+              '^CONFIG_SECURITY_SELINUX=y$' \
+              .config \
+              2>/dev/null || true
+
+            echo
             echo "=== SELinux Hide source entry ==="
             grep -n \
               'feature/selinux_hide.o' \
@@ -436,6 +423,13 @@ jobs:
               -type f \
               -name 'selinux_hide.o' \
               -print \
+              2>/dev/null || true
+
+            echo
+            echo "=== First compiler errors ==="
+            grep -n -m 100 -E \
+              '(^|: )(fatal error:|error:|undefined reference|Error [0-9]+|No rule to make target)' \
+              build.log \
               2>/dev/null || true
           } > diagnostics/ksun-state.txt
 
