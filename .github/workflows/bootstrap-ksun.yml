@@ -1,0 +1,281 @@
+name: Bootstrap KSUN v3.3.0 Source
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: ksun-3.3.0-susfs
+          fetch-depth: 0
+          submodules: false
+
+      - name: Configure Git
+        run: |
+          set -euxo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "=== Current branch ==="
+          git branch --show-current
+
+          echo "=== Current commit ==="
+          git log -1 --oneline
+
+      - name: Add KernelSU-Next v3.3.0 submodule
+        run: |
+          set -euxo pipefail
+
+          test ! -e KernelSU-Next
+          test ! -e drivers/kernelsu
+
+          echo "=== Add official KernelSU-Next repository ==="
+
+          git submodule add \
+            https://github.com/KernelSU-Next/KernelSU-Next.git \
+            KernelSU-Next
+
+          echo "=== Pin exactly v3.3.0 ==="
+
+          git -C KernelSU-Next fetch --tags --force origin
+          git -C KernelSU-Next checkout --detach v3.3.0
+
+          echo "=== Verify exact tag ==="
+
+          test "$(git -C KernelSU-Next describe --tags --exact-match)" = "v3.3.0"
+
+          git -C KernelSU-Next rev-parse HEAD
+          git -C KernelSU-Next log -1 --oneline
+
+          EXPECTED_SHA="3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+          ACTUAL_SHA="$(git -C KernelSU-Next rev-parse HEAD)"
+
+          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+            echo "ERROR: Unexpected KernelSU-Next v3.3.0 commit"
+            echo "Expected: $EXPECTED_SHA"
+            echo "Actual:   $ACTUAL_SHA"
+            exit 1
+          fi
+
+      - name: Add KernelSU driver symlink
+        run: |
+          set -euxo pipefail
+
+          echo "=== Create drivers/kernelsu symlink ==="
+
+          ln -s ../KernelSU-Next/kernel drivers/kernelsu
+
+          test -L drivers/kernelsu
+          test -f drivers/kernelsu/Kbuild
+          test -f drivers/kernelsu/Kconfig
+          test -f drivers/kernelsu/feature/selinux_hide.c
+
+          echo "=== Symlink ==="
+          ls -ld drivers/kernelsu
+          readlink drivers/kernelsu
+
+      - name: Integrate KernelSU into kernel build system
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          makefile = Path("drivers/Makefile")
+          kconfig = Path("drivers/Kconfig")
+
+          m = makefile.read_text()
+
+          make_line = "obj-$(CONFIG_KSU) += kernelsu/\n"
+
+          if make_line not in m:
+              if not m.endswith("\n"):
+                  m += "\n"
+
+              m += "\n"
+              m += "# KernelSU-Next\n"
+              m += make_line
+
+              makefile.write_text(m)
+
+          k = kconfig.read_text()
+
+          source_line = 'source "drivers/kernelsu/Kconfig"\n'
+
+          if source_line not in k:
+              marker = "endmenu"
+
+              pos = k.rfind(marker)
+
+              if pos < 0:
+                  raise SystemExit(
+                      "Could not find final endmenu in drivers/Kconfig"
+                  )
+
+              insert = (
+                  "\n"
+                  "# KernelSU-Next\n"
+                  + source_line +
+                  "\n"
+              )
+
+              k = k[:pos] + insert + k[pos:]
+
+              kconfig.write_text(k)
+
+          print("KernelSU build wiring added")
+          PY
+
+          echo "=== drivers/Makefile ==="
+          tail -n 20 drivers/Makefile
+
+          echo "=== drivers/Kconfig ==="
+          tail -n 30 drivers/Kconfig
+
+          grep -F 'obj-$(CONFIG_KSU) += kernelsu/' drivers/Makefile
+          grep -F 'source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+
+      - name: Configure KSUN for M127F
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path(
+              "arch/arm64/configs/"
+              "exynos850-m12nsxx_defconfig"
+          )
+
+          s = p.read_text()
+
+          settings = [
+              "CONFIG_KPROBES=y",
+              "# CONFIG_KRETPROBES is not set",
+              "CONFIG_KSU=y",
+          ]
+
+          # Remove any previous conflicting entries before appending
+          prefixes = [
+              "CONFIG_KPROBES=",
+              "# CONFIG_KPROBES is not set",
+              "CONFIG_KRETPROBES=",
+              "# CONFIG_KRETPROBES is not set",
+              "CONFIG_KSU=",
+              "# CONFIG_KSU is not set",
+          ]
+
+          lines = s.splitlines()
+
+          cleaned = []
+
+          for line in lines:
+              if any(
+                  line == prefix or
+                  (
+                      prefix.endswith("=") and
+                      line.startswith(prefix)
+                  )
+                  for prefix in prefixes
+              ):
+                  continue
+
+              cleaned.append(line)
+
+          cleaned += [
+              "",
+              "# KernelSU-Next v3.3.0",
+              *settings,
+          ]
+
+          p.write_text("\n".join(cleaned) + "\n")
+
+          print("M127F KernelSU configuration added")
+          PY
+
+          echo "=== KernelSU config ==="
+
+          grep -E \
+            'CONFIG_(KPROBES|KRETPROBES|KSU)' \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig \
+            || true
+
+          grep '^CONFIG_KPROBES=y$' \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+          grep '^# CONFIG_KRETPROBES is not set$' \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+          grep '^CONFIG_KSU=y$' \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+      - name: Verify native SELinux Hide remains included
+        run: |
+          set -euxo pipefail
+
+          echo "=== Native SELinux Hide source ==="
+
+          test -f KernelSU-Next/kernel/feature/selinux_hide.c
+          test -f KernelSU-Next/kernel/feature/selinux_hide.h
+
+          grep -n \
+            'feature/selinux_hide.o' \
+            KernelSU-Next/kernel/Kbuild
+
+          grep -n \
+            'ksu_selinux_hide_enable' \
+            KernelSU-Next/kernel/feature/selinux_hide.c
+
+          echo "=== Native SELinux Hide retained ==="
+
+      - name: Show complete source changes
+        run: |
+          set -euxo pipefail
+
+          echo "=== Git status ==="
+          git status --short
+
+          echo "=== Diff ==="
+          git diff -- . \
+            ':!KernelSU-Next'
+
+          echo "=== Submodule status ==="
+          git submodule status
+
+      - name: Commit source integration
+        run: |
+          set -euxo pipefail
+
+          git add \
+            .gitmodules \
+            KernelSU-Next \
+            drivers/kernelsu \
+            drivers/Makefile \
+            drivers/Kconfig \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+          git status --short
+
+          git commit \
+            -m "Integrate KernelSU-Next v3.3.0 source"
+
+          echo "=== Created commit ==="
+          git log -1 --stat --oneline
+
+      - name: Push target branch
+        run: |
+          set -euxo pipefail
+
+          git push origin \
+            HEAD:ksun-3.3.0-susfs
+
+          echo "=== Bootstrap complete ==="
