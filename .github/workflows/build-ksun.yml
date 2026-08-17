@@ -385,28 +385,6 @@ jobs:
           )
           PY
 
-          echo
-          echo "=== Verify file_wrapper compatibility ==="
-
-          grep -n -A4 -B4 \
-            'ksu_wrapper_iopoll' \
-            KernelSU-Next/kernel/infra/file_wrapper.c \
-            | head -80
-
-          grep -n -A8 -B8 \
-            'ksu_wrapper_remap_file_range' \
-            KernelSU-Next/kernel/infra/file_wrapper.c \
-            | head -120
-
-          grep -n -A35 -B5 \
-            'ksu_anon_inode_make_secure_inode' \
-            KernelSU-Next/kernel/infra/file_wrapper.c \
-            | head -100
-
-          grep -n -A8 -B5 \
-            'wrapper_sec' \
-            KernelSU-Next/kernel/infra/file_wrapper.c
-
       - name: Backport KSUN package observer to Samsung 4.19 fsnotify
         run: |
           set -euxo pipefail
@@ -428,7 +406,7 @@ jobs:
           #include <linux/slab.h>
           #include <linux/rculist.h>
           #include <linux/version.h>
-          #include "klog.h" // IWYU pragma: keep
+          #include "klog.h"
           #include "manager/throne_tracker.h"
 
           #define MASK_SYSTEM \
@@ -444,20 +422,6 @@ jobs:
 
           static struct fsnotify_group *g;
 
-          /*
-           * Samsung M127F Android 13 uses Linux 4.19.
-           *
-           * Samsung's tree provides the legacy:
-           *
-           * fsnotify_ops::handle_event
-           *
-           * KernelSU-Next v3.3.0 expects the newer:
-           *
-           * fsnotify_ops::handle_inode_event
-           *
-           * The observer only needs the event mask and
-           * filename, so use Samsung's native ABI.
-           */
           static int
           ksu_handle_event(
               struct fsnotify_group *group,
@@ -693,17 +657,17 @@ jobs:
           echo
           echo "=== Verify Samsung callback ==="
 
-          grep -n \
-            '\.handle_event = ksu_handle_event' \
+          grep -nE \
+            '^[[:space:]]*\.handle_event[[:space:]]*=[[:space:]]*ksu_handle_event' \
             KernelSU-Next/kernel/manager/pkg_observer.c
 
           echo
-          echo "=== Ensure modern callback removed ==="
+          echo "=== Ensure modern callback assignment is absent ==="
 
-          if grep -n \
-            'handle_inode_event' \
+          if grep -nE \
+            '^[[:space:]]*\.handle_inode_event[[:space:]]*=' \
             KernelSU-Next/kernel/manager/pkg_observer.c; then
-            echo "ERROR: modern fsnotify callback still exists"
+            echo "ERROR: modern fsnotify callback assignment still exists"
             exit 1
           fi
 
@@ -728,40 +692,17 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             exynos850-m12nsxx_defconfig
 
-          echo
-          echo "=== Kernel release configuration ==="
-
-          grep -E \
-            'CONFIG_LOCALVERSION|CONFIG_LOCALVERSION_AUTO' \
-            .config || true
-
-          echo
           echo "=== KernelSU configuration ==="
+          grep -iE 'KSU|KERNELSU' .config || true
 
-          grep -iE \
-            'KSU|KERNELSU' \
-            .config || true
-
-          echo
           echo "=== SELinux configuration ==="
+          grep -i 'CONFIG_SECURITY_SELINUX' .config || true
 
-          grep -i \
-            'CONFIG_SECURITY_SELINUX' \
-            .config || true
-
-          echo
           echo "=== SUSFS configuration ==="
+          grep -i 'SUSFS' .config || true
 
-          grep -i \
-            'SUSFS' \
-            .config || true
-
-          echo
           echo "=== KPROBE configuration ==="
-
-          grep -i \
-            'KPROBE' \
-            .config || true
+          grep -i 'KPROBE' .config || true
 
       - name: Verify compiler environment
         run: |
@@ -769,25 +710,14 @@ jobs:
 
           export PATH="$HOME/toolchain/bin:$PATH"
 
-          echo "=== clang ==="
-
           which clang
           clang --version
-
-          echo
-          echo "=== linker ==="
 
           which aarch64-linux-gnu-ld
           aarch64-linux-gnu-ld --version | head
 
-          echo
-          echo "=== assembler ==="
-
           which aarch64-linux-gnu-as
           aarch64-linux-gnu-as --version | head
-
-          echo
-          echo "=== compiler target test ==="
 
           echo | clang \
             --target=aarch64-linux-gnu \
@@ -822,36 +752,11 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "=== arch/arm64/boot ==="
-
-          ls -lah \
-            arch/arm64/boot/
-
-          echo
-          echo "=== Kernel images ==="
-
-          find \
-            arch/arm64/boot \
-            -maxdepth 2 \
-            -type f \
-            \( \
-              -name "Image" \
-              -o -name "Image.gz" \
-              -o -name "Image.gz-dtb" \
-            \) \
-            -ls
-
           test -s \
             arch/arm64/boot/Image
 
-          echo
-          echo "=== Final Image ==="
-
           ls -lh \
             arch/arm64/boot/Image
-
-          echo
-          echo "SHA256:"
 
           sha256sum \
             arch/arm64/boot/Image
@@ -860,7 +765,8 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "=== KernelSU build output ==="
+          test -d \
+            drivers/kernelsu
 
           find \
             drivers/kernelsu \
@@ -871,9 +777,6 @@ jobs:
             \) \
             -print \
             | head -200 || true
-
-          test -d \
-            drivers/kernelsu
 
           test -n "$(
             find \
@@ -886,8 +789,6 @@ jobs:
       - name: Verify native SELinux Hide was compiled
         run: |
           set -euxo pipefail
-
-          echo "=== Native SELinux Hide ==="
 
           SELINUX_HIDE_OBJECT="$(
             find \
@@ -902,52 +803,26 @@ jobs:
             exit 1
           fi
 
+          echo "SELinux Hide object:"
           echo "$SELINUX_HIDE_OBJECT"
 
           ls -lh \
             "$SELINUX_HIDE_OBJECT"
 
-          echo
-          echo "=== SELinux Hide references ==="
-
-          grep -Rni \
-            --include='*.c' \
-            --include='*.h' \
-            --include='Makefile' \
-            --include='Kbuild' \
-            'selinux_hide' \
-            drivers/kernelsu \
-            KernelSU-Next/kernel \
-            2>/dev/null \
-            | head -150 || true
-
       - name: Verify AnyKernel template
         run: |
           set -euxo pipefail
 
-          echo "=== AnyKernel template ==="
+          test -d anykernel
+          test -f anykernel/anykernel.sh
 
-          test -d \
-            anykernel
-
-          test -f \
-            anykernel/anykernel.sh
-
-          ls -lah \
-            anykernel/
-
-          echo
-          echo "=== anykernel.sh ==="
-
-          head -100 \
-            anykernel/anykernel.sh
+          ls -lah anykernel/
 
       - name: Prepare AnyKernel package
         run: |
           set -euxo pipefail
 
           rm -rf output
-
           mkdir -p output
 
           cp -a \
@@ -958,26 +833,8 @@ jobs:
             arch/arm64/boot/Image \
             output/Image
 
-          echo "=== Packaged Image ==="
-
-          ls -lh \
-            output/Image
-
-          echo
-          echo "=== AnyKernel package contents ==="
-
-          find \
-            output \
-            -maxdepth 3 \
-            -type f \
-            -print \
-            | sort
-
-          test -s \
-            output/Image
-
-          test -f \
-            output/anykernel.sh
+          test -s output/Image
+          test -f output/anykernel.sh
 
       - name: Create flashable ZIP
         run: |
@@ -985,8 +842,7 @@ jobs:
 
           ZIP_NAME="M127F-KSUN-v3.3.0-SELinuxHide.zip"
 
-          rm -f \
-            "$ZIP_NAME"
+          rm -f "$ZIP_NAME"
 
           cd output
 
@@ -996,25 +852,13 @@ jobs:
 
           cd ..
 
-          echo "=== Flashable ZIP ==="
+          ls -lh "$ZIP_NAME"
 
-          ls -lh \
-            "$ZIP_NAME"
+          unzip -l "$ZIP_NAME"
 
-          echo
-          echo "=== ZIP contents ==="
+          sha256sum "$ZIP_NAME"
 
-          unzip -l \
-            "$ZIP_NAME"
-
-          echo
-          echo "=== ZIP SHA256 ==="
-
-          sha256sum \
-            "$ZIP_NAME"
-
-          test -s \
-            "$ZIP_NAME"
+          test -s "$ZIP_NAME"
 
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
