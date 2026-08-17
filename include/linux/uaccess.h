@@ -155,12 +155,14 @@ copy_to_user(void __user *to, const void *from, unsigned long n)
 		n = _copy_to_user(to, from, n);
 	return n;
 }
+
 #ifdef CONFIG_COMPAT
 static __always_inline unsigned long __must_check
 copy_in_user(void __user *to, const void __user *from, unsigned long n)
 {
 	might_fault();
-	if (access_ok(VERIFY_WRITE, to, n) && access_ok(VERIFY_READ, from, n))
+	if (access_ok(VERIFY_WRITE, to, n) &&
+	    access_ok(VERIFY_READ, from, n))
 		n = raw_copy_in_user(to, from, n);
 	return n;
 }
@@ -186,6 +188,7 @@ static __always_inline void pagefault_disabled_dec(void)
 static inline void pagefault_disable(void)
 {
 	pagefault_disabled_inc();
+
 	/*
 	 * make sure to have issued the store before a pagefault
 	 * can hit.
@@ -200,6 +203,7 @@ static inline void pagefault_enable(void)
 	 * the pagefault handler again.
 	 */
 	barrier();
+
 	pagefault_disabled_dec();
 }
 
@@ -222,8 +226,10 @@ static inline void pagefault_enable(void)
 
 #ifndef ARCH_HAS_NOCACHE_UACCESS
 
-static inline unsigned long __copy_from_user_inatomic_nocache(void *to,
-				const void __user *from, unsigned long n)
+static inline unsigned long
+__copy_from_user_inatomic_nocache(void *to,
+				 const void __user *from,
+				 unsigned long n)
 {
 	return __copy_from_user_inatomic(to, from, n);
 }
@@ -251,10 +257,40 @@ extern long __probe_kernel_read(void *dst, const void *src, size_t size);
  * Safely write to address @dst from the buffer at @src.  If a kernel fault
  * happens, handle that and return -EFAULT.
  */
-extern long notrace probe_kernel_write(void *dst, const void *src, size_t size);
-extern long notrace __probe_kernel_write(void *dst, const void *src, size_t size);
+extern long notrace probe_kernel_write(void *dst,
+				      const void *src,
+				      size_t size);
+extern long notrace __probe_kernel_write(void *dst,
+					const void *src,
+					size_t size);
 
-extern long strncpy_from_unsafe(char *dst, const void *unsafe_addr, long count);
+/*
+ * Compatibility for modern in-tree users such as KernelSU-Next v3.3.0.
+ *
+ * Modern kernels expose copy_to_kernel_nofault(). Samsung 4.19 predates that
+ * helper but already has probe_kernel_write(), which provides the same return
+ * convention needed by KernelSU:
+ *
+ *     0       copy succeeded
+ *     -EFAULT a kernel memory fault occurred
+ *
+ * Keep this compatibility here in linux/uaccess.h because callers such as
+ * KernelSU's hook/arm64/patch_memory.c include this header directly.
+ */
+#ifndef copy_to_kernel_nofault
+static inline long
+copy_to_kernel_nofault(void *dst, const void *src, size_t size)
+{
+	if (unlikely(!size))
+		return 0;
+
+	return probe_kernel_write(dst, src, size);
+}
+#endif
+
+extern long strncpy_from_unsafe(char *dst,
+				const void *unsafe_addr,
+				long count);
 
 /**
  * probe_kernel_address(): safely attempt to read from a location
@@ -269,17 +305,28 @@ extern long strncpy_from_unsafe(char *dst, const void *unsafe_addr, long count);
 #ifndef user_access_begin
 #define user_access_begin(type, ptr, len) access_ok(type, ptr, len)
 #define user_access_end() do { } while (0)
-#define unsafe_get_user(x, ptr, err) do { if (unlikely(__get_user(x, ptr))) goto err; } while (0)
-#define unsafe_put_user(x, ptr, err) do { if (unlikely(__put_user(x, ptr))) goto err; } while (0)
-static inline unsigned long user_access_save(void) { return 0UL; }
-static inline void user_access_restore(unsigned long flags) { }
+#define unsafe_get_user(x, ptr, err) \
+	do { if (unlikely(__get_user(x, ptr))) goto err; } while (0)
+#define unsafe_put_user(x, ptr, err) \
+	do { if (unlikely(__put_user(x, ptr))) goto err; } while (0)
+
+static inline unsigned long user_access_save(void)
+{
+	return 0UL;
+}
+
+static inline void user_access_restore(unsigned long flags)
+{
+}
 #endif
 
 #ifdef CONFIG_HARDENED_USERCOPY
 void usercopy_warn(const char *name, const char *detail, bool to_user,
 		   unsigned long offset, unsigned long len);
+
 void __noreturn usercopy_abort(const char *name, const char *detail,
-			       bool to_user, unsigned long offset,
+			       bool to_user,
+			       unsigned long offset,
 			       unsigned long len);
 #endif
 
