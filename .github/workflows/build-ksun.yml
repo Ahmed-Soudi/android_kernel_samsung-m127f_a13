@@ -428,6 +428,7 @@ jobs:
           from pathlib import Path
 
           candidates = [
+              Path("KernelSU-Next/kernel/feature/sucompat.c"),
               Path("KernelSU-Next/kernel/sucompat.c"),
               Path("KernelSU-Next/kernel/core/sucompat.c"),
           ]
