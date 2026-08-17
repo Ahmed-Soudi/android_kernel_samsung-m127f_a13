@@ -420,86 +420,14 @@ jobs:
           grep -q '#define SECCOMP_ARCH_NATIVE_NR NR_syscalls' \
             KernelSU-Next/kernel/infra/seccomp_cache.c
 
-      - name: Backport strncpy_from_user_nofault for Samsung 4.19
+      - name: Verify existing strncpy_from_user_nofault backport
         run: |
           set -euxo pipefail
 
-          python3 - <<'PY'
-          from pathlib import Path
-
-          candidates = [
-              Path("KernelSU-Next/kernel/feature/sucompat.c"),
-              Path("KernelSU-Next/kernel/sucompat.c"),
-              Path("KernelSU-Next/kernel/core/sucompat.c"),
-          ]
-          p = next((x for x in candidates if x.is_file()), None)
-          if p is None:
-              raise SystemExit(
-                  "sucompat.c not found in expected KSUN v3.3.0 locations"
-              )
-
-          s = p.read_text()
-
-          if "strncpy_from_user_nofault(" not in s:
-              print("sucompat.c does not use strncpy_from_user_nofault; no patch needed")
-              raise SystemExit(0)
-
-          if "#include <linux/uaccess.h>" not in s:
-              lines = s.splitlines(keepends=True)
-              first_linux_include = next(
-                  (i for i, line in enumerate(lines) if line.startswith("#include <linux/")),
-                  None,
-              )
-              if first_linux_include is None:
-                  raise SystemExit("could not find Linux include block in sucompat.c")
-              lines.insert(first_linux_include, "#include <linux/uaccess.h>\n")
-              s = "".join(lines)
-
-          if "#include <linux/version.h>" not in s:
-              s = s.replace(
-                  "#include <linux/uaccess.h>\n",
-                  "#include <linux/uaccess.h>\n#include <linux/version.h>\n",
-                  1,
-              )
-
-          compat = r'''
-          /*
-           * Samsung's 4.19 tree does not provide strncpy_from_user_nofault().
-           * Use the older uaccess helper available in this kernel as the
-           * compatibility implementation required by KSUN v3.3.0.
-           */
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
-          static long ksu_strncpy_from_user_nofault(char *dst,
-                                                     const void __user *src,
-                                                     long count)
-          {
-              return strncpy_from_user(dst, src, count);
-          }
-          #define strncpy_from_user_nofault ksu_strncpy_from_user_nofault
-          #endif
-
-          '''
-
-          sentinel = "#define strncpy_from_user_nofault ksu_strncpy_from_user_nofault"
-          if sentinel not in s:
-              lines = s.splitlines(keepends=True)
-              last_include = -1
-              for i, line in enumerate(lines):
-                  if line.startswith("#include "):
-                      last_include = i
-              if last_include < 0:
-                  raise SystemExit("no include block found in sucompat.c")
-              lines.insert(last_include + 1, compat)
-              s = "".join(lines)
-
-          p.write_text(s)
-
-          print("Patched:", p)
-          print("=== strncpy_from_user_nofault compatibility ===")
-          for i, line in enumerate(s.splitlines(), 1):
-              if "strncpy_from_user_nofault" in line:
-                  print(f"{i}: {line}")
-          PY
+          # This Samsung 4.19 tree already carries the compatibility helper
+          # in include/linux/pgtable.h. Do not redefine it in KSUN sucompat.c.
+          grep -n "ksu_strncpy_from_user_nofault" include/linux/pgtable.h
+          grep -n "strncpy_from_user_nofault" KernelSU-Next/kernel/feature/sucompat.c
 
       - name: Configure M127F kernel
         run: |
