@@ -429,6 +429,83 @@ jobs:
           grep -n "ksu_strncpy_from_user_nofault" include/linux/pgtable.h
           grep -n "strncpy_from_user_nofault" KernelSU-Next/kernel/feature/sucompat.c
 
+      - name: Backport KSUN mount namespace code to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/infra/su_mount_ns.c")
+          s = p.read_text()
+
+          old_include = '#include <uapi/linux/mount.h>\n'
+          new_include = (
+              '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\n'
+              '#include <uapi/linux/mount.h>\n'
+              '#endif\n'
+          )
+
+          if old_include in s and '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\n#include <uapi/linux/mount.h>' not in s:
+              s = s.replace(old_include, new_include, 1)
+
+          old_extern = (
+              'extern int path_mount(const char *dev_name, struct path *path,\n'
+              '                      const char *type_page, unsigned long flags,\n'
+              '                      void *data_page);\n'
+          )
+          new_extern = (
+              '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\n'
+              'extern int path_mount(const char *dev_name, struct path *path,\n'
+              '                      const char *type_page, unsigned long flags,\n'
+              '                      void *data_page);\n'
+              '#endif\n'
+          )
+
+          if old_extern in s and '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\nextern int path_mount' not in s:
+              s = s.replace(old_extern, new_extern, 1)
+
+          fn_start = s.find("static void ksu_mnt_ns_individual(void)\n{")
+          if fn_start == -1:
+              raise SystemExit("ksu_mnt_ns_individual() not found")
+
+          fn_end_marker = "\n}\n\nvoid setup_mount_ns"
+          fn_end = s.find(fn_end_marker, fn_start)
+          if fn_end == -1:
+              raise SystemExit("end of ksu_mnt_ns_individual() not found")
+
+          old_fn = s[fn_start:fn_end + 2]
+
+          if "Samsung 4.19: individual mount namespace mode is unavailable" not in old_fn:
+              prefix = "static void ksu_mnt_ns_individual(void)\n{"
+              body = old_fn[len(prefix):-2]
+              new_fn = (
+                  "static void ksu_mnt_ns_individual(void)\n"
+                  "{\n"
+                  "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)\n"
+                  "    /*\n"
+                  "     * Samsung 4.19 does not provide the path_mount() VFS API used by\n"
+                  "     * modern KSUN. Keep inherited/global namespace support working\n"
+                  "     * and gracefully skip individual namespace mode on this kernel.\n"
+                  "     */\n"
+                  "    pr_warn(\"Samsung 4.19: individual mount namespace mode is unavailable\\n\");\n"
+                  "    return;\n"
+                  "#else"
+                  + body +
+                  "\n#endif\n"
+                  "}"
+              )
+              s = s[:fn_start] + new_fn + s[fn_end + 2:]
+
+          p.write_text(s)
+          PY
+
+          echo "=== Patched su_mount_ns.c ==="
+          sed -n '1,220p' KernelSU-Next/kernel/infra/su_mount_ns.c
+
+          grep -q 'Samsung 4.19: individual mount namespace mode is unavailable' \
+            KernelSU-Next/kernel/infra/su_mount_ns.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
