@@ -104,6 +104,334 @@ jobs:
 
           cd ..
 
+      - name: Patch KSUN file wrapper for Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/infra/file_wrapper.c")
+          s = p.read_text()
+
+          def replace_once(old, new, label):
+              global s
+
+              count = s.count(old)
+
+              if count != 1:
+                  raise SystemExit(
+                      f"{label}: expected exactly one match, found {count}"
+                  )
+
+              s = s.replace(old, new, 1)
+              print(f"Patched: {label}")
+
+          # ------------------------------------------------------------
+          # 1. iopoll
+          #
+          # Samsung 4.19 struct file_operations has no iopoll member.
+          # Do not create a fake member in the vendor VFS ABI.
+          # ------------------------------------------------------------
+
+          old = r'''#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+          static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb,
+                                        unsigned int v)
+          {
+              struct ksu_file_wrapper *data = kiocb->ki_filp->private_data;
+              struct file *orig = data->orig;
+              kiocb->ki_filp = orig;
+              return orig->f_op->iopoll(kiocb, icb, v);
+          }
+          #else
+          static int ksu_wrapper_iopoll(struct kiocb *kiocb, bool spin)
+          {
+              struct ksu_file_wrapper *data = kiocb->ki_filp->private_data;
+              struct file *orig = data->orig;
+              kiocb->ki_filp = orig;
+              return orig->f_op->iopoll(kiocb, spin);
+          }
+          #endif
+          '''
+
+          new = r'''/*
+           * Samsung Linux 4.19 has no file_operations::iopoll.
+           * Keep the upstream implementation for kernels with the modern
+           * callback, but do not compile it into this old vendor VFS ABI.
+           */
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+          static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb,
+                                        unsigned int v)
+          {
+              struct ksu_file_wrapper *data = kiocb->ki_filp->private_data;
+              struct file *orig = data->orig;
+              kiocb->ki_filp = orig;
+              return orig->f_op->iopoll(kiocb, icb, v);
+          }
+          #else
+          static int ksu_wrapper_iopoll(struct kiocb *kiocb, bool spin)
+          {
+              struct ksu_file_wrapper *data = kiocb->ki_filp->private_data;
+              struct file *orig = data->orig;
+              kiocb->ki_filp = orig;
+              return orig->f_op->iopoll(kiocb, spin);
+          }
+          #endif
+          #endif
+          '''
+
+          replace_once(old, new, "guard iopoll implementation")
+
+
+          # ------------------------------------------------------------
+          # 2. remap_file_range
+          #
+          # Samsung 4.19 has clone_file_range/dedupe_file_range instead.
+          # We intentionally leave those callbacks untouched/NULL in the
+          # wrapper rather than pretending the modern remap ABI exists.
+          # ------------------------------------------------------------
+
+          old = r'''// no REMAP_FILE_DEDUP: use file_in
+          // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/fs/read_write.c;l=1598-1599;drc=398da7defe218d3e51b0f3bdff75147e28125b60
+          // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/fs/remap_range.c;l=403-404;drc=398da7defe218d3e51b0f3bdff75147e28125b60
+          // REMAP_FILE_DEDUP: use file_out
+          // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/fs/remap_range.c;l=483-484;drc=398da7defe218d3e51b0f3bdff75147e28125b60
+          static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in,
+                                                     struct file *file_out,
+                                                     loff_t pos_out, loff_t len,
+                                                     unsigned int remap_flags)
+          {
+              if (remap_flags & REMAP_FILE_DEDUP) {
+                  struct ksu_file_wrapper *data = file_out->private_data;
+                  struct file *orig = data->orig;
+                  return orig->f_op->remap_file_range(file_in, pos_in, orig, pos_out, len,
+                                                      remap_flags);
+              } else {
+                  struct ksu_file_wrapper *data = file_in->private_data;
+                  struct file *orig = data->orig;
+                  return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out,
+                                                      len, remap_flags);
+              }
+          }
+          '''
+
+          new = r'''/*
+           * Samsung Linux 4.19 predates file_operations::remap_file_range
+           * and REMAP_FILE_DEDUP.  Its VFS still exposes the older
+           * clone_file_range/dedupe_file_range callbacks.
+           *
+           * Do not compile the modern wrapper on this kernel.  The fd wrapper
+           * does not need clone/dedupe forwarding for KernelSU's normal su
+           * terminal path, and leaving unsupported callbacks NULL is safer
+           * than altering the vendor struct file_operations ABI.
+           */
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+          // no REMAP_FILE_DEDUP: use file_in
+          // REMAP_FILE_DEDUP: use file_out
+          static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in,
+                                                     struct file *file_out,
+                                                     loff_t pos_out, loff_t len,
+                                                     unsigned int remap_flags)
+          {
+              if (remap_flags & REMAP_FILE_DEDUP) {
+                  struct ksu_file_wrapper *data = file_out->private_data;
+                  struct file *orig = data->orig;
+                  return orig->f_op->remap_file_range(file_in, pos_in, orig, pos_out, len,
+                                                      remap_flags);
+              } else {
+                  struct ksu_file_wrapper *data = file_in->private_data;
+                  struct file *orig = data->orig;
+                  return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out,
+                                                      len, remap_flags);
+              }
+          }
+          #endif
+          '''
+
+          replace_once(old, new, "guard remap_file_range implementation")
+
+
+          # ------------------------------------------------------------
+          # 3. iopoll assignment
+          # ------------------------------------------------------------
+
+          old = r'''    p->ops.write_iter = fp->f_op->write_iter ? ksu_wrapper_write_iter : NULL;
+              p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+          '''
+
+          new = r'''    p->ops.write_iter = fp->f_op->write_iter ? ksu_wrapper_write_iter : NULL;
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+              p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;
+          #endif
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
+          '''
+
+          replace_once(old, new, "guard iopoll file_operations assignment")
+
+
+          # ------------------------------------------------------------
+          # 4. remap_file_range assignment
+          # ------------------------------------------------------------
+
+          old = r'''    p->ops.copy_file_range =
+                  fp->f_op->copy_file_range ? ksu_wrapper_copy_file_range : NULL;
+              p->ops.remap_file_range =
+                  fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;
+              p->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;
+          '''
+
+          new = r'''    p->ops.copy_file_range =
+                  fp->f_op->copy_file_range ? ksu_wrapper_copy_file_range : NULL;
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+              p->ops.remap_file_range =
+                  fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;
+          #endif
+              p->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;
+          '''
+
+          replace_once(old, new, "guard remap_file_range assignment")
+
+
+          # ------------------------------------------------------------
+          # 5. security_inode_init_security_anon
+          #
+          # Samsung 4.19 does not provide this newer LSM helper.
+          #
+          # alloc_anon_inode() still allocates the inode security blob.
+          # Later in ksu_install_file_wrapper(), KSUN explicitly assigns
+          # ksu_file_sid to that security blob anyway.
+          # ------------------------------------------------------------
+
+          old = r'''static struct inode *
+          ksu_anon_inode_make_secure_inode(const char *name,
+                                           const struct inode *context_inode)
+          {
+              struct inode *inode;
+              const struct qstr qname = QSTR_INIT(name, strlen(name));
+              int error;
+
+              if (unlikely(!anon_inode_mnt)) {
+                  return ERR_PTR(-ENODEV);
+              }
+
+              inode = alloc_anon_inode(anon_inode_mnt->mnt_sb);
+              if (IS_ERR(inode))
+                  return inode;
+              inode->i_flags &= ~S_PRIVATE;
+              error = security_inode_init_security_anon(inode, &qname, context_inode);
+              if (error) {
+                  iput(inode);
+                  return ERR_PTR(error);
+              }
+              return inode;
+          }
+          '''
+
+          new = r'''static struct inode *
+          ksu_anon_inode_make_secure_inode(const char *name,
+                                           const struct inode *context_inode)
+          {
+              struct inode *inode;
+
+              if (unlikely(!anon_inode_mnt)) {
+                  return ERR_PTR(-ENODEV);
+              }
+
+              inode = alloc_anon_inode(anon_inode_mnt->mnt_sb);
+              if (IS_ERR(inode))
+                  return inode;
+
+              inode->i_flags &= ~S_PRIVATE;
+
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+              {
+                  const struct qstr qname = QSTR_INIT(name, strlen(name));
+                  int error;
+
+                  error = security_inode_init_security_anon(inode, &qname,
+                                                            context_inode);
+                  if (error) {
+                      iput(inode);
+                      return ERR_PTR(error);
+                  }
+              }
+          #else
+              /*
+               * Samsung 4.19 has no security_inode_init_security_anon().
+               *
+               * alloc_anon_inode() has already allocated the inode security
+               * storage.  ksu_install_file_wrapper() below explicitly changes
+               * that blob to ksu_file_sid before publishing the descriptor.
+               */
+              (void)name;
+              (void)context_inode;
+          #endif
+
+              return inode;
+          }
+          '''
+
+          replace_once(old, new, "backport anonymous inode security setup")
+
+
+          # ------------------------------------------------------------
+          # 6. selinux_inode()
+          #
+          # Newer SELinux has a helper accessor. Samsung 4.19 stores the
+          # SELinux inode blob directly in inode->i_security.
+          # ------------------------------------------------------------
+
+          old = r'''    struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);
+          '''
+
+          new = r'''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+              struct inode_security_struct *wrapper_sec =
+                  selinux_inode(wrapper_inode);
+          #else
+              struct inode_security_struct *wrapper_sec =
+                  (struct inode_security_struct *)wrapper_inode->i_security;
+          #endif
+          '''
+
+          replace_once(old, new, "use Samsung 4.19 inode security storage")
+
+          p.write_text(s)
+
+          print()
+          print("Samsung 4.19 file_wrapper compatibility patch applied.")
+          PY
+
+          echo
+          echo "=== Verify unsupported 4.19 VFS callbacks are guarded ==="
+
+          grep -n -A4 -B4 \
+            'ksu_wrapper_iopoll' \
+            KernelSU-Next/kernel/infra/file_wrapper.c \
+            | head -80
+
+          echo
+          grep -n -A8 -B8 \
+            'ksu_wrapper_remap_file_range' \
+            KernelSU-Next/kernel/infra/file_wrapper.c \
+            | head -120
+
+          echo
+          echo "=== Verify anon inode compatibility ==="
+
+          grep -n -A35 -B5 \
+            'ksu_anon_inode_make_secure_inode' \
+            KernelSU-Next/kernel/infra/file_wrapper.c \
+            | head -100
+
+          echo
+          echo "=== Verify inode security compatibility ==="
+
+          grep -n -A8 -B5 \
+            'wrapper_sec' \
+            KernelSU-Next/kernel/infra/file_wrapper.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -218,7 +546,7 @@ jobs:
           find drivers/kernelsu \
             -type f \
             \( -name '*.o' -o -name 'built-in.a' \) \
-            -print | head -100 || true
+            -print | head -150 || true
 
           if [ -d drivers/kernelsu ]; then
             test -n "$(find drivers/kernelsu -type f -name '*.o' -print -quit)"
@@ -233,15 +561,25 @@ jobs:
 
           echo "=== Searching compiled SELinux Hide objects ==="
 
-          find drivers/kernelsu \
-            -type f \
-            \( \
-              -iname '*selinux*hide*.o' \
-              -o -iname '*selinux_hide*.o' \
-            \) \
-            -print || true
+          SELINUX_HIDE_OBJECT="$(
+            find drivers/kernelsu \
+              -type f \
+              -name 'selinux_hide.o' \
+              -print -quit
+          )"
 
-          echo "=== Searching source references ==="
+          if [ -z "$SELINUX_HIDE_OBJECT" ]; then
+            echo "ERROR: selinux_hide.o was not produced"
+            exit 1
+          fi
+
+          echo "SELinux Hide object:"
+          echo "$SELINUX_HIDE_OBJECT"
+
+          ls -lh "$SELINUX_HIDE_OBJECT"
+
+          echo
+          echo "=== SELinux Hide source references ==="
 
           grep -Rni \
             --include='*.c' \
@@ -250,7 +588,7 @@ jobs:
             --include='Kbuild' \
             'selinux_hide' \
             drivers/kernelsu \
-            KernelSU-Next/kernel 2>/dev/null | head -100 || true
+            KernelSU-Next/kernel 2>/dev/null | head -150 || true
 
       - name: Verify AnyKernel template
         run: |
