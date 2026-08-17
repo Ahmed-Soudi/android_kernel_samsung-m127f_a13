@@ -412,6 +412,46 @@ jobs:
           #define MASK_SYSTEM \
               (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
 
+          /*
+           * Samsung 4.19 contains these fsnotify functions, but its
+           * public header arrangement does not expose all declarations
+           * to the KernelSU compilation unit.
+           *
+           * Declare the exact Samsung 4.19 signatures here.
+           */
+          extern struct fsnotify_group *
+          fsnotify_alloc_group(
+              const struct fsnotify_ops *ops);
+
+          extern void
+          fsnotify_get_group(
+              struct fsnotify_group *group);
+
+          extern void
+          fsnotify_put_group(
+              struct fsnotify_group *group);
+
+          extern void
+          fsnotify_init_mark(
+              struct fsnotify_mark *mark,
+              struct fsnotify_group *group);
+
+          extern void
+          fsnotify_destroy_mark(
+              struct fsnotify_mark *mark,
+              struct fsnotify_group *group);
+
+          extern void
+          fsnotify_put_mark(
+              struct fsnotify_mark *mark);
+
+          extern int
+          fsnotify_add_mark(
+              struct fsnotify_mark *mark,
+              fsnotify_connp_t *connp,
+              unsigned int type,
+              int allow_dups);
+
           struct watch_dir {
               const char *path;
               u32 mask;
@@ -421,6 +461,12 @@ jobs:
           };
 
           static struct fsnotify_group *g;
+
+          static void
+          ksu_free_mark(struct fsnotify_mark *mark)
+          {
+              kfree(mark);
+          }
 
           static int
           ksu_handle_event(
@@ -453,6 +499,7 @@ jobs:
                       "packages.list detected: %d\n",
                       mask
                   );
+
                   track_throne(false);
               }
 
@@ -461,6 +508,7 @@ jobs:
 
           static const struct fsnotify_ops ksu_ops = {
               .handle_event = ksu_handle_event,
+              .free_mark = ksu_free_mark,
           };
 
           static int
@@ -470,21 +518,42 @@ jobs:
               struct fsnotify_mark **out)
           {
               struct fsnotify_mark *m;
+              int ret;
 
-              m = kzalloc(sizeof(*m), GFP_KERNEL);
+              m = kzalloc(
+                  sizeof(*m),
+                  GFP_KERNEL
+              );
 
               if (!m)
                   return -ENOMEM;
 
-              fsnotify_init_mark(m, g);
+              fsnotify_init_mark(
+                  m,
+                  g
+              );
+
               m->mask = mask;
 
-              if (fsnotify_add_inode_mark(
-                      m,
-                      inode,
-                      0)) {
+              /*
+               * Samsung 4.19 uses the generic fsnotify_add_mark()
+               * interface.  fsnotify_add_inode_mark() is only an
+               * inline convenience wrapper in trees that expose it.
+               */
+              ret = fsnotify_add_mark(
+                  m,
+                  &inode->i_fsnotify_marks,
+                  FSNOTIFY_OBJ_TYPE_INODE,
+                  0
+              );
+
+              if (ret) {
+                  /*
+                   * Drop the creator reference obtained by
+                   * fsnotify_init_mark().
+                   */
                   fsnotify_put_mark(m);
-                  return -EINVAL;
+                  return ret;
               }
 
               *out = m;
@@ -509,12 +578,27 @@ jobs:
                       wd->path,
                       ret
                   );
+
                   return ret;
               }
 
               wd->inode =
                   d_inode(wd->kpath.dentry);
 
+              if (!wd->inode) {
+                  path_put(&wd->kpath);
+                  memset(
+                      &wd->kpath,
+                      0,
+                      sizeof(wd->kpath)
+                  );
+                  return -ENOENT;
+              }
+
+              /*
+               * Keep the same explicit inode reference used by
+               * upstream KSUN.
+               */
               ihold(wd->inode);
 
               ret = add_mark_on_inode(
@@ -530,10 +614,16 @@ jobs:
                       ret
                   );
 
-                  path_put(&wd->kpath);
                   iput(wd->inode);
-
                   wd->inode = NULL;
+
+                  path_put(&wd->kpath);
+
+                  memset(
+                      &wd->kpath,
+                      0,
+                      sizeof(wd->kpath)
+                  );
 
                   return ret;
               }
@@ -550,6 +640,10 @@ jobs:
           unwatch_one_dir(struct watch_dir *wd)
           {
               if (wd->mark) {
+                  /*
+                   * Detach the mark from the group/object first,
+                   * then drop our creator reference.
+                   */
                   fsnotify_destroy_mark(
                       wd->mark,
                       g
@@ -599,6 +693,10 @@ jobs:
               );
 
               if (ret) {
+                  /*
+                   * No successfully attached watch remains here.
+                   * Drop the initial group reference.
+                   */
                   fsnotify_put_group(g);
                   g = NULL;
 
@@ -622,6 +720,14 @@ jobs:
                   &g_watch
               );
 
+              /*
+               * Drop the reference returned by
+               * fsnotify_alloc_group().
+               *
+               * Mark destruction has already detached the mark and
+               * its final deferred release will drop its own group
+               * reference.
+               */
               fsnotify_put_group(g);
 
               g = NULL;
@@ -635,39 +741,68 @@ jobs:
           path.write_text(source)
 
           print(
-              "Samsung 4.19 pkg_observer "
+              "Samsung 4.19 fsnotify observer "
               "compatibility source written."
           )
           PY
 
           echo
-          echo "=== Samsung fsnotify ABI ==="
+          echo "=== Samsung fsnotify callback ABI ==="
 
-          grep -n -A20 \
+          grep -n -A14 \
             'struct fsnotify_ops {' \
             include/linux/fsnotify_backend.h \
-            | head -35
+            | head -25
 
           echo
-          echo "=== Patched pkg_observer.c ==="
+          echo "=== Samsung fsnotify generic mark API ==="
 
-          sed -n '1,260p' \
+          grep -n -A8 -B4 \
+            'extern int fsnotify_add_mark' \
+            include/linux/fsnotify_backend.h \
+            | head -30 || true
+
+          echo
+          echo "=== Patched KSUN observer ==="
+
+          sed -n '1,360p' \
             KernelSU-Next/kernel/manager/pkg_observer.c
 
           echo
-          echo "=== Verify Samsung callback ==="
+          echo "=== Verify legacy callback ==="
 
           grep -nE \
             '^[[:space:]]*\.handle_event[[:space:]]*=[[:space:]]*ksu_handle_event' \
             KernelSU-Next/kernel/manager/pkg_observer.c
 
           echo
-          echo "=== Ensure modern callback assignment is absent ==="
+          echo "=== Verify mark free callback ==="
+
+          grep -nE \
+            '^[[:space:]]*\.free_mark[[:space:]]*=[[:space:]]*ksu_free_mark' \
+            KernelSU-Next/kernel/manager/pkg_observer.c
+
+          echo
+          echo "=== Verify generic Samsung mark API ==="
+
+          grep -n \
+            'fsnotify_add_mark(' \
+            KernelSU-Next/kernel/manager/pkg_observer.c
+
+          echo
+          echo "=== Ensure unsupported helper is absent ==="
+
+          if grep -n \
+            'fsnotify_add_inode_mark(' \
+            KernelSU-Next/kernel/manager/pkg_observer.c; then
+            echo "ERROR: fsnotify_add_inode_mark still used"
+            exit 1
+          fi
 
           if grep -nE \
             '^[[:space:]]*\.handle_inode_event[[:space:]]*=' \
             KernelSU-Next/kernel/manager/pkg_observer.c; then
-            echo "ERROR: modern fsnotify callback assignment still exists"
+            echo "ERROR: handle_inode_event assignment still used"
             exit 1
           fi
 
@@ -692,17 +827,40 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             exynos850-m12nsxx_defconfig
 
+          echo
           echo "=== KernelSU configuration ==="
-          grep -iE 'KSU|KERNELSU' .config || true
 
+          grep -iE \
+            'KSU|KERNELSU' \
+            .config || true
+
+          echo
           echo "=== SELinux configuration ==="
-          grep -i 'CONFIG_SECURITY_SELINUX' .config || true
 
+          grep -i \
+            'CONFIG_SECURITY_SELINUX' \
+            .config || true
+
+          echo
+          echo "=== FSNOTIFY configuration ==="
+
+          grep -E \
+            'CONFIG_FSNOTIFY|CONFIG_INOTIFY' \
+            .config || true
+
+          echo
           echo "=== SUSFS configuration ==="
-          grep -i 'SUSFS' .config || true
 
+          grep -i \
+            'SUSFS' \
+            .config || true
+
+          echo
           echo "=== KPROBE configuration ==="
-          grep -i 'KPROBE' .config || true
+
+          grep -i \
+            'KPROBE' \
+            .config || true
 
       - name: Verify compiler environment
         run: |
@@ -710,14 +868,25 @@ jobs:
 
           export PATH="$HOME/toolchain/bin:$PATH"
 
+          echo "=== clang ==="
+
           which clang
           clang --version
+
+          echo
+          echo "=== linker ==="
 
           which aarch64-linux-gnu-ld
           aarch64-linux-gnu-ld --version | head
 
+          echo
+          echo "=== assembler ==="
+
           which aarch64-linux-gnu-as
           aarch64-linux-gnu-as --version | head
+
+          echo
+          echo "=== compiler target ==="
 
           echo | clang \
             --target=aarch64-linux-gnu \
@@ -752,6 +921,8 @@ jobs:
         run: |
           set -euxo pipefail
 
+          echo "=== Kernel Image ==="
+
           test -s \
             arch/arm64/boot/Image
 
@@ -764,6 +935,8 @@ jobs:
       - name: Verify KernelSU objects
         run: |
           set -euxo pipefail
+
+          echo "=== KernelSU objects ==="
 
           test -d \
             drivers/kernelsu
@@ -790,6 +963,8 @@ jobs:
         run: |
           set -euxo pipefail
 
+          echo "=== Native SELinux Hide ==="
+
           SELINUX_HIDE_OBJECT="$(
             find \
               drivers/kernelsu \
@@ -803,7 +978,6 @@ jobs:
             exit 1
           fi
 
-          echo "SELinux Hide object:"
           echo "$SELINUX_HIDE_OBJECT"
 
           ls -lh \
@@ -812,6 +986,8 @@ jobs:
       - name: Verify AnyKernel template
         run: |
           set -euxo pipefail
+
+          echo "=== AnyKernel template ==="
 
           test -d anykernel
           test -f anykernel/anykernel.sh
@@ -833,6 +1009,11 @@ jobs:
             arch/arm64/boot/Image \
             output/Image
 
+          echo "=== Packaged Image ==="
+
+          ls -lh \
+            output/Image
+
           test -s output/Image
           test -f output/anykernel.sh
 
@@ -852,13 +1033,25 @@ jobs:
 
           cd ..
 
-          ls -lh "$ZIP_NAME"
+          echo "=== Flashable ZIP ==="
 
-          unzip -l "$ZIP_NAME"
+          ls -lh \
+            "$ZIP_NAME"
 
-          sha256sum "$ZIP_NAME"
+          echo
+          echo "=== ZIP contents ==="
 
-          test -s "$ZIP_NAME"
+          unzip -l \
+            "$ZIP_NAME"
+
+          echo
+          echo "=== ZIP SHA256 ==="
+
+          sha256sum \
+            "$ZIP_NAME"
+
+          test -s \
+            "$ZIP_NAME"
 
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
