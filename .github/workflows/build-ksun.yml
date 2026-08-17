@@ -506,6 +506,76 @@ jobs:
           grep -q 'Samsung 4.19: individual mount namespace mode is unavailable' \
             KernelSU-Next/kernel/infra/su_mount_ns.c
 
+      - name: Backport KSUN allowlist helpers to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/policy/allowlist.c")
+          s = p.read_text()
+
+          # put_task_struct() is declared in sched/task.h on Linux 4.19.
+          if "#include <linux/sched/task.h>" not in s:
+              marker = "#include <linux/task_work.h>\n"
+              if marker not in s:
+                  raise SystemExit("task_work.h include not found")
+              s = s.replace(
+                  marker,
+                  marker + "#include <linux/sched/task.h>\n#include <linux/string.h>\n",
+                  1,
+              )
+
+          # Linux 4.19 task_work_add() takes a bool notify argument.
+          # true is the old-kernel equivalent needed for this persistent
+          # allowlist task-work callback.
+          old = "task_work_add(tsk, cb, TWA_RESUME)"
+          if old in s:
+              s = s.replace(old, "task_work_add(tsk, cb, true)", 1)
+
+          # strscpy_pad() is newer than this Samsung 4.19 tree.
+          # Preserve its zero-padding behavior using memset + strscpy(),
+          # both available in Linux 4.19.
+          old = "strscpy_pad(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len);"
+          new = (
+              "memset(domain, 0, domain_len);\n"
+              "                strscpy(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len);"
+          )
+          if old in s:
+              s = s.replace(old, new, 1)
+
+          # The fallthrough macro is unavailable in this old tree/compiler
+          # combination. The recognized comment keeps the intended switch
+          # fall-through without relying on the newer macro.
+          if "        fallthrough;\n" in s:
+              s = s.replace(
+                  "        fallthrough;\n",
+                  "        /* fall through */\n",
+                  1,
+              )
+
+          # Fail loudly if any known incompatible construct remains.
+          leftovers = [
+              "TWA_RESUME",
+              "strscpy_pad(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len)",
+              "        fallthrough;",
+          ]
+          bad = [x for x in leftovers if x in s]
+          if bad:
+              raise SystemExit(f"allowlist compatibility patch incomplete: {bad}")
+
+          p.write_text(s)
+          PY
+
+          echo "=== Patched allowlist.c compatibility area ==="
+          sed -n '1,35p' KernelSU-Next/kernel/policy/allowlist.c
+          sed -n '460,520p' KernelSU-Next/kernel/policy/allowlist.c
+
+          grep -q '#include <linux/sched/task.h>' KernelSU-Next/kernel/policy/allowlist.c
+          grep -q 'task_work_add(tsk, cb, true)' KernelSU-Next/kernel/policy/allowlist.c
+          grep -q 'strscpy(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len)' KernelSU-Next/kernel/policy/allowlist.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
