@@ -576,6 +576,42 @@ jobs:
           grep -q 'task_work_add(tsk, cb, true)' KernelSU-Next/kernel/policy/allowlist.c
           grep -q 'strscpy(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len)' KernelSU-Next/kernel/policy/allowlist.c
 
+      - name: Backport KSUN app profile seccomp handling to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/policy/app_profile.c")
+          s = p.read_text()
+
+          # Linux 4.19 struct seccomp only contains mode + filter.
+          # KSUN v3.3.0 also clears the newer filter_count field, which does
+          # not exist on this Samsung tree. Keep the assignment for newer
+          # kernels only.
+          old = "    atomic_set(&current->seccomp.filter_count, 0);\n"
+          new = (
+              "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\n"
+              "    atomic_set(&current->seccomp.filter_count, 0);\n"
+              "#endif\n"
+          )
+
+          if old in s and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\n    atomic_set(&current->seccomp.filter_count, 0);" not in s:
+              s = s.replace(old, new, 1)
+
+          if "atomic_set(&current->seccomp.filter_count, 0);" not in s:
+              raise SystemExit("filter_count statement not found after patch")
+
+          p.write_text(s)
+          PY
+
+          echo "=== Patched app_profile.c seccomp area ==="
+          sed -n '68,105p' KernelSU-Next/kernel/policy/app_profile.c
+
+          grep -q '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)' \
+            KernelSU-Next/kernel/policy/app_profile.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
