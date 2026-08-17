@@ -72,7 +72,8 @@ jobs:
             "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902.tar.gz" \
             -o /tmp/clang-r383902.tar.gz
 
-          tar -xf /tmp/clang-r383902.tar.gz \
+          tar -xf \
+            /tmp/clang-r383902.tar.gz \
             -C "$HOME/toolchain"
 
           rm -f /tmp/clang-r383902.tar.gz
@@ -80,6 +81,7 @@ jobs:
           echo "=== Clang version ==="
           "$HOME/toolchain/bin/clang" --version
 
+          echo
           echo "=== AArch64 GNU linker ==="
           aarch64-linux-gnu-ld --version | head
 
@@ -88,8 +90,6 @@ jobs:
           set -euxo pipefail
 
           test -d KernelSU-Next
-
-          echo "=== KernelSU-Next source ==="
 
           cd KernelSU-Next
 
@@ -102,15 +102,18 @@ jobs:
           test "$ACTUAL_SHA" = \
             "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
 
-          echo
-          echo "=== SELinux Hide source ==="
-
           test -f kernel/feature/selinux_hide.c
           test -f kernel/feature/selinux_hide.h
 
+          echo
+          echo "=== SELinux Hide source ==="
+
           find kernel \
             -type f \
-            \( -iname '*selinux*hide*' -o -iname '*susfs*' \) \
+            \( \
+              -iname '*selinux*hide*' \
+              -o -iname '*susfs*' \
+            \) \
             -print || true
 
           cd ..
@@ -413,11 +416,7 @@ jobs:
               (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
 
           /*
-           * Samsung 4.19 contains these fsnotify functions, but its
-           * public header arrangement does not expose all declarations
-           * to the KernelSU compilation unit.
-           *
-           * Declare the exact Samsung 4.19 signatures here.
+           * Samsung 4.19 fsnotify compatibility.
            */
           extern struct fsnotify_group *
           fsnotify_alloc_group(
@@ -535,11 +534,6 @@ jobs:
 
               m->mask = mask;
 
-              /*
-               * Samsung 4.19 uses the generic fsnotify_add_mark()
-               * interface.  fsnotify_add_inode_mark() is only an
-               * inline convenience wrapper in trees that expose it.
-               */
               ret = fsnotify_add_mark(
                   m,
                   &inode->i_fsnotify_marks,
@@ -548,10 +542,6 @@ jobs:
               );
 
               if (ret) {
-                  /*
-                   * Drop the creator reference obtained by
-                   * fsnotify_init_mark().
-                   */
                   fsnotify_put_mark(m);
                   return ret;
               }
@@ -587,18 +577,16 @@ jobs:
 
               if (!wd->inode) {
                   path_put(&wd->kpath);
+
                   memset(
                       &wd->kpath,
                       0,
                       sizeof(wd->kpath)
                   );
+
                   return -ENOENT;
               }
 
-              /*
-               * Keep the same explicit inode reference used by
-               * upstream KSUN.
-               */
               ihold(wd->inode);
 
               ret = add_mark_on_inode(
@@ -640,10 +628,6 @@ jobs:
           unwatch_one_dir(struct watch_dir *wd)
           {
               if (wd->mark) {
-                  /*
-                   * Detach the mark from the group/object first,
-                   * then drop our creator reference.
-                   */
                   fsnotify_destroy_mark(
                       wd->mark,
                       g
@@ -693,10 +677,6 @@ jobs:
               );
 
               if (ret) {
-                  /*
-                   * No successfully attached watch remains here.
-                   * Drop the initial group reference.
-                   */
                   fsnotify_put_group(g);
                   g = NULL;
 
@@ -720,14 +700,6 @@ jobs:
                   &g_watch
               );
 
-              /*
-               * Drop the reference returned by
-               * fsnotify_alloc_group().
-               *
-               * Mark destruction has already detached the mark and
-               * its final deferred release will drop its own group
-               * reference.
-               */
               fsnotify_put_group(g);
 
               g = NULL;
@@ -785,26 +757,28 @@ jobs:
           echo
           echo "=== Verify generic Samsung mark API ==="
 
-          grep -n \
-            'fsnotify_add_mark(' \
+          grep -nE \
+            '^[[:space:]]*ret[[:space:]]*=[[:space:]]*fsnotify_add_mark[[:space:]]*\(' \
             KernelSU-Next/kernel/manager/pkg_observer.c
 
           echo
-          echo "=== Ensure unsupported helper is absent ==="
+          echo "=== Ensure unsupported executable helpers are absent ==="
 
-          if grep -n \
-            'fsnotify_add_inode_mark(' \
+          if grep -nE \
+            '^[[:space:]]*fsnotify_add_inode_mark[[:space:]]*\(' \
             KernelSU-Next/kernel/manager/pkg_observer.c; then
-            echo "ERROR: fsnotify_add_inode_mark still used"
+            echo "ERROR: executable fsnotify_add_inode_mark call remains"
             exit 1
           fi
 
           if grep -nE \
             '^[[:space:]]*\.handle_inode_event[[:space:]]*=' \
             KernelSU-Next/kernel/manager/pkg_observer.c; then
-            echo "ERROR: handle_inode_event assignment still used"
+            echo "ERROR: handle_inode_event assignment remains"
             exit 1
           fi
+
+          echo "Samsung 4.19 fsnotify verification passed."
 
       - name: Configure M127F kernel
         run: |
@@ -829,38 +803,19 @@ jobs:
 
           echo
           echo "=== KernelSU configuration ==="
-
-          grep -iE \
-            'KSU|KERNELSU' \
-            .config || true
+          grep -iE 'KSU|KERNELSU' .config || true
 
           echo
           echo "=== SELinux configuration ==="
-
-          grep -i \
-            'CONFIG_SECURITY_SELINUX' \
-            .config || true
-
-          echo
-          echo "=== FSNOTIFY configuration ==="
-
-          grep -E \
-            'CONFIG_FSNOTIFY|CONFIG_INOTIFY' \
-            .config || true
+          grep -i 'CONFIG_SECURITY_SELINUX' .config || true
 
           echo
           echo "=== SUSFS configuration ==="
-
-          grep -i \
-            'SUSFS' \
-            .config || true
+          grep -i 'SUSFS' .config || true
 
           echo
           echo "=== KPROBE configuration ==="
-
-          grep -i \
-            'KPROBE' \
-            .config || true
+          grep -i 'KPROBE' .config || true
 
       - name: Verify compiler environment
         run: |
@@ -869,24 +824,21 @@ jobs:
           export PATH="$HOME/toolchain/bin:$PATH"
 
           echo "=== clang ==="
-
           which clang
           clang --version
 
           echo
           echo "=== linker ==="
-
           which aarch64-linux-gnu-ld
           aarch64-linux-gnu-ld --version | head
 
           echo
           echo "=== assembler ==="
-
           which aarch64-linux-gnu-as
           aarch64-linux-gnu-as --version | head
 
           echo
-          echo "=== compiler target ==="
+          echo "=== target test ==="
 
           echo | clang \
             --target=aarch64-linux-gnu \
@@ -921,10 +873,10 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "=== Kernel Image ==="
-
           test -s \
             arch/arm64/boot/Image
+
+          echo "=== Kernel Image ==="
 
           ls -lh \
             arch/arm64/boot/Image
@@ -936,13 +888,11 @@ jobs:
         run: |
           set -euxo pipefail
 
+          test -d drivers/kernelsu
+
           echo "=== KernelSU objects ==="
 
-          test -d \
-            drivers/kernelsu
-
-          find \
-            drivers/kernelsu \
+          find drivers/kernelsu \
             -type f \
             \( \
               -name '*.o' \
@@ -952,8 +902,7 @@ jobs:
             | head -200 || true
 
           test -n "$(
-            find \
-              drivers/kernelsu \
+            find drivers/kernelsu \
               -type f \
               -name '*.o' \
               -print -quit
@@ -963,11 +912,10 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "=== Native SELinux Hide ==="
+          echo "=== SELinux Hide object ==="
 
           SELINUX_HIDE_OBJECT="$(
-            find \
-              drivers/kernelsu \
+            find drivers/kernelsu \
               -type f \
               -name 'selinux_hide.o' \
               -print -quit
@@ -987,10 +935,10 @@ jobs:
         run: |
           set -euxo pipefail
 
-          echo "=== AnyKernel template ==="
-
           test -d anykernel
           test -f anykernel/anykernel.sh
+
+          echo "=== AnyKernel template ==="
 
           ls -lah anykernel/
 
@@ -1009,13 +957,12 @@ jobs:
             arch/arm64/boot/Image \
             output/Image
 
-          echo "=== Packaged Image ==="
-
-          ls -lh \
-            output/Image
-
           test -s output/Image
           test -f output/anykernel.sh
+
+          echo "=== Prepared AnyKernel ==="
+
+          ls -lah output/
 
       - name: Create flashable ZIP
         run: |
@@ -1035,23 +982,19 @@ jobs:
 
           echo "=== Flashable ZIP ==="
 
-          ls -lh \
-            "$ZIP_NAME"
+          ls -lh "$ZIP_NAME"
 
           echo
           echo "=== ZIP contents ==="
 
-          unzip -l \
-            "$ZIP_NAME"
+          unzip -l "$ZIP_NAME"
 
           echo
           echo "=== ZIP SHA256 ==="
 
-          sha256sum \
-            "$ZIP_NAME"
+          sha256sum "$ZIP_NAME"
 
-          test -s \
-            "$ZIP_NAME"
+          test -s "$ZIP_NAME"
 
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
