@@ -131,7 +131,6 @@ jobs:
           # 1. iopoll
           #
           # Samsung 4.19 struct file_operations has no iopoll member.
-          # Do not create a fake member in the vendor VFS ABI.
           # ------------------------------------------------------------
 
           old = r'''#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
@@ -183,13 +182,10 @@ jobs:
 
           replace_once(old, new, "guard iopoll implementation")
 
-
           # ------------------------------------------------------------
           # 2. remap_file_range
           #
           # Samsung 4.19 has clone_file_range/dedupe_file_range instead.
-          # We intentionally leave those callbacks untouched/NULL in the
-          # wrapper rather than pretending the modern remap ABI exists.
           # ------------------------------------------------------------
 
           old = r'''// no REMAP_FILE_DEDUP: use file_in
@@ -218,13 +214,8 @@ jobs:
 
           new = r'''/*
            * Samsung Linux 4.19 predates file_operations::remap_file_range
-           * and REMAP_FILE_DEDUP.  Its VFS still exposes the older
+           * and REMAP_FILE_DEDUP. Its VFS still exposes the older
            * clone_file_range/dedupe_file_range callbacks.
-           *
-           * Do not compile the modern wrapper on this kernel.  The fd wrapper
-           * does not need clone/dedupe forwarding for KernelSU's normal su
-           * terminal path, and leaving unsupported callbacks NULL is safer
-           * than altering the vendor struct file_operations ABI.
            */
           #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
           // no REMAP_FILE_DEDUP: use file_in
@@ -251,7 +242,6 @@ jobs:
 
           replace_once(old, new, "guard remap_file_range implementation")
 
-
           # ------------------------------------------------------------
           # 3. iopoll assignment
           # ------------------------------------------------------------
@@ -269,7 +259,6 @@ jobs:
           '''
 
           replace_once(old, new, "guard iopoll file_operations assignment")
-
 
           # ------------------------------------------------------------
           # 4. remap_file_range assignment
@@ -293,15 +282,8 @@ jobs:
 
           replace_once(old, new, "guard remap_file_range assignment")
 
-
           # ------------------------------------------------------------
           # 5. security_inode_init_security_anon
-          #
-          # Samsung 4.19 does not provide this newer LSM helper.
-          #
-          # alloc_anon_inode() still allocates the inode security blob.
-          # Later in ksu_install_file_wrapper(), KSUN explicitly assigns
-          # ksu_file_sid to that security blob anyway.
           # ------------------------------------------------------------
 
           old = r'''static struct inode *
@@ -360,10 +342,8 @@ jobs:
           #else
               /*
                * Samsung 4.19 has no security_inode_init_security_anon().
-               *
-               * alloc_anon_inode() has already allocated the inode security
-               * storage.  ksu_install_file_wrapper() below explicitly changes
-               * that blob to ksu_file_sid before publishing the descriptor.
+               * alloc_anon_inode() has allocated the inode security storage.
+               * KSUN later sets its desired SID directly.
                */
               (void)name;
               (void)context_inode;
@@ -375,12 +355,8 @@ jobs:
 
           replace_once(old, new, "backport anonymous inode security setup")
 
-
           # ------------------------------------------------------------
           # 6. selinux_inode()
-          #
-          # Newer SELinux has a helper accessor. Samsung 4.19 stores the
-          # SELinux inode blob directly in inode->i_security.
           # ------------------------------------------------------------
 
           old = r'''    struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);
@@ -404,33 +380,167 @@ jobs:
           PY
 
           echo
-          echo "=== Verify unsupported 4.19 VFS callbacks are guarded ==="
+          echo "=== Verify file_wrapper compatibility ==="
 
           grep -n -A4 -B4 \
             'ksu_wrapper_iopoll' \
             KernelSU-Next/kernel/infra/file_wrapper.c \
             | head -80
 
-          echo
           grep -n -A8 -B8 \
             'ksu_wrapper_remap_file_range' \
             KernelSU-Next/kernel/infra/file_wrapper.c \
             | head -120
-
-          echo
-          echo "=== Verify anon inode compatibility ==="
 
           grep -n -A35 -B5 \
             'ksu_anon_inode_make_secure_inode' \
             KernelSU-Next/kernel/infra/file_wrapper.c \
             | head -100
 
-          echo
-          echo "=== Verify inode security compatibility ==="
-
           grep -n -A8 -B5 \
             'wrapper_sec' \
             KernelSU-Next/kernel/infra/file_wrapper.c
+
+      - name: Patch KSUN package observer for Samsung 4.19 fsnotify
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/manager/pkg_observer.c")
+          s = p.read_text()
+
+          old = r'''static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
+                                        struct inode *inode, struct inode *dir,
+                                        const struct qstr *file_name, u32 cookie)
+          {
+              if (!file_name)
+                  return 0;
+              if (mask & FS_ISDIR)
+                  return 0;
+              if (file_name->len == 13 && !memcmp(file_name->name, "packages.list", 13)) {
+                  pr_info("packages.list detected: %d\n", mask);
+                  track_throne(false);
+              }
+              return 0;
+          }
+
+          static const struct fsnotify_ops ksu_ops = {
+              .handle_inode_event = ksu_handle_inode_event,
+          };
+          '''
+
+          new = r'''/*
+           * KernelSU-Next v3.3.0 normally uses the newer fsnotify
+           * handle_inode_event callback.
+           *
+           * Samsung Linux 4.19 still exposes the older fsnotify_ops::handle_event
+           * callback:
+           *
+           *   handle_event(group, inode, mask, data, data_type,
+           *                file_name, cookie, iter_info)
+           *
+           * This observer only needs the event mask and child filename, so the
+           * legacy API provides everything required for the original behaviour.
+           */
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+
+          static int ksu_handle_event(struct fsnotify_group *group,
+                                      struct inode *inode,
+                                      u32 mask,
+                                      const void *data,
+                                      int data_type,
+                                      const unsigned char *file_name,
+                                      u32 cookie,
+                                      struct fsnotify_iter_info *iter_info)
+          {
+              (void)group;
+              (void)inode;
+              (void)data;
+              (void)data_type;
+              (void)cookie;
+              (void)iter_info;
+
+              if (!file_name)
+                  return 0;
+
+              if (mask & FS_ISDIR)
+                  return 0;
+
+              if (!strcmp((const char *)file_name, "packages.list")) {
+                  pr_info("packages.list detected: %d\n", mask);
+                  track_throne(false);
+              }
+
+              return 0;
+          }
+
+          static const struct fsnotify_ops ksu_ops = {
+              .handle_event = ksu_handle_event,
+          };
+
+          #else
+
+          static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
+                                            struct inode *inode, struct inode *dir,
+                                            const struct qstr *file_name, u32 cookie)
+          {
+              if (!file_name)
+                  return 0;
+              if (mask & FS_ISDIR)
+                  return 0;
+              if (file_name->len == 13 &&
+                  !memcmp(file_name->name, "packages.list", 13)) {
+                  pr_info("packages.list detected: %d\n", mask);
+                  track_throne(false);
+              }
+              return 0;
+          }
+
+          static const struct fsnotify_ops ksu_ops = {
+              .handle_inode_event = ksu_handle_inode_event,
+          };
+
+          #endif
+          '''
+
+          count = s.count(old)
+
+          if count != 1:
+              raise SystemExit(
+                  "pkg_observer fsnotify block: "
+                  f"expected exactly one match, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          print("Samsung 4.19 fsnotify compatibility patch applied.")
+          PY
+
+          echo
+          echo "=== Samsung fsnotify ABI ==="
+
+          grep -n -A18 \
+            'struct fsnotify_ops {' \
+            include/linux/fsnotify_backend.h \
+            | head -30
+
+          echo
+          echo "=== Patched KSUN package observer ==="
+
+          grep -n -A85 -B5 \
+            'ksu_handle_event' \
+            KernelSU-Next/kernel/manager/pkg_observer.c \
+            | head -120
+
+          echo
+          echo "=== Verify legacy callback selected for Samsung 4.19 ==="
+
+          grep -n \
+            '\.handle_event = ksu_handle_event' \
+            KernelSU-Next/kernel/manager/pkg_observer.c
 
       - name: Configure M127F kernel
         run: |
