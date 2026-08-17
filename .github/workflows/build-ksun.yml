@@ -92,10 +92,14 @@ jobs:
           cd KernelSU-Next
 
           echo "HEAD:"
-          git rev-parse HEAD || true
+          git rev-parse HEAD
 
           echo "Description:"
-          git describe --tags --always || true
+          git describe --tags --always
+
+          echo "Expected pinned v3.3.0 commit:"
+          test "$(git rev-parse HEAD)" = \
+            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
 
           echo "SELinux Hide source:"
           find kernel -type f \
@@ -184,8 +188,6 @@ jobs:
 
           # ------------------------------------------------------------
           # 2. remap_file_range
-          #
-          # Samsung 4.19 has clone_file_range/dedupe_file_range instead.
           # ------------------------------------------------------------
 
           old = r'''// no REMAP_FILE_DEDUP: use file_in
@@ -342,8 +344,6 @@ jobs:
           #else
               /*
                * Samsung 4.19 has no security_inode_init_security_anon().
-               * alloc_anon_inode() has allocated the inode security storage.
-               * KSUN later sets its desired SID directly.
                */
               (void)name;
               (void)context_inode;
@@ -401,146 +401,215 @@ jobs:
             'wrapper_sec' \
             KernelSU-Next/kernel/infra/file_wrapper.c
 
-      - name: Patch KSUN package observer for Samsung 4.19 fsnotify
+      - name: Backport KSUN package observer to Samsung 4.19 fsnotify
         run: |
           set -euxo pipefail
 
-          python3 - <<'PY'
-          from pathlib import Path
+          echo "=== Original KSUN pkg_observer.c ==="
+          sed -n '1,180p' KernelSU-Next/kernel/manager/pkg_observer.c
 
-          p = Path("KernelSU-Next/kernel/manager/pkg_observer.c")
-          s = p.read_text()
+          cat > KernelSU-Next/kernel/manager/pkg_observer.c <<'EOF'
+// SPDX-License-Identifier: GPL-2.0
+#include <linux/module.h>
+#include <linux/fs.h>
+#include <linux/namei.h>
+#include <linux/fsnotify_backend.h>
+#include <linux/slab.h>
+#include <linux/rculist.h>
+#include <linux/version.h>
+#include "klog.h" // IWYU pragma: keep
+#include "manager/throne_tracker.h"
 
-          old = r'''static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
-                                        struct inode *inode, struct inode *dir,
-                                        const struct qstr *file_name, u32 cookie)
-          {
-              if (!file_name)
-                  return 0;
-              if (mask & FS_ISDIR)
-                  return 0;
-              if (file_name->len == 13 && !memcmp(file_name->name, "packages.list", 13)) {
-                  pr_info("packages.list detected: %d\n", mask);
-                  track_throne(false);
-              }
-              return 0;
-          }
+#define MASK_SYSTEM (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
 
-          static const struct fsnotify_ops ksu_ops = {
-              .handle_inode_event = ksu_handle_inode_event,
-          };
-          '''
+struct watch_dir {
+	const char *path;
+	u32 mask;
+	struct path kpath;
+	struct inode *inode;
+	struct fsnotify_mark *mark;
+};
 
-          new = r'''/*
-           * KernelSU-Next v3.3.0 normally uses the newer fsnotify
-           * handle_inode_event callback.
-           *
-           * Samsung Linux 4.19 still exposes the older fsnotify_ops::handle_event
-           * callback:
-           *
-           *   handle_event(group, inode, mask, data, data_type,
-           *                file_name, cookie, iter_info)
-           *
-           * This observer only needs the event mask and child filename, so the
-           * legacy API provides everything required for the original behaviour.
-           */
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+static struct fsnotify_group *g;
 
-          static int ksu_handle_event(struct fsnotify_group *group,
-                                      struct inode *inode,
-                                      u32 mask,
-                                      const void *data,
-                                      int data_type,
-                                      const unsigned char *file_name,
-                                      u32 cookie,
-                                      struct fsnotify_iter_info *iter_info)
-          {
-              (void)group;
-              (void)inode;
-              (void)data;
-              (void)data_type;
-              (void)cookie;
-              (void)iter_info;
+/*
+ * Samsung's Android 13 M127F kernel is Linux 4.19.
+ *
+ * This tree still has the old fsnotify_ops::handle_event callback:
+ *
+ *   int (*handle_event)(struct fsnotify_group *group,
+ *                       struct inode *inode,
+ *                       u32 mask,
+ *                       const void *data,
+ *                       int data_type,
+ *                       const unsigned char *file_name,
+ *                       u32 cookie,
+ *                       struct fsnotify_iter_info *iter_info);
+ *
+ * KernelSU-Next v3.3.0 uses the newer handle_inode_event callback.
+ * Backport the observer to the actual Samsung 4.19 fsnotify ABI instead
+ * of changing the vendor kernel's fsnotify structures.
+ */
+static int ksu_handle_event(struct fsnotify_group *group,
+			    struct inode *inode,
+			    u32 mask,
+			    const void *data,
+			    int data_type,
+			    const unsigned char *file_name,
+			    u32 cookie,
+			    struct fsnotify_iter_info *iter_info)
+{
+	(void)group;
+	(void)inode;
+	(void)data;
+	(void)data_type;
+	(void)cookie;
+	(void)iter_info;
 
-              if (!file_name)
-                  return 0;
+	if (!file_name)
+		return 0;
 
-              if (mask & FS_ISDIR)
-                  return 0;
+	if (mask & FS_ISDIR)
+		return 0;
 
-              if (!strcmp((const char *)file_name, "packages.list")) {
-                  pr_info("packages.list detected: %d\n", mask);
-                  track_throne(false);
-              }
+	if (!strcmp((const char *)file_name, "packages.list")) {
+		pr_info("packages.list detected: %d\n", mask);
+		track_throne(false);
+	}
 
-              return 0;
-          }
+	return 0;
+}
 
-          static const struct fsnotify_ops ksu_ops = {
-              .handle_event = ksu_handle_event,
-          };
+static const struct fsnotify_ops ksu_ops = {
+	.handle_event = ksu_handle_event,
+};
 
-          #else
+static int add_mark_on_inode(struct inode *inode, u32 mask,
+			     struct fsnotify_mark **out)
+{
+	struct fsnotify_mark *m;
 
-          static int ksu_handle_inode_event(struct fsnotify_mark *mark, u32 mask,
-                                            struct inode *inode, struct inode *dir,
-                                            const struct qstr *file_name, u32 cookie)
-          {
-              if (!file_name)
-                  return 0;
-              if (mask & FS_ISDIR)
-                  return 0;
-              if (file_name->len == 13 &&
-                  !memcmp(file_name->name, "packages.list", 13)) {
-                  pr_info("packages.list detected: %d\n", mask);
-                  track_throne(false);
-              }
-              return 0;
-          }
+	m = kzalloc(sizeof(*m), GFP_KERNEL);
+	if (!m)
+		return -ENOMEM;
 
-          static const struct fsnotify_ops ksu_ops = {
-              .handle_inode_event = ksu_handle_inode_event,
-          };
+	fsnotify_init_mark(m, g);
+	m->mask = mask;
 
-          #endif
-          '''
+	if (fsnotify_add_inode_mark(m, inode, 0)) {
+		fsnotify_put_mark(m);
+		return -EINVAL;
+	}
 
-          count = s.count(old)
+	*out = m;
+	return 0;
+}
 
-          if count != 1:
-              raise SystemExit(
-                  "pkg_observer fsnotify block: "
-                  f"expected exactly one match, found {count}"
-              )
+static int watch_one_dir(struct watch_dir *wd)
+{
+	int ret = kern_path(wd->path, LOOKUP_FOLLOW, &wd->kpath);
 
-          s = s.replace(old, new, 1)
-          p.write_text(s)
+	if (ret) {
+		pr_info("path not ready: %s (%d)\n", wd->path, ret);
+		return ret;
+	}
 
-          print("Samsung 4.19 fsnotify compatibility patch applied.")
-          PY
+	wd->inode = d_inode(wd->kpath.dentry);
+	ihold(wd->inode);
+
+	ret = add_mark_on_inode(wd->inode, wd->mask, &wd->mark);
+	if (ret) {
+		pr_err("Add mark failed for %s (%d)\n", wd->path, ret);
+		path_put(&wd->kpath);
+		iput(wd->inode);
+		wd->inode = NULL;
+		return ret;
+	}
+
+	pr_info("watching %s\n", wd->path);
+	return 0;
+}
+
+static void unwatch_one_dir(struct watch_dir *wd)
+{
+	if (wd->mark) {
+		fsnotify_destroy_mark(wd->mark, g);
+		fsnotify_put_mark(wd->mark);
+		wd->mark = NULL;
+	}
+
+	if (wd->inode) {
+		iput(wd->inode);
+		wd->inode = NULL;
+	}
+
+	if (wd->kpath.dentry) {
+		path_put(&wd->kpath);
+		memset(&wd->kpath, 0, sizeof(wd->kpath));
+	}
+}
+
+static struct watch_dir g_watch = {
+	.path = "/data/system",
+	.mask = MASK_SYSTEM,
+};
+
+int ksu_observer_init(void)
+{
+	int ret;
+
+	g = fsnotify_alloc_group(&ksu_ops);
+	if (IS_ERR(g))
+		return PTR_ERR(g);
+
+	ret = watch_one_dir(&g_watch);
+	if (ret) {
+		fsnotify_put_group(g);
+		g = NULL;
+		return ret;
+	}
+
+	pr_info("observer init done\n");
+	return 0;
+}
+
+void __exit ksu_observer_exit(void)
+{
+	if (!g)
+		return;
+
+	unwatch_one_dir(&g_watch);
+	fsnotify_put_group(g);
+	g = NULL;
+
+	pr_info("observer exit done\n");
+}
+EOF
 
           echo
-          echo "=== Samsung fsnotify ABI ==="
-
-          grep -n -A18 \
+          echo "=== Samsung kernel fsnotify_ops ==="
+          grep -n -A16 \
             'struct fsnotify_ops {' \
             include/linux/fsnotify_backend.h \
-            | head -30
+            | head -25
 
           echo
-          echo "=== Patched KSUN package observer ==="
-
-          grep -n -A85 -B5 \
-            'ksu_handle_event' \
-            KernelSU-Next/kernel/manager/pkg_observer.c \
-            | head -120
+          echo "=== Patched KSUN pkg_observer.c ==="
+          sed -n '1,220p' KernelSU-Next/kernel/manager/pkg_observer.c
 
           echo
-          echo "=== Verify legacy callback selected for Samsung 4.19 ==="
-
+          echo "=== Verify legacy Samsung callback ==="
           grep -n \
             '\.handle_event = ksu_handle_event' \
             KernelSU-Next/kernel/manager/pkg_observer.c
+
+          echo
+          echo "=== Ensure unsupported newer callback is gone ==="
+          if grep -n 'handle_inode_event' \
+            KernelSU-Next/kernel/manager/pkg_observer.c; then
+            echo "ERROR: handle_inode_event still exists"
+            exit 1
+          fi
 
       - name: Configure M127F kernel
         run: |
