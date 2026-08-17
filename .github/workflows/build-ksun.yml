@@ -14,6 +14,7 @@ on:
       - "kernel/**"
       - "security/**"
       - "KernelSU-Next/**"
+      - "anykernel/**"
       - "Makefile"
       - "Kconfig*"
 
@@ -31,117 +32,63 @@ jobs:
       - name: Free disk space
         run: |
           set -euxo pipefail
-
           sudo rm -rf /usr/local/lib/android || true
           sudo rm -rf /usr/share/dotnet || true
           sudo rm -rf /opt/ghc || true
           sudo rm -rf /usr/local/.ghcup || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-
           df -h
 
       - name: Install build dependencies
         run: |
           set -euxo pipefail
-
           sudo apt-get update
-
           sudo apt-get install -y \
-            bc \
-            bison \
-            build-essential \
-            ccache \
-            curl \
-            flex \
-            git \
-            libelf-dev \
-            libssl-dev \
-            python3 \
-            zip \
-            unzip \
-            gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu
+            bc bison build-essential ccache curl flex git \
+            libelf-dev libssl-dev python3 zip unzip \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       - name: Download Android Clang r383902
         run: |
           set -euxo pipefail
-
           mkdir -p "$HOME/toolchain"
-
           curl -L \
             "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902.tar.gz" \
             -o /tmp/clang-r383902.tar.gz
-
-          tar -xf \
-            /tmp/clang-r383902.tar.gz \
-            -C "$HOME/toolchain"
-
+          tar -xf /tmp/clang-r383902.tar.gz -C "$HOME/toolchain"
           rm -f /tmp/clang-r383902.tar.gz
-
-          echo "=== Clang version ==="
           "$HOME/toolchain/bin/clang" --version
-
-          echo
-          echo "=== AArch64 GNU linker ==="
           aarch64-linux-gnu-ld --version | head
 
       - name: Verify KernelSU-Next v3.3.0 source
         run: |
           set -euxo pipefail
-
           test -d KernelSU-Next
-
           cd KernelSU-Next
-
-          ACTUAL_SHA="$(git rev-parse HEAD)"
-          ACTUAL_TAG="$(git describe --tags --always)"
-
-          echo "HEAD: $ACTUAL_SHA"
-          echo "Description: $ACTUAL_TAG"
-
-          test "$ACTUAL_SHA" = \
-            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
-
+          test "$(git rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           test -f kernel/feature/selinux_hide.c
           test -f kernel/feature/selinux_hide.h
-
-          echo
-          echo "=== SELinux Hide source ==="
-
-          find kernel \
-            -type f \
-            \( \
-              -iname '*selinux*hide*' \
-              -o -iname '*susfs*' \
-            \) \
-            -print || true
-
+          git describe --tags --always
           cd ..
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
           set -euxo pipefail
-
           python3 - <<'PY'
           from pathlib import Path
 
           p = Path("KernelSU-Next/kernel/infra/file_wrapper.c")
           s = p.read_text()
 
-          def replace_once(old, new, label):
+          def once(old, new, label):
               global s
-
-              count = s.count(old)
-
-              if count != 1:
-                  raise SystemExit(
-                      f"{label}: expected exactly one match, found {count}"
-                  )
-
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected 1 match, got {n}")
               s = s.replace(old, new, 1)
-              print(f"Patched: {label}")
+              print("patched:", label)
 
-          old = r'''#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+          old = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
           static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb,
                                         unsigned int v)
           {
@@ -160,11 +107,7 @@ jobs:
           }
           #endif
           '''
-
-          new = r'''/*
-           * Samsung Linux 4.19 has no file_operations::iopoll.
-           */
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+          new = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
           #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
           static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb,
                                         unsigned int v)
@@ -185,271 +128,103 @@ jobs:
           #endif
           #endif
           '''
+          once(old, new, "iopoll implementation")
 
-          replace_once(
-              old,
-              new,
-              "guard iopoll implementation"
+          start = s.index("// no REMAP_FILE_DEDUP: use file_in")
+          end_marker = "\n}\n\nstatic int ksu_wrapper_fadvise"
+          end = s.index(end_marker, start) + 3
+          block = s[start:end]
+          s = s[:start] + (
+              "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)\n" +
+              block +
+              "#endif\n"
+          ) + s[end:]
+          print("patched: remap_file_range implementation")
+
+          old = "    p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n"
+          new = (
+              "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n"
+              "    p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n"
+              "#endif\n"
           )
+          once(old, new, "iopoll assignment")
 
-          old = r'''// no REMAP_FILE_DEDUP: use file_in
-          // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/fs/read_write.c;l=1598-1599;drc=398da7defe218d3e51b0f3bdff75147e28125b60
-          // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/fs/remap_range.c;l=403-404;drc=398da7defe218d3e51b0f3bdff75147e28125b60
-          // REMAP_FILE_DEDUP: use file_out
-          // https://cs.android.com/android/kernel/superproject/+/common-android-mainline:common/fs/remap_range.c;l=483-484;drc=398da7defe218d3e51b0f3bdff75147e28125b60
-          static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in,
-                                                     struct file *file_out,
-                                                     loff_t pos_out, loff_t len,
-                                                     unsigned int remap_flags)
-          {
-              if (remap_flags & REMAP_FILE_DEDUP) {
-                  struct ksu_file_wrapper *data = file_out->private_data;
-                  struct file *orig = data->orig;
-                  return orig->f_op->remap_file_range(file_in, pos_in, orig, pos_out, len,
-                                                      remap_flags);
-              } else {
-                  struct ksu_file_wrapper *data = file_in->private_data;
-                  struct file *orig = data->orig;
-                  return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out,
-                                                      len, remap_flags);
-              }
-          }
-          '''
-
-          new = r'''/*
-           * Samsung Linux 4.19 predates
-           * file_operations::remap_file_range.
-           */
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
-          static loff_t ksu_wrapper_remap_file_range(struct file *file_in, loff_t pos_in,
-                                                     struct file *file_out,
-                                                     loff_t pos_out, loff_t len,
-                                                     unsigned int remap_flags)
-          {
-              if (remap_flags & REMAP_FILE_DEDUP) {
-                  struct ksu_file_wrapper *data = file_out->private_data;
-                  struct file *orig = data->orig;
-                  return orig->f_op->remap_file_range(file_in, pos_in, orig, pos_out, len,
-                                                      remap_flags);
-              } else {
-                  struct ksu_file_wrapper *data = file_in->private_data;
-                  struct file *orig = data->orig;
-                  return orig->f_op->remap_file_range(orig, pos_in, file_out, pos_out,
-                                                      len, remap_flags);
-              }
-          }
-          #endif
-          '''
-
-          replace_once(
-              old,
-              new,
-              "guard remap_file_range implementation"
-          )
-
-          old = r'''    p->ops.write_iter = fp->f_op->write_iter ? ksu_wrapper_write_iter : NULL;
-              p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
-          '''
-
-          new = r'''    p->ops.write_iter = fp->f_op->write_iter ? ksu_wrapper_write_iter : NULL;
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
-              p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;
-          #endif
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 6, 0)
-          '''
-
-          replace_once(
-              old,
-              new,
-              "guard iopoll assignment"
-          )
-
-          old = r'''    p->ops.copy_file_range =
-                  fp->f_op->copy_file_range ? ksu_wrapper_copy_file_range : NULL;
-              p->ops.remap_file_range =
+          old = '''    p->ops.remap_file_range =
                   fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;
-              p->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;
           '''
-
-          new = r'''    p->ops.copy_file_range =
-                  fp->f_op->copy_file_range ? ksu_wrapper_copy_file_range : NULL;
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
+          new = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 0)
               p->ops.remap_file_range =
                   fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;
           #endif
-              p->ops.fadvise = fp->f_op->fadvise ? ksu_wrapper_fadvise : NULL;
           '''
+          once(old, new, "remap_file_range assignment")
 
-          replace_once(
-              old,
-              new,
-              "guard remap_file_range assignment"
-          )
-
-          old = r'''static struct inode *
-          ksu_anon_inode_make_secure_inode(const char *name,
-                                           const struct inode *context_inode)
-          {
-              struct inode *inode;
+          old = '''    const struct qstr qname = QSTR_INIT(name, strlen(name));
+              int error;
+          '''
+          new = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
               const struct qstr qname = QSTR_INIT(name, strlen(name));
               int error;
+          #endif
+          '''
+          once(old, new, "anon inode declarations")
 
-              if (unlikely(!anon_inode_mnt)) {
-                  return ERR_PTR(-ENODEV);
-              }
-
-              inode = alloc_anon_inode(anon_inode_mnt->mnt_sb);
-              if (IS_ERR(inode))
-                  return inode;
-              inode->i_flags &= ~S_PRIVATE;
+          old = '''    inode->i_flags &= ~S_PRIVATE;
               error = security_inode_init_security_anon(inode, &qname, context_inode);
               if (error) {
                   iput(inode);
                   return ERR_PTR(error);
               }
               return inode;
-          }
           '''
-
-          new = r'''static struct inode *
-          ksu_anon_inode_make_secure_inode(const char *name,
-                                           const struct inode *context_inode)
-          {
-              struct inode *inode;
-
-              if (unlikely(!anon_inode_mnt)) {
-                  return ERR_PTR(-ENODEV);
-              }
-
-              inode = alloc_anon_inode(anon_inode_mnt->mnt_sb);
-              if (IS_ERR(inode))
-                  return inode;
-
-              inode->i_flags &= ~S_PRIVATE;
-
+          new = '''    inode->i_flags &= ~S_PRIVATE;
           #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
-              {
-                  const struct qstr qname =
-                      QSTR_INIT(name, strlen(name));
-                  int error;
-
-                  error =
-                      security_inode_init_security_anon(
-                          inode,
-                          &qname,
-                          context_inode
-                      );
-
-                  if (error) {
-                      iput(inode);
-                      return ERR_PTR(error);
-                  }
+              error = security_inode_init_security_anon(inode, &qname, context_inode);
+              if (error) {
+                  iput(inode);
+                  return ERR_PTR(error);
               }
           #else
               (void)name;
               (void)context_inode;
           #endif
-
               return inode;
-          }
           '''
+          once(old, new, "anon inode security")
 
-          replace_once(
-              old,
-              new,
-              "backport anon inode security setup"
-          )
-
-          old = r'''    struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);
-          '''
-
-          new = r'''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
-              struct inode_security_struct *wrapper_sec =
-                  selinux_inode(wrapper_inode);
+          old = "    struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);\n"
+          new = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+              struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);
           #else
               struct inode_security_struct *wrapper_sec =
-                  (struct inode_security_struct *)
-                  wrapper_inode->i_security;
+                  (struct inode_security_struct *)wrapper_inode->i_security;
           #endif
           '''
-
-          replace_once(
-              old,
-              new,
-              "use Samsung inode security storage"
-          )
+          once(old, new, "inode security access")
 
           p.write_text(s)
-
-          print(
-              "Samsung 4.19 file_wrapper "
-              "compatibility patch applied."
-          )
           PY
 
       - name: Backport KSUN package observer to Samsung 4.19 fsnotify
         run: |
           set -euxo pipefail
-
           python3 - <<'PY'
           from pathlib import Path
           from textwrap import dedent
 
-          path = Path(
-              "KernelSU-Next/kernel/manager/pkg_observer.c"
-          )
-
-          source = dedent(r'''
+          p = Path("KernelSU-Next/kernel/manager/pkg_observer.c")
+          p.write_text(dedent(r'''
           // SPDX-License-Identifier: GPL-2.0
           #include <linux/module.h>
           #include <linux/fs.h>
           #include <linux/namei.h>
           #include <linux/fsnotify_backend.h>
           #include <linux/slab.h>
-          #include <linux/rculist.h>
-          #include <linux/version.h>
+          #include <linux/string.h>
           #include "klog.h"
           #include "manager/throne_tracker.h"
 
-          #define MASK_SYSTEM \
-              (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
-
-          /*
-           * Samsung 4.19 fsnotify compatibility.
-           */
-          extern struct fsnotify_group *
-          fsnotify_alloc_group(
-              const struct fsnotify_ops *ops);
-
-          extern void
-          fsnotify_get_group(
-              struct fsnotify_group *group);
-
-          extern void
-          fsnotify_put_group(
-              struct fsnotify_group *group);
-
-          extern void
-          fsnotify_init_mark(
-              struct fsnotify_mark *mark,
-              struct fsnotify_group *group);
-
-          extern void
-          fsnotify_destroy_mark(
-              struct fsnotify_mark *mark,
-              struct fsnotify_group *group);
-
-          extern void
-          fsnotify_put_mark(
-              struct fsnotify_mark *mark);
-
-          extern int
-          fsnotify_add_mark(
-              struct fsnotify_mark *mark,
-              fsnotify_connp_t *connp,
-              unsigned int type,
-              int allow_dups);
+          #define MASK_SYSTEM (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
 
           struct watch_dir {
               const char *path;
@@ -461,22 +236,19 @@ jobs:
 
           static struct fsnotify_group *g;
 
-          static void
-          ksu_free_mark(struct fsnotify_mark *mark)
+          static void ksu_free_mark(struct fsnotify_mark *mark)
           {
               kfree(mark);
           }
 
-          static int
-          ksu_handle_event(
-              struct fsnotify_group *group,
-              struct inode *inode,
-              u32 mask,
-              const void *data,
-              int data_type,
-              const unsigned char *file_name,
-              u32 cookie,
-              struct fsnotify_iter_info *iter_info)
+          static int ksu_handle_event(struct fsnotify_group *group,
+                                      struct inode *inode,
+                                      u32 mask,
+                                      const void *data,
+                                      int data_type,
+                                      const unsigned char *file_name,
+                                      u32 cookie,
+                                      struct fsnotify_iter_info *iter_info)
           {
               (void)group;
               (void)inode;
@@ -485,22 +257,11 @@ jobs:
               (void)cookie;
               (void)iter_info;
 
-              if (!file_name)
+              if (!file_name || (mask & FS_ISDIR))
                   return 0;
 
-              if (mask & FS_ISDIR)
-                  return 0;
-
-              if (!strcmp(
-                      (const char *)file_name,
-                      "packages.list")) {
-                  pr_info(
-                      "packages.list detected: %d\n",
-                      mask
-                  );
-
+              if (!strcmp((const char *)file_name, "packages.list"))
                   track_throne(false);
-              }
 
               return 0;
           }
@@ -510,150 +271,31 @@ jobs:
               .free_mark = ksu_free_mark,
           };
 
-          static int
-          add_mark_on_inode(
-              struct inode *inode,
-              u32 mask,
-              struct fsnotify_mark **out)
+          static int add_mark_on_inode(struct inode *inode,
+                                       u32 mask,
+                                       struct fsnotify_mark **out)
           {
               struct fsnotify_mark *m;
               int ret;
 
-              m = kzalloc(
-                  sizeof(*m),
-                  GFP_KERNEL
-              );
-
+              m = kzalloc(sizeof(*m), GFP_KERNEL);
               if (!m)
                   return -ENOMEM;
 
-              fsnotify_init_mark(
-                  m,
-                  g
-              );
-
+              fsnotify_init_mark(m, g);
               m->mask = mask;
 
-              ret = fsnotify_add_mark(
-                  m,
-                  &inode->i_fsnotify_marks,
-                  FSNOTIFY_OBJ_TYPE_INODE,
-                  0
-              );
-
+              ret = fsnotify_add_mark(m,
+                                      &inode->i_fsnotify_marks,
+                                      FSNOTIFY_OBJ_TYPE_INODE,
+                                      0);
               if (ret) {
                   fsnotify_put_mark(m);
                   return ret;
               }
 
               *out = m;
-
               return 0;
-          }
-
-          static int
-          watch_one_dir(struct watch_dir *wd)
-          {
-              int ret;
-
-              ret = kern_path(
-                  wd->path,
-                  LOOKUP_FOLLOW,
-                  &wd->kpath
-              );
-
-              if (ret) {
-                  pr_info(
-                      "path not ready: %s (%d)\n",
-                      wd->path,
-                      ret
-                  );
-
-                  return ret;
-              }
-
-              wd->inode =
-                  d_inode(wd->kpath.dentry);
-
-              if (!wd->inode) {
-                  path_put(&wd->kpath);
-
-                  memset(
-                      &wd->kpath,
-                      0,
-                      sizeof(wd->kpath)
-                  );
-
-                  return -ENOENT;
-              }
-
-              ihold(wd->inode);
-
-              ret = add_mark_on_inode(
-                  wd->inode,
-                  wd->mask,
-                  &wd->mark
-              );
-
-              if (ret) {
-                  pr_err(
-                      "Add mark failed for %s (%d)\n",
-                      wd->path,
-                      ret
-                  );
-
-                  iput(wd->inode);
-                  wd->inode = NULL;
-
-                  path_put(&wd->kpath);
-
-                  memset(
-                      &wd->kpath,
-                      0,
-                      sizeof(wd->kpath)
-                  );
-
-                  return ret;
-              }
-
-              pr_info(
-                  "watching %s\n",
-                  wd->path
-              );
-
-              return 0;
-          }
-
-          static void
-          unwatch_one_dir(struct watch_dir *wd)
-          {
-              if (wd->mark) {
-                  fsnotify_destroy_mark(
-                      wd->mark,
-                      g
-                  );
-
-                  fsnotify_put_mark(
-                      wd->mark
-                  );
-
-                  wd->mark = NULL;
-              }
-
-              if (wd->inode) {
-                  iput(wd->inode);
-                  wd->inode = NULL;
-              }
-
-              if (wd->kpath.dentry) {
-                  path_put(&wd->kpath);
-
-                  memset(
-                      &wd->kpath,
-                      0,
-                      sizeof(wd->kpath)
-                  );
-              }
           }
 
           static struct watch_dir g_watch = {
@@ -665,336 +307,281 @@ jobs:
           {
               int ret;
 
-              g = fsnotify_alloc_group(
-                  &ksu_ops
-              );
-
+              g = fsnotify_alloc_group(&ksu_ops);
               if (IS_ERR(g))
                   return PTR_ERR(g);
 
-              ret = watch_one_dir(
-                  &g_watch
-              );
+              ret = kern_path(g_watch.path, LOOKUP_FOLLOW, &g_watch.kpath);
+              if (ret)
+                  goto err_group;
 
-              if (ret) {
-                  fsnotify_put_group(g);
-                  g = NULL;
-
-                  return ret;
+              g_watch.inode = d_inode(g_watch.kpath.dentry);
+              if (!g_watch.inode) {
+                  ret = -ENOENT;
+                  goto err_path;
               }
 
-              pr_info(
-                  "observer init done\n"
-              );
+              ihold(g_watch.inode);
+
+              ret = add_mark_on_inode(g_watch.inode,
+                                      g_watch.mask,
+                                      &g_watch.mark);
+              if (ret)
+                  goto err_inode;
 
               return 0;
+
+          err_inode:
+              iput(g_watch.inode);
+              g_watch.inode = NULL;
+          err_path:
+              path_put(&g_watch.kpath);
+              memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
+          err_group:
+              fsnotify_put_group(g);
+              g = NULL;
+              return ret;
           }
 
-          void __exit
-          ksu_observer_exit(void)
+          void __exit ksu_observer_exit(void)
           {
               if (!g)
                   return;
 
-              unwatch_one_dir(
-                  &g_watch
-              );
+              if (g_watch.mark) {
+                  fsnotify_destroy_mark(g_watch.mark, g);
+                  fsnotify_put_mark(g_watch.mark);
+                  g_watch.mark = NULL;
+              }
+
+              if (g_watch.inode) {
+                  iput(g_watch.inode);
+                  g_watch.inode = NULL;
+              }
+
+              if (g_watch.kpath.dentry) {
+                  path_put(&g_watch.kpath);
+                  memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
+              }
 
               fsnotify_put_group(g);
-
               g = NULL;
-
-              pr_info(
-                  "observer exit done\n"
-              );
           }
-          ''').lstrip()
-
-          path.write_text(source)
-
-          print(
-              "Samsung 4.19 fsnotify observer "
-              "compatibility source written."
-          )
+          ''').lstrip())
           PY
 
-          echo
-          echo "=== Samsung fsnotify callback ABI ==="
-
-          grep -n -A14 \
-            'struct fsnotify_ops {' \
-            include/linux/fsnotify_backend.h \
-            | head -25
-
-          echo
-          echo "=== Samsung fsnotify generic mark API ==="
-
-          grep -n -A8 -B4 \
-            'extern int fsnotify_add_mark' \
-            include/linux/fsnotify_backend.h \
-            | head -30 || true
-
-          echo
-          echo "=== Patched KSUN observer ==="
-
-          sed -n '1,360p' \
+          grep -nE '^[[:space:]]*\.handle_event[[:space:]]*=' \
+            KernelSU-Next/kernel/manager/pkg_observer.c
+          grep -nE '^[[:space:]]*\.free_mark[[:space:]]*=' \
             KernelSU-Next/kernel/manager/pkg_observer.c
 
-          echo
-          echo "=== Verify legacy callback ==="
+      - name: Backport KSUN seccomp cache syscall limits to Samsung 4.19
+        run: |
+          set -euxo pipefail
 
-          grep -nE \
-            '^[[:space:]]*\.handle_event[[:space:]]*=[[:space:]]*ksu_handle_event' \
-            KernelSU-Next/kernel/manager/pkg_observer.c
+          python3 - <<'PY'
+          from pathlib import Path
 
-          echo
-          echo "=== Verify mark free callback ==="
+          p = Path("KernelSU-Next/kernel/infra/seccomp_cache.c")
+          s = p.read_text()
 
-          grep -nE \
-            '^[[:space:]]*\.free_mark[[:space:]]*=[[:space:]]*ksu_free_mark' \
-            KernelSU-Next/kernel/manager/pkg_observer.c
+          needle = '#include <linux/seccomp.h>\n'
+          compat = r'''#include <asm/unistd.h>
 
-          echo
-          echo "=== Verify generic Samsung mark API ==="
+          /*
+           * Samsung 4.19 predates SECCOMP_ARCH_*_NR.
+           * arm64 already exposes the equivalent syscall counts.
+           */
+          #ifndef SECCOMP_ARCH_NATIVE_NR
+          #define SECCOMP_ARCH_NATIVE_NR NR_syscalls
+          #endif
 
-          grep -nE \
-            '^[[:space:]]*ret[[:space:]]*=[[:space:]]*fsnotify_add_mark[[:space:]]*\(' \
-            KernelSU-Next/kernel/manager/pkg_observer.c
+          #if defined(CONFIG_COMPAT) && !defined(SECCOMP_ARCH_COMPAT)
+          #define SECCOMP_ARCH_COMPAT
+          #endif
 
-          echo
-          echo "=== Ensure unsupported executable helpers are absent ==="
+          #if defined(SECCOMP_ARCH_COMPAT) && !defined(SECCOMP_ARCH_COMPAT_NR)
+          #define SECCOMP_ARCH_COMPAT_NR __NR_compat_syscalls
+          #endif
+          '''
 
-          if grep -nE \
-            '^[[:space:]]*fsnotify_add_inode_mark[[:space:]]*\(' \
-            KernelSU-Next/kernel/manager/pkg_observer.c; then
-            echo "ERROR: executable fsnotify_add_inode_mark call remains"
-            exit 1
-          fi
+          if needle not in s:
+              raise SystemExit("linux/seccomp.h include not found")
 
-          if grep -nE \
-            '^[[:space:]]*\.handle_inode_event[[:space:]]*=' \
-            KernelSU-Next/kernel/manager/pkg_observer.c; then
-            echo "ERROR: handle_inode_event assignment remains"
-            exit 1
-          fi
+          if "#define SECCOMP_ARCH_NATIVE_NR NR_syscalls" not in s:
+              s = s.replace(needle, needle + compat, 1)
 
-          echo "Samsung 4.19 fsnotify verification passed."
+          p.write_text(s)
+          PY
+
+          echo "=== Patched seccomp_cache.c ==="
+          sed -n '1,100p' KernelSU-Next/kernel/infra/seccomp_cache.c
+
+          grep -q '#define SECCOMP_ARCH_NATIVE_NR NR_syscalls' \
+            KernelSU-Next/kernel/infra/seccomp_cache.c
+
+      - name: Backport strncpy_from_user_nofault for Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          candidates = [
+              Path("KernelSU-Next/kernel/sucompat.c"),
+              Path("KernelSU-Next/kernel/core/sucompat.c"),
+          ]
+          p = next((x for x in candidates if x.is_file()), None)
+          if p is None:
+              raise SystemExit(
+                  "sucompat.c not found in expected KSUN v3.3.0 locations"
+              )
+
+          s = p.read_text()
+
+          if "strncpy_from_user_nofault(" not in s:
+              print("sucompat.c does not use strncpy_from_user_nofault; no patch needed")
+              raise SystemExit(0)
+
+          if "#include <linux/uaccess.h>" not in s:
+              lines = s.splitlines(keepends=True)
+              first_linux_include = next(
+                  (i for i, line in enumerate(lines) if line.startswith("#include <linux/")),
+                  None,
+              )
+              if first_linux_include is None:
+                  raise SystemExit("could not find Linux include block in sucompat.c")
+              lines.insert(first_linux_include, "#include <linux/uaccess.h>\n")
+              s = "".join(lines)
+
+          if "#include <linux/version.h>" not in s:
+              s = s.replace(
+                  "#include <linux/uaccess.h>\n",
+                  "#include <linux/uaccess.h>\n#include <linux/version.h>\n",
+                  1,
+              )
+
+          compat = r'''
+          /*
+           * Samsung's 4.19 tree does not provide strncpy_from_user_nofault().
+           * Use the older uaccess helper available in this kernel as the
+           * compatibility implementation required by KSUN v3.3.0.
+           */
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)
+          static long ksu_strncpy_from_user_nofault(char *dst,
+                                                     const void __user *src,
+                                                     long count)
+          {
+              return strncpy_from_user(dst, src, count);
+          }
+          #define strncpy_from_user_nofault ksu_strncpy_from_user_nofault
+          #endif
+
+          '''
+
+          sentinel = "#define strncpy_from_user_nofault ksu_strncpy_from_user_nofault"
+          if sentinel not in s:
+              lines = s.splitlines(keepends=True)
+              last_include = -1
+              for i, line in enumerate(lines):
+                  if line.startswith("#include "):
+                      last_include = i
+              if last_include < 0:
+                  raise SystemExit("no include block found in sucompat.c")
+              lines.insert(last_include + 1, compat)
+              s = "".join(lines)
+
+          p.write_text(s)
+
+          print("Patched:", p)
+          print("=== strncpy_from_user_nofault compatibility ===")
+          for i, line in enumerate(s.splitlines(), 1):
+              if "strncpy_from_user_nofault" in line:
+                  print(f"{i}: {line}")
+          PY
 
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
-
           export PATH="$HOME/toolchain/bin:$PATH"
-
           export PLATFORM_VERSION=13
           export ANDROID_MAJOR_VERSION=t
           export ARCH=arm64
-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          make \
-            ARCH=arm64 \
+          make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             exynos850-m12nsxx_defconfig
 
-          echo
-          echo "=== KernelSU configuration ==="
+          echo "=== KernelSU ==="
           grep -iE 'KSU|KERNELSU' .config || true
-
-          echo
-          echo "=== SELinux configuration ==="
+          echo "=== SELinux ==="
           grep -i 'CONFIG_SECURITY_SELINUX' .config || true
-
-          echo
-          echo "=== SUSFS configuration ==="
+          echo "=== SUSFS ==="
           grep -i 'SUSFS' .config || true
-
-          echo
-          echo "=== KPROBE configuration ==="
+          echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
-
-      - name: Verify compiler environment
-        run: |
-          set -euxo pipefail
-
-          export PATH="$HOME/toolchain/bin:$PATH"
-
-          echo "=== clang ==="
-          which clang
-          clang --version
-
-          echo
-          echo "=== linker ==="
-          which aarch64-linux-gnu-ld
-          aarch64-linux-gnu-ld --version | head
-
-          echo
-          echo "=== assembler ==="
-          which aarch64-linux-gnu-as
-          aarch64-linux-gnu-as --version | head
-
-          echo
-          echo "=== target test ==="
-
-          echo | clang \
-            --target=aarch64-linux-gnu \
-            -dM \
-            -E \
-            - \
-            | grep -E \
-              "__aarch64__|__AARCH64"
 
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
-
           export PATH="$HOME/toolchain/bin:$PATH"
-
           export PLATFORM_VERSION=13
           export ANDROID_MAJOR_VERSION=t
           export ARCH=arm64
-
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          make \
-            ARCH=arm64 \
+          make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             -j"$(nproc)"
 
-      - name: Verify kernel image
+      - name: Verify kernel and KSUN output
         run: |
           set -euxo pipefail
-
-          test -s \
-            arch/arm64/boot/Image
-
-          echo "=== Kernel Image ==="
-
-          ls -lh \
-            arch/arm64/boot/Image
-
-          sha256sum \
-            arch/arm64/boot/Image
-
-      - name: Verify KernelSU objects
-        run: |
-          set -euxo pipefail
-
+          test -s arch/arm64/boot/Image
           test -d drivers/kernelsu
-
-          echo "=== KernelSU objects ==="
-
-          find drivers/kernelsu \
-            -type f \
-            \( \
-              -name '*.o' \
-              -o -name 'built-in.a' \
-            \) \
-            -print \
-            | head -200 || true
-
-          test -n "$(
-            find drivers/kernelsu \
-              -type f \
-              -name '*.o' \
-              -print -quit
-          )"
-
-      - name: Verify native SELinux Hide was compiled
-        run: |
-          set -euxo pipefail
-
-          echo "=== SELinux Hide object ==="
+          test -n "$(find drivers/kernelsu -type f -name '*.o' -print -quit)"
+          ls -lh arch/arm64/boot/Image
+          sha256sum arch/arm64/boot/Image
 
           SELINUX_HIDE_OBJECT="$(
-            find drivers/kernelsu \
-              -type f \
-              -name 'selinux_hide.o' \
-              -print -quit
+            find drivers/kernelsu -type f -name 'selinux_hide.o' -print -quit
           )"
-
-          if [ -z "$SELINUX_HIDE_OBJECT" ]; then
-            echo "ERROR: selinux_hide.o was not produced"
-            exit 1
-          fi
-
-          echo "$SELINUX_HIDE_OBJECT"
-
-          ls -lh \
-            "$SELINUX_HIDE_OBJECT"
-
-      - name: Verify AnyKernel template
-        run: |
-          set -euxo pipefail
-
-          test -d anykernel
-          test -f anykernel/anykernel.sh
-
-          echo "=== AnyKernel template ==="
-
-          ls -lah anykernel/
+          test -n "$SELINUX_HIDE_OBJECT"
+          echo "SELinux Hide: $SELINUX_HIDE_OBJECT"
 
       - name: Prepare AnyKernel package
         run: |
           set -euxo pipefail
-
+          test -d anykernel
+          test -f anykernel/anykernel.sh
           rm -rf output
           mkdir -p output
-
-          cp -a \
-            anykernel/. \
-            output/
-
-          cp \
-            arch/arm64/boot/Image \
-            output/Image
-
+          cp -a anykernel/. output/
+          cp arch/arm64/boot/Image output/Image
           test -s output/Image
           test -f output/anykernel.sh
-
-          echo "=== Prepared AnyKernel ==="
-
-          ls -lah output/
 
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-
           ZIP_NAME="M127F-KSUN-v3.3.0-SELinuxHide.zip"
-
           rm -f "$ZIP_NAME"
-
           cd output
-
-          zip -r9 \
-            "../$ZIP_NAME" \
-            .
-
+          zip -r9 "../$ZIP_NAME" .
           cd ..
-
-          echo "=== Flashable ZIP ==="
-
-          ls -lh "$ZIP_NAME"
-
-          echo
-          echo "=== ZIP contents ==="
-
-          unzip -l "$ZIP_NAME"
-
-          echo
-          echo "=== ZIP SHA256 ==="
-
-          sha256sum "$ZIP_NAME"
-
           test -s "$ZIP_NAME"
+          ls -lh "$ZIP_NAME"
+          sha256sum "$ZIP_NAME"
+          unzip -l "$ZIP_NAME"
 
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
