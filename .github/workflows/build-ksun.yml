@@ -666,6 +666,298 @@ jobs:
             exit 1
           fi
 
+      - name: Backport KSUN SELinux core to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          KVER_GUARD = "KERNEL_VERSION(5, 10, 0)"
+
+          # ------------------------------------------------------------
+          # 1) selinux.c: selinux_cred() does not exist on old SELinux.
+          #    Linux 4.19 stores task_security_struct directly in
+          #    cred->security.
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/selinux/selinux.c")
+          s = p.read_text()
+
+          compat = '''
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+          static inline struct task_security_struct *ksu_selinux_cred_compat(const struct cred *cred)
+          {
+              return (struct task_security_struct *)cred->security;
+          }
+          #define selinux_cred(cred) ksu_selinux_cred_compat(cred)
+          #endif
+
+          '''
+          marker = '#include "ksu.h"\n'
+          if "ksu_selinux_cred_compat" not in s:
+              if marker not in s:
+                  raise SystemExit("selinux.c include anchor not found")
+              s = s.replace(marker, marker + compat, 1)
+          p.write_text(s)
+
+          # ------------------------------------------------------------
+          # 2) sepolicy.h: kernels before the policy-pointer SELinux
+          #    conversion do not define struct selinux_policy. Provide
+          #    the layout KSUN needs for a detached backup policy.
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/selinux/sepolicy.h")
+          s = p.read_text()
+
+          if '#include <linux/version.h>' not in s:
+              s = s.replace('#include <linux/types.h>\n',
+                            '#include <linux/types.h>\n#include <linux/version.h>\n', 1)
+
+          if '#include "ss/services.h"' not in s:
+              s = s.replace('#include "ss/policydb.h"\n',
+                            '#include "ss/policydb.h"\n#include "ss/services.h"\n', 1)
+
+          compat_struct = '''
+          /*
+           * Linux 4.19 keeps the active policy inside struct selinux_ss
+           * rather than behind selinux_state.policy.  KSUN v3.3.0 uses
+           * struct selinux_policy for its detached backup used by
+           * SELinux Hide, so provide the equivalent container here.
+           */
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+          struct selinux_policy {
+              struct sidtab *sidtab;
+              struct policydb policydb;
+              struct selinux_map map;
+              u32 latest_granting;
+          };
+          #endif
+
+          '''
+          anchor2 = '#include "ss/services.h"\n'
+          if "Linux 4.19 keeps the active policy" not in s:
+              s = s.replace(anchor2, anchor2 + compat_struct, 1)
+          p.write_text(s)
+
+          # ------------------------------------------------------------
+          # 3) sepolicy.c: newer Android policydb compatibility flags are
+          #    not fields of the old 4.19 policydb. They are not needed
+          #    for the detached 4.19 backup.
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/selinux/sepolicy.c")
+          s = p.read_text()
+
+          old_cfg = '''        if (old_pol->policydb.android_netlink_route) {
+              pr_info("adding POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE\\n");
+              *config_ptr |= POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE;
+          }
+          if (old_pol->policydb.android_netlink_getneigh) {
+              pr_info("adding POLICYDB_CONFIG_ANDROID_NETLINK_GETNEIGH\\n");
+              *config_ptr |= POLICYDB_CONFIG_ANDROID_NETLINK_GETNEIGH;
+          }
+          '''
+          if old_cfg in s and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)\n        if (old_pol->policydb.android_netlink_route)" not in s:
+              new_cfg = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+          ''' + old_cfg + '''#endif
+          '''
+              s = s.replace(old_cfg, new_cfg, 1)
+          p.write_text(s)
+
+          # ------------------------------------------------------------
+          # 4) rules.c:
+          #    5.10+ -> keep KSUN v3.3.0's copy/swap policy mechanism.
+          #    4.19  -> back up the old selinux_ss policy, then modify the
+          #             live policydb directly (the method used by older
+          #             KernelSU on these kernels).
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/selinux/rules.c")
+          s = p.read_text()
+
+          if "ksu_rules_419" not in s:
+              fn_start = s.find("void apply_kernelsu_rules()\n{")
+              if fn_start < 0:
+                  raise SystemExit("apply_kernelsu_rules() not found")
+
+              fn_end_marker = "\n}\n\n#define KSU_SEPOLICY_MAX_BATCH_SIZE"
+              fn_end = s.find(fn_end_marker, fn_start)
+              if fn_end < 0:
+                  raise SystemExit("end of apply_kernelsu_rules() not found")
+
+              original_fn = s[fn_start:fn_end + 2]
+
+              rule_start = original_fn.find("    db = &pol->policydb;\n")
+              rule_end = original_fn.find("    rcu_assign_pointer(selinux_state.policy, pol);")
+              if rule_start < 0 or rule_end < 0:
+                  raise SystemExit("could not isolate KSUN rule block")
+
+              rule_block = original_fn[
+                  rule_start + len("    db = &pol->policydb;\n"):rule_end
+              ]
+
+              old_fn = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+          static DEFINE_MUTEX(ksu_rules_419);
+
+          void apply_kernelsu_rules()
+          {
+              struct selinux_ss *ss;
+              struct selinux_policy old_wrap;
+              struct policydb *db;
+
+              if (!getenforce()) {
+                  pr_info("SELinux permissive or disabled, apply rules!\\n");
+              }
+
+              mutex_lock(&ksu_rules_419);
+
+              ss = rcu_dereference(selinux_state.ss);
+              if (!ss) {
+                  pr_err("SELinux 4.19 state has no security server\\n");
+                  goto out_unlock_419;
+              }
+
+              /*
+               * Serialize the pristine policy into a detached
+               * struct selinux_policy before KSUN changes the live db.
+               * SELinux Hide uses this pristine copy for app-visible
+               * context/access queries.
+               */
+              memset(&old_wrap, 0, sizeof(old_wrap));
+              old_wrap.sidtab = &ss->sidtab;
+              old_wrap.policydb = ss->policydb;
+              old_wrap.map = ss->map;
+              old_wrap.latest_granting = ss->latest_granting;
+
+              backup_sepolicy = ksu_dup_sepolicy(&old_wrap);
+              if (IS_ERR(backup_sepolicy)) {
+                  pr_err("failed to create 4.19 backup sepolicy: %ld\\n",
+                         PTR_ERR(backup_sepolicy));
+                  backup_sepolicy = NULL;
+              } else {
+                  backup_sepolicy->sidtab =
+                      kzalloc(sizeof(*backup_sepolicy->sidtab), GFP_KERNEL);
+                  if (!backup_sepolicy->sidtab) {
+                      pr_err("failed to alloc 4.19 backup sidtab\\n");
+                      ksu_destroy_sepolicy(backup_sepolicy);
+                      backup_sepolicy = NULL;
+                  } else {
+                      int ret = policydb_load_isids(&backup_sepolicy->policydb,
+                                                   backup_sepolicy->sidtab);
+                      if (ret) {
+                          pr_err("failed to load 4.19 backup isids: %d\\n", ret);
+                          kfree(backup_sepolicy->sidtab);
+                          backup_sepolicy->sidtab = NULL;
+                          ksu_destroy_sepolicy(backup_sepolicy);
+                          backup_sepolicy = NULL;
+                      } else {
+                          pr_info("4.19 backup sepolicy ready\\n");
+                      }
+                  }
+              }
+
+              db = &ss->policydb;
+          ''' + rule_block + '''
+              reset_avc_cache();
+
+          out_unlock_419:
+              mutex_unlock(&ksu_rules_419);
+          }
+          #else
+          ''' + original_fn + '''
+          #endif'''
+
+              s = s[:fn_start] + old_fn + s[fn_end + 2:]
+
+          p.write_text(s)
+
+          # ------------------------------------------------------------
+          # 5) selinux_hide.c:
+          #    Old selinux_state has ->ss instead of ->policy, and the
+          #    status page/lock live inside selinux_ss.
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
+          s = p.read_text()
+
+          status_compat = '''
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+          #define KSU_SELINUX_STATUS_LOCK (selinux_state.ss->status_lock)
+          #define KSU_SELINUX_STATUS_PAGE (selinux_state.ss->status_page)
+          static struct selinux_ss ksu_fake_ss_419;
+          #else
+          #define KSU_SELINUX_STATUS_LOCK (selinux_state.status_lock)
+          #define KSU_SELINUX_STATUS_PAGE (selinux_state.status_page)
+          #endif
+
+          '''
+          hide_anchor = "static DEFINE_MUTEX(selinux_hide_mutex);\n"
+          if "KSU_SELINUX_STATUS_LOCK" not in s:
+              if hide_anchor not in s:
+                  raise SystemExit("selinux_hide.c anchor not found")
+              s = s.replace(hide_anchor, status_compat + hide_anchor, 1)
+
+          # Use the version-neutral status aliases everywhere.
+          s = s.replace("selinux_state.status_lock", "KSU_SELINUX_STATUS_LOCK")
+          s = s.replace("selinux_state.status_page", "KSU_SELINUX_STATUS_PAGE")
+
+          old_fake = '''#else
+              fake_state.initialized = true;
+              fake_state.policy = backup_sepolicy;
+          #endif'''
+          if old_fake in s:
+              new_fake = '''#else
+              fake_state.initialized = true;
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              /*
+               * Recreate the old selinux_ss view around the pristine
+               * backup.  The 4.19 security_* helpers dereference
+               * state->ss, not state->policy.
+               */
+              memset(&ksu_fake_ss_419, 0, sizeof(ksu_fake_ss_419));
+              ksu_fake_ss_419.sidtab = *backup_sepolicy->sidtab;
+              ksu_fake_ss_419.policydb = backup_sepolicy->policydb;
+              ksu_fake_ss_419.map = backup_sepolicy->map;
+              ksu_fake_ss_419.latest_granting = backup_sepolicy->latest_granting;
+              rwlock_init(&ksu_fake_ss_419.policy_rwlock);
+              mutex_init(&ksu_fake_ss_419.status_lock);
+              fake_state.ss = &ksu_fake_ss_419;
+          #else
+              fake_state.policy = backup_sepolicy;
+          #endif
+          #endif'''
+              s = s.replace(old_fake, new_fake, 1)
+
+          if "fake_state.policy = backup_sepolicy;" in s and \
+             "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)" not in s:
+              raise SystemExit("SELinux Hide fake_state compatibility patch failed")
+
+          p.write_text(s)
+
+          # ------------------------------------------------------------
+          # Verification
+          # ------------------------------------------------------------
+          grep_targets = {
+              "KernelSU-Next/kernel/selinux/selinux.c":
+                  "ksu_selinux_cred_compat",
+              "KernelSU-Next/kernel/selinux/sepolicy.h":
+                  "Linux 4.19 keeps the active policy",
+              "KernelSU-Next/kernel/selinux/rules.c":
+                  "ksu_rules_419",
+              "KernelSU-Next/kernel/feature/selinux_hide.c":
+                  "ksu_fake_ss_419",
+          }
+
+          for name, needle in grep_targets.items():
+              data = Path(name).read_text()
+              if needle not in data:
+                  raise SystemExit(f"verification failed: {needle} missing from {name}")
+
+          print("Samsung 4.19 SELinux compatibility cluster patched successfully")
+          PY
+
+          echo "=== SELinux 4.19 compatibility verification ==="
+          grep -n 'ksu_selinux_cred_compat' KernelSU-Next/kernel/selinux/selinux.c
+          grep -n 'ksu_rules_419' KernelSU-Next/kernel/selinux/rules.c
+          grep -n 'ksu_fake_ss_419' KernelSU-Next/kernel/feature/selinux_hide.c
+          grep -n 'KSU_SELINUX_STATUS_' KernelSU-Next/kernel/feature/selinux_hide.c | head -20
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
