@@ -2130,3 +2130,4 @@ jobs:
           name: M127F-KSUN-v3.3.0-Config
           path: .config
           if-no-files-found: error
+          include-hidden-files: true
