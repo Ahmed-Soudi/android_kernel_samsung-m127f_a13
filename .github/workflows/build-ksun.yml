@@ -1211,6 +1211,7 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           p = Path("KernelSU-Next/kernel/selinux/sepolicy.c")
           s = p.read_text()
