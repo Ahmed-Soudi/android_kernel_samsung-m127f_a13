@@ -1889,6 +1889,109 @@ jobs:
           grep -n 'task_work_add(current, &tw->cb, true)' \
             KernelSU-Next/kernel/supercall/supercall.c
 
+      - name: Backport 4.19 path_umount and seccomp release APIs
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # ---- fs/namespace.c: backport path_umount() exactly around
+          # the existing 4.19 do_umount() implementation.
+          ns = Path("fs/namespace.c")
+          s = ns.read_text()
+
+          if "int path_umount(struct path *path, int flags)" not in s:
+              marker = "int ksys_umount(char __user *name, int flags)\n"
+              if marker not in s:
+                  raise SystemExit("ksys_umount anchor not found in fs/namespace.c")
+
+              compat = r'''
+          static int ksu_can_umount_419(const struct path *path, int flags)
+          {
+              struct mount *mnt = real_mount(path->mnt);
+
+              if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
+                  return -EINVAL;
+              if (!may_mount())
+                  return -EPERM;
+              if (path->dentry != path->mnt->mnt_root)
+                  return -EINVAL;
+              if (!check_mnt(mnt))
+                  return -EINVAL;
+              if (mnt->mnt.mnt_flags & MNT_LOCKED)
+                  return -EINVAL;
+              if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
+                  return -EPERM;
+              return 0;
+          }
+
+          int path_umount(struct path *path, int flags)
+          {
+              struct mount *mnt = real_mount(path->mnt);
+              int ret;
+
+              ret = ksu_can_umount_419(path, flags);
+              if (!ret)
+                  ret = do_umount(mnt, flags);
+
+              /*
+               * Match the later upstream path_umount() ownership model:
+               * consume the path references without path_put(), because
+               * path_put() would clear mnt_expiry_mark.
+               */
+              dput(path->dentry);
+              mntput_no_expire(mnt);
+              return ret;
+          }
+
+          '''
+              s = s.replace(marker, compat + marker, 1)
+
+          required_ns = [
+              "static int ksu_can_umount_419(const struct path *path, int flags)",
+              "int path_umount(struct path *path, int flags)",
+              "ret = do_umount(mnt, flags);",
+              "mntput_no_expire(mnt);",
+          ]
+          for needle in required_ns:
+              if needle not in s:
+                  raise SystemExit(f"path_umount backport missing: {needle}")
+
+          ns.write_text(s)
+
+          # ---- KernelSU app_profile.c: Linux 4.19 exposes
+          # put_seccomp_filter(), not seccomp_filter_release().
+          ap = Path("KernelSU-Next/kernel/policy/app_profile.c")
+          a = ap.read_text()
+
+          old = "    seccomp_filter_release(fake);\n"
+          new = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
+              put_seccomp_filter(fake);
+          #else
+              seccomp_filter_release(fake);
+          #endif
+          '''
+
+          if old not in a:
+              raise SystemExit("seccomp_filter_release anchor not found")
+          a = a.replace(old, new, 1)
+
+          if "put_seccomp_filter(fake);" not in a:
+              raise SystemExit("4.19 seccomp release compatibility missing")
+
+          ap.write_text(a)
+          print("Samsung 4.19 link-time API compatibility applied")
+          PY
+
+          echo "=== path_umount verification ==="
+          grep -n 'int path_umount(struct path' fs/namespace.c
+          grep -n 'ksu_can_umount_419' fs/namespace.c
+
+          echo "=== seccomp release verification ==="
+          grep -n -A6 -B2 'put_seccomp_filter(fake)' \
+            KernelSU-Next/kernel/policy/app_profile.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
