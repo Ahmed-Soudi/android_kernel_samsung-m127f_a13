@@ -1691,11 +1691,11 @@ jobs:
           # Use the same declaration-aware definition finder as the patcher;
           # do not depend on C formatting or multiline signatures.
           function_signatures = [
-              ("add_filename_trans", "static bool add_filename_trans"),
-              ("add_type", "static bool add_type"),
-              ("add_typeattribute_raw", "static void add_typeattribute_raw"),
-              ("is_redundant_avtab_node", "static bool is_redundant_avtab_node"),
-              ("remove_avtab_node", "static bool remove_avtab_node"),
+              ("add_filename_trans", "static bool add_filename_trans("),
+              ("add_type", "static bool add_type("),
+              ("add_typeattribute_raw", "static void add_typeattribute_raw("),
+              ("is_redundant_avtab_node", "static bool is_redundant_avtab_node("),
+              ("remove_avtab_node", "static bool remove_avtab_node("),
           ]
 
           for fn, sig in function_signatures:
@@ -1714,8 +1714,8 @@ jobs:
                   )
 
           # These compatibility macros must appear before the patched functions.
-          filename_def = find_definition(s, "static bool add_filename_trans")
-          typeattr_def = find_definition(s, "static bool add_typeattribute")
+          filename_def = find_definition(s, "static bool add_filename_trans(")
+          typeattr_def = find_definition(s, "static bool add_typeattribute(")
 
           if s.find("#define symtab_search") > filename_def:
               raise SystemExit(
