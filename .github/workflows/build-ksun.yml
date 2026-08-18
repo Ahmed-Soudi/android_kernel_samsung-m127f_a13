@@ -958,6 +958,183 @@ jobs:
           grep -n 'ksu_fake_ss_419' KernelSU-Next/kernel/feature/selinux_hide.c
           grep -n 'KSU_SELINUX_STATUS_' KernelSU-Next/kernel/feature/selinux_hide.c | head -20
 
+      - name: Fix Samsung 4.19 SELinux pointer layout and runtime policy handler
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # ------------------------------------------------------------
+          # A) rules.c: this Samsung 4.19 tree stores selinux_ss.sidtab
+          #    as a pointer, unlike vanilla 4.19's embedded struct.
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/selinux/rules.c")
+          s = p.read_text()
+
+          s = s.replace(
+              "old_wrap.sidtab = &ss->sidtab;",
+              "old_wrap.sidtab = ss->sidtab;",
+          )
+
+          # ------------------------------------------------------------
+          # B) handle_sepolicy(): KSUN v3.3.0's runtime policy handler
+          #    separately uses the newer selinux_state.policy +
+          #    policy_mutex API. For 4.19, operate on the live
+          #    selinux_state.ss->policydb under the same compatibility
+          #    mutex used by initial KSUN rule application.
+          # ------------------------------------------------------------
+          start = s.find("int handle_sepolicy(void __user *user_data, u64 data_len)\n{")
+          if start < 0:
+              raise SystemExit("handle_sepolicy() not found")
+
+          # Find the function's final closing brace from its known tail.
+          tail = "\n    return ret;\n}"
+          end = s.find(tail, start)
+          if end < 0:
+              raise SystemExit("handle_sepolicy() end not found")
+          end += len(tail)
+
+          original = s[start:end]
+
+          if "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)" not in original:
+              old_lock_block = '''    mutex_lock(&selinux_state.policy_mutex);
+
+              old_pol = selinux_state.policy;
+              pol = ksu_dup_sepolicy(rcu_dereference_protected(
+                  old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
+              if (IS_ERR(pol)) {
+                  ret = PTR_ERR(pol);
+                  pr_err("ksu_dup_sepolicy err: %d\\n", ret);
+                  goto out_unlock;
+              }
+              db = &pol->policydb;
+          '''
+
+              new_lock_block = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              mutex_lock(&ksu_rules_419);
+              if (!selinux_state.ss) {
+                  ret = -EINVAL;
+                  pr_err("SELinux 4.19 state has no security server\\n");
+                  goto out_unlock;
+              }
+              db = &selinux_state.ss->policydb;
+          #else
+              mutex_lock(&selinux_state.policy_mutex);
+
+              old_pol = selinux_state.policy;
+              pol = ksu_dup_sepolicy(rcu_dereference_protected(
+                  old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
+              if (IS_ERR(pol)) {
+                  ret = PTR_ERR(pol);
+                  pr_err("ksu_dup_sepolicy err: %d\\n", ret);
+                  goto out_unlock;
+              }
+              db = &pol->policydb;
+          #endif
+          '''
+
+              if old_lock_block not in original:
+                  raise SystemExit("handle_sepolicy lock block not found")
+              original = original.replace(old_lock_block, new_lock_block, 1)
+
+              old_commit = '''    rcu_assign_pointer(selinux_state.policy, pol);
+              synchronize_rcu();
+              ksu_destroy_sepolicy(old_pol);
+
+              reset_avc_cache();
+              ret = success_cmd_count;
+              goto out_unlock;
+
+          out_drop_new_policy:
+              ksu_destroy_sepolicy(pol);
+          out_unlock:
+              mutex_unlock(&selinux_state.policy_mutex);
+          '''
+
+              new_commit = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+              rcu_assign_pointer(selinux_state.policy, pol);
+              synchronize_rcu();
+              ksu_destroy_sepolicy(old_pol);
+          #endif
+
+              reset_avc_cache();
+              ret = success_cmd_count;
+              goto out_unlock;
+
+          out_drop_new_policy:
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+              ksu_destroy_sepolicy(pol);
+          #endif
+          out_unlock:
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              mutex_unlock(&ksu_rules_419);
+          #else
+              mutex_unlock(&selinux_state.policy_mutex);
+          #endif
+          '''
+
+              if old_commit not in original:
+                  raise SystemExit("handle_sepolicy commit block not found")
+              original = original.replace(old_commit, new_commit, 1)
+
+              s = s[:start] + original + s[end:]
+
+          p.write_text(s)
+
+          # ------------------------------------------------------------
+          # C) selinux_hide.c: fix Samsung's sidtab pointer layout and a
+          #    macro replacement bug from the previous compatibility step.
+          #    SELinux Hide remains enabled and uses backup_sepolicy.
+          # ------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
+          h = p.read_text()
+
+          h = h.replace(
+              "#define KSU_SELINUX_STATUS_LOCK (KSU_SELINUX_STATUS_LOCK)",
+              "#define KSU_SELINUX_STATUS_LOCK (selinux_state.status_lock)",
+          )
+          h = h.replace(
+              "#define KSU_SELINUX_STATUS_PAGE (KSU_SELINUX_STATUS_PAGE)",
+              "#define KSU_SELINUX_STATUS_PAGE (selinux_state.status_page)",
+          )
+
+          h = h.replace(
+              "ksu_fake_ss_419.sidtab = *backup_sepolicy->sidtab;",
+              "ksu_fake_ss_419.sidtab = backup_sepolicy->sidtab;",
+          )
+
+          p.write_text(h)
+
+          # ------------------------------------------------------------
+          # Verification: make sure no unguarded new-policy API remains
+          # in the 4.19 runtime path and SELinux Hide is still present.
+          # ------------------------------------------------------------
+          r = Path("KernelSU-Next/kernel/selinux/rules.c").read_text()
+          h = Path("KernelSU-Next/kernel/feature/selinux_hide.c").read_text()
+
+          if "old_wrap.sidtab = &ss->sidtab;" in r:
+              raise SystemExit("wrong Samsung sidtab address-of remains")
+          if "old_wrap.sidtab = ss->sidtab;" not in r:
+              raise SystemExit("Samsung sidtab pointer fix missing")
+          if "mutex_lock(&ksu_rules_419);" not in r:
+              raise SystemExit("4.19 runtime sepolicy mutex path missing")
+          if "#define KSU_SELINUX_STATUS_LOCK (KSU_SELINUX_STATUS_LOCK)" in h:
+              raise SystemExit("recursive status-lock macro remains")
+          if "ksu_fake_ss_419.sidtab = backup_sepolicy->sidtab;" not in h:
+              raise SystemExit("SELinux Hide 4.19 sidtab pointer fix missing")
+          if "KSU_FEATURE_SELINUX_HIDE" not in h:
+              raise SystemExit("SELinux Hide feature unexpectedly missing")
+
+          print("Samsung 4.19 SELinux v2 compatibility fixes applied")
+          PY
+
+          echo "=== Verification ==="
+          grep -n 'old_wrap.sidtab' KernelSU-Next/kernel/selinux/rules.c
+          grep -n 'mutex_lock(&ksu_rules_419)' KernelSU-Next/kernel/selinux/rules.c
+          grep -n 'ksu_fake_ss_419.sidtab' KernelSU-Next/kernel/feature/selinux_hide.c
+          grep -n 'KSU_FEATURE_SELINUX_HIDE' KernelSU-Next/kernel/feature/selinux_hide.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
