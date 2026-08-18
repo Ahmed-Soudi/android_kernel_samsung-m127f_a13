@@ -2050,17 +2050,38 @@ jobs:
       - name: Verify kernel and KSUN output
         run: |
           set -euxo pipefail
+
           test -s arch/arm64/boot/Image
-          test -d drivers/kernelsu
-          test -n "$(find drivers/kernelsu -type f -name '*.o' -print -quit)"
-          ls -lh arch/arm64/boot/Image
-          sha256sum arch/arm64/boot/Image
+          test -s vmlinux
+          test -s System.map
+          test -e drivers/kernelsu
+
+          # drivers/kernelsu is a symlink to KernelSU-Next/kernel.
+          # Plain `find` does not descend through a command-line symlink,
+          # so follow it explicitly when checking generated KSUN objects.
+          KSUN_OBJECT="$(
+            find -L drivers/kernelsu -type f -name '*.o' -print -quit
+          )"
+          test -n "$KSUN_OBJECT"
 
           SELINUX_HIDE_OBJECT="$(
-            find drivers/kernelsu -type f -name 'selinux_hide.o' -print -quit
+            find -L drivers/kernelsu -type f -name 'selinux_hide.o' -print -quit
           )"
           test -n "$SELINUX_HIDE_OBJECT"
-          echo "SELinux Hide: $SELINUX_HIDE_OBJECT"
+
+          # Also verify that SELinux Hide made it into the final linked kernel,
+          # not merely that its object file was produced.
+          if ! grep -Eq 'ksu_(selinux_hide|feature_selinux_hide)|selinux_hide' System.map; then
+            echo "ERROR: SELinux Hide symbol not found in final System.map"
+            exit 1
+          fi
+
+          echo "KSUN object: $KSUN_OBJECT"
+          echo "SELinux Hide object: $SELINUX_HIDE_OBJECT"
+          echo "SELinux Hide symbols found in final linked kernel."
+
+          ls -lh arch/arm64/boot/Image vmlinux System.map
+          sha256sum arch/arm64/boot/Image
 
       - name: Prepare AnyKernel package
         run: |
