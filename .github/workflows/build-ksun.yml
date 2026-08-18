@@ -39,26 +39,96 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
           df -h
 
-      - name: Install build dependencies
+      - name: Install only missing build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            bc bison build-essential ccache curl flex git \
-            libelf-dev libssl-dev python3 zip unzip \
+
+          REQUIRED_PACKAGES=(
+            bc
+            bison
+            build-essential
+            ccache
+            curl
+            flex
+            git
+            libelf-dev
+            libssl-dev
+            python3
+            zip
+            unzip
+            gcc-aarch64-linux-gnu
+            binutils-aarch64-linux-gnu
+          )
+
+          missing=()
+          for pkg in "${REQUIRED_PACKAGES[@]}"; do
+            if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "ok installed"; then
+              missing+=("$pkg")
+            fi
+          done
+
+          if ((${#missing[@]} == 0)); then
+            echo "All required packages are already installed on the GitHub runner."
+          else
+            echo "Missing packages: ${missing[*]}"
+            # Do not cache /var/lib/apt or dpkg state: that can make hosted
+            # runners inconsistent. Retry transient mirror failures instead.
+            sudo apt-get \
+              -o Acquire::Retries=5 \
+              -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 \
+              update
+
+            sudo apt-get \
+              -o Acquire::Retries=5 \
+              -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 \
+              install -y --no-install-recommends "${missing[@]}"
+          fi
+
+          command -v python3
+          command -v make
+          command -v aarch64-linux-gnu-ld
+          dpkg-query -W -f='${Package} ${Version}\n' \
+            bc bison flex libelf-dev libssl-dev \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
+      - name: Cache Android Clang r383902
+        id: clang-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain
+          key: android-clang-r383902-${{ runner.os }}-${{ runner.arch }}
+
       - name: Download Android Clang r383902
+        if: steps.clang-cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
+          rm -rf "$HOME/toolchain"
           mkdir -p "$HOME/toolchain"
-          curl -L \
+
+          curl --fail --location --retry 5 --retry-delay 3 \
+            --connect-timeout 30 --max-time 600 \
             "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android11-release/clang-r383902.tar.gz" \
             -o /tmp/clang-r383902.tar.gz
+
           tar -xf /tmp/clang-r383902.tar.gz -C "$HOME/toolchain"
           rm -f /tmp/clang-r383902.tar.gz
-          "$HOME/toolchain/bin/clang" --version
-          aarch64-linux-gnu-ld --version | head
+
+      - name: Verify Android Clang r383902
+        run: |
+          set -euxo pipefail
+          test -x "$HOME/toolchain/bin/clang"
+
+          CLANG_VERSION="$("$HOME/toolchain/bin/clang" --version)"
+          printf '%s\n' "$CLANG_VERSION"
+
+          # r383902 is Android clang 11.0.1. If a damaged/wrong cache is ever
+          # restored, fail here instead of compiling with an unknown toolchain.
+          printf '%s\n' "$CLANG_VERSION" | grep -q "clang version 11.0.1"
+          aarch64-linux-gnu-ld --version | head -1
 
       - name: Verify KernelSU-Next v3.3.0 source
         run: |
