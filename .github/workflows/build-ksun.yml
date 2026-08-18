@@ -1135,6 +1135,527 @@ jobs:
           grep -n 'ksu_fake_ss_419.sidtab' KernelSU-Next/kernel/feature/selinux_hide.c
           grep -n 'KSU_FEATURE_SELINUX_HIDE' KernelSU-Next/kernel/feature/selinux_hide.c
 
+      - name: Backport KSUN sepolicy internals to Samsung 4.19 flex-array policydb
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/selinux/sepolicy.c")
+          s = p.read_text()
+
+          # Samsung 4.19 uses the old flex_array based SELinux policydb.
+          if "#include <linux/flex_array.h>" not in s:
+              inc = "#include <linux/vmalloc.h>\n"
+              if inc not in s:
+                  raise SystemExit("sepolicy include anchor missing")
+              s = s.replace(inc, inc + "#include <linux/flex_array.h>\n", 1)
+
+          def replace_function(text, signature, next_marker, replacement):
+              start = text.find(signature)
+              if start < 0:
+                  raise SystemExit(f"function not found: {signature}")
+              end = text.find(next_marker, start)
+              if end < 0:
+                  raise SystemExit(f"next marker not found after: {signature}")
+              return text[:start] + replacement.rstrip() + "\n\n" + text[end:]
+
+          # ----------------------------------------------------------
+          # 1) New v3.3.0 avtab pruning assumes htable is a C pointer
+          #    array. 4.19 uses struct flex_array *. Older KernelSU did
+          #    not perform this pruning, so preserve that old behavior.
+          # ----------------------------------------------------------
+          remove_419 = r'''
+          static bool is_redundant_avtab_node(struct avtab_node *node)
+          {
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+              /*
+               * Old SELinux avtab uses flex_array buckets. KernelSU versions
+               * that supported these kernels did not prune zeroed nodes.
+               */
+              return false;
+          #else
+              if (node->key.specified & AVTAB_XPERMS)
+                  return node->datum.u.xperms == NULL;
+              if (!(node->key.specified & AVTAB_AV))
+                  return false;
+              if (node->key.specified & AVTAB_AUDITDENY)
+                  return node->datum.u.data == ~0U;
+              return node->datum.u.data == 0U;
+          #endif
+          }
+
+          static bool remove_avtab_node(struct policydb *db, struct avtab_node *node)
+          {
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+              /*
+               * Matching the historical KernelSU behavior on flex-array
+               * policydb kernels. The caller has already applied the rule;
+               * retaining a zeroed node is valid for the old implementation.
+               */
+              return false;
+          #else
+              int i;
+              int ret;
+              int shrink_size = sizeof(struct avtab_key) + sizeof(struct avtab_datum);
+              struct avtab removed = {};
+              struct avtab_node *n;
+              struct avtab_node *prev;
+
+              ret = avtab_alloc(&removed, 1);
+              if (ret < 0)
+                  return false;
+
+              for (i = 0; i < db->te_avtab.nslot; i++) {
+                  prev = NULL;
+                  for (n = db->te_avtab.htable[i]; n; prev = n, n = n->next) {
+                      if (n != node)
+                          continue;
+
+                      if (prev)
+                          prev->next = n->next;
+                      else
+                          db->te_avtab.htable[i] = n->next;
+
+                      if (db->te_avtab.nel > 0)
+                          db->te_avtab.nel--;
+
+                      if ((n->key.specified & AVTAB_XPERMS) &&
+                          n->datum.u.xperms) {
+                          shrink_size += sizeof(u8) + sizeof(u8) +
+                              sizeof(u32) *
+                              ARRAY_SIZE(n->datum.u.xperms->perms.p);
+                      }
+                      n->next = NULL;
+                      removed.htable[0] = n;
+                      removed.nel = 1;
+                      avtab_destroy(&removed);
+                      if (db->len >= shrink_size)
+                          db->len -= shrink_size;
+                      return true;
+                  }
+              }
+
+              avtab_destroy(&removed);
+              return false;
+          #endif
+          }
+          '''
+          s = replace_function(
+              s,
+              "static bool is_redundant_avtab_node(struct avtab_node *node)\n{",
+              "static bool add_rule(struct policydb *db,",
+              remove_419,
+          )
+
+          # ----------------------------------------------------------
+          # 2) Filename transitions. v3.3.0 only carries the modern
+          #    filename_trans_key representation. Restore the proven
+          #    old KernelSU <5.7 implementation.
+          # ----------------------------------------------------------
+          filename_compat = r'''
+          static bool add_filename_trans(struct policydb *db, const char *s,
+                                         const char *t, const char *c,
+                                         const char *d, const char *o)
+          {
+              struct type_datum *src, *tgt, *def;
+              struct class_datum *cls;
+
+              src = symtab_search(&db->p_types, s);
+              if (!src) {
+                  pr_warn("source type %s does not exist\n", s);
+                  return false;
+              }
+              tgt = symtab_search(&db->p_types, t);
+              if (!tgt) {
+                  pr_warn("target type %s does not exist\n", t);
+                  return false;
+              }
+              cls = symtab_search(&db->p_classes, c);
+              if (!cls) {
+                  pr_warn("class %s does not exist\n", c);
+                  return false;
+              }
+              def = symtab_search(&db->p_types, d);
+              if (!def) {
+                  pr_warn("default type %s does not exist\n", d);
+                  return false;
+              }
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0)
+              {
+                  struct filename_trans key;
+                  struct filename_trans_datum *trans;
+
+                  key.ttype = tgt->value;
+                  key.tclass = cls->value;
+                  key.name = (char *)o;
+
+                  trans = hashtab_search(db->filename_trans, &key);
+                  if (!trans) {
+                      struct filename_trans *new_key;
+
+                      trans = kzalloc(sizeof(*trans), GFP_ATOMIC);
+                      if (!trans) {
+                          pr_err("add_filename_trans: datum alloc failed\n");
+                          return false;
+                      }
+
+                      new_key = kmalloc(sizeof(*new_key), GFP_ATOMIC);
+                      if (!new_key) {
+                          kfree(trans);
+                          pr_err("add_filename_trans: key alloc failed\n");
+                          return false;
+                      }
+
+                      *new_key = key;
+                      new_key->name = kstrdup(key.name, GFP_ATOMIC);
+                      if (!new_key->name) {
+                          kfree(new_key);
+                          kfree(trans);
+                          return false;
+                      }
+
+                      trans->otype = def->value;
+                      if (hashtab_insert(db->filename_trans, new_key, trans)) {
+                          kfree(new_key->name);
+                          kfree(new_key);
+                          kfree(trans);
+                          return false;
+                      }
+                  } else {
+                      trans->otype = def->value;
+                  }
+
+                  return ebitmap_set_bit(&db->filename_trans_ttypes,
+                                         src->value - 1, 1) == 0;
+              }
+          #else
+              {
+                  struct filename_trans_key key;
+                  struct filename_trans_datum *last = NULL;
+                  struct filename_trans_datum *trans;
+
+                  key.ttype = tgt->value;
+                  key.tclass = cls->value;
+                  key.name = (char *)o;
+
+          #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+                  trans = policydb_filenametr_search(db, &key);
+          #else
+                  trans = hashtab_search(&db->filename_trans, &key);
+          #endif
+                  while (trans) {
+                      if (ebitmap_get_bit(&trans->stypes, src->value - 1)) {
+                          trans->otype = def->value;
+                          return true;
+                      }
+                      if (trans->otype == def->value)
+                          break;
+                      last = trans;
+                      trans = trans->next;
+                  }
+
+                  if (!trans) {
+                      struct filename_trans_key *new_key;
+
+                      trans = kzalloc(sizeof(*trans), GFP_ATOMIC);
+                      if (!trans)
+                          return false;
+                      new_key = kmalloc(sizeof(*new_key), GFP_ATOMIC);
+                      if (!new_key) {
+                          kfree(trans);
+                          return false;
+                      }
+                      *new_key = key;
+                      new_key->name = kstrdup(key.name, GFP_ATOMIC);
+                      if (!new_key->name) {
+                          kfree(new_key);
+                          kfree(trans);
+                          return false;
+                      }
+                      trans->next = last;
+                      trans->otype = def->value;
+                      hashtab_insert(&db->filename_trans, new_key, trans,
+                                     filenametr_key_params);
+                  }
+
+                  db->compat_filename_trans_count++;
+                  return ebitmap_set_bit(&trans->stypes,
+                                         src->value - 1, 1) == 0;
+              }
+          #endif
+          }
+          '''
+          s = replace_function(
+              s,
+              "static bool add_filename_trans(struct policydb *db,",
+              "static bool add_genfscon(struct policydb *db,",
+              filename_compat,
+          )
+
+          # ----------------------------------------------------------
+          # 3) add_type(). <5.1 stores type_attr_map_array,
+          #    type_val_to_struct_array, and sym_val_to_name in
+          #    flex_array objects. Restore KernelSU's historical logic.
+          # ----------------------------------------------------------
+          add_type_compat = r'''
+          static bool add_type(struct policydb *db, const char *type_name,
+                               bool attr)
+          {
+              struct type_datum *type = symtab_search(&db->p_types, type_name);
+              u32 value;
+              char *key;
+
+              if (type) {
+                  pr_warn("Type %s already exists\n", type_name);
+                  return true;
+              }
+
+              value = ++db->p_types.nprim;
+              type = kzalloc(sizeof(*type), GFP_ATOMIC);
+              if (!type)
+                  return false;
+
+              type->primary = 1;
+              type->value = value;
+              type->attribute = attr;
+
+              key = kstrdup(type_name, GFP_ATOMIC);
+              if (!key)
+                  return false;
+
+              if (symtab_insert(&db->p_types, key, type))
+                  return false;
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+              {
+                  struct flex_array *new_attr;
+                  struct flex_array *new_types;
+                  struct flex_array *new_names;
+                  struct flex_array *old_fa;
+                  int j, i;
+                  void *old_elem;
+
+                  new_attr = flex_array_alloc(sizeof(struct ebitmap),
+                                              db->p_types.nprim,
+                                              GFP_ATOMIC | __GFP_ZERO);
+                  new_types = flex_array_alloc(sizeof(struct type_datum *),
+                                               db->p_types.nprim,
+                                               GFP_ATOMIC | __GFP_ZERO);
+                  new_names = flex_array_alloc(sizeof(char *),
+                                               db->symtab[SYM_TYPES].nprim,
+                                               GFP_ATOMIC | __GFP_ZERO);
+                  if (!new_attr || !new_types || !new_names)
+                      return false;
+
+                  if (flex_array_prealloc(new_attr, 0, db->p_types.nprim,
+                                          GFP_ATOMIC | __GFP_ZERO) ||
+                      flex_array_prealloc(new_types, 0, db->p_types.nprim,
+                                          GFP_ATOMIC | __GFP_ZERO) ||
+                      flex_array_prealloc(new_names, 0,
+                                          db->symtab[SYM_TYPES].nprim,
+                                          GFP_ATOMIC | __GFP_ZERO))
+                      return false;
+
+                  if (db->type_attr_map_array) {
+                      for (j = 0;
+                           j < db->type_attr_map_array->total_nr_elements;
+                           j++) {
+                          old_elem = flex_array_get(db->type_attr_map_array, j);
+                          if (old_elem)
+                              flex_array_put(new_attr, j, old_elem,
+                                             GFP_ATOMIC | __GFP_ZERO);
+                      }
+                  }
+
+                  if (db->type_val_to_struct_array) {
+                      for (j = 0;
+                           j < db->type_val_to_struct_array->total_nr_elements;
+                           j++) {
+                          old_elem =
+                              flex_array_get_ptr(db->type_val_to_struct_array, j);
+                          if (old_elem)
+                              flex_array_put_ptr(new_types, j, old_elem,
+                                                 GFP_ATOMIC | __GFP_ZERO);
+                      }
+                  }
+
+                  if (db->sym_val_to_name[SYM_TYPES]) {
+                      for (j = 0; j < value - 1; j++) {
+                          old_elem =
+                              flex_array_get_ptr(db->sym_val_to_name[SYM_TYPES],
+                                                 j);
+                          if (old_elem)
+                              flex_array_put_ptr(new_names, j, old_elem,
+                                                 GFP_ATOMIC | __GFP_ZERO);
+                      }
+                  }
+
+                  old_fa = db->type_attr_map_array;
+                  db->type_attr_map_array = new_attr;
+                  if (old_fa)
+                      flex_array_free(old_fa);
+
+                  ebitmap_init(flex_array_get(db->type_attr_map_array,
+                                              value - 1));
+                  if (ebitmap_set_bit(
+                          flex_array_get(db->type_attr_map_array, value - 1),
+                          value - 1, 1))
+                      return false;
+
+                  old_fa = db->type_val_to_struct_array;
+                  db->type_val_to_struct_array = new_types;
+                  if (old_fa)
+                      flex_array_free(old_fa);
+
+                  if (flex_array_put_ptr(db->type_val_to_struct_array,
+                                         value - 1, type,
+                                         GFP_ATOMIC | __GFP_ZERO))
+                      return false;
+
+                  old_fa = db->sym_val_to_name[SYM_TYPES];
+                  db->sym_val_to_name[SYM_TYPES] = new_names;
+                  if (old_fa)
+                      flex_array_free(old_fa);
+
+                  if (flex_array_put_ptr(db->sym_val_to_name[SYM_TYPES],
+                                         value - 1, key,
+                                         GFP_ATOMIC | __GFP_ZERO))
+                      return false;
+
+                  for (i = 0; i < db->p_roles.nprim; i++)
+                      ebitmap_set_bit(&db->role_val_to_struct[i]->types,
+                                      value - 1, 1);
+
+                  return true;
+              }
+          #else
+              {
+                  struct ebitmap *new_type_attr_map_array;
+                  struct type_datum **new_type_val_to_struct;
+                  char **new_val_to_name_types;
+                  int i;
+
+                  new_type_attr_map_array =
+                      ksu_kvrealloc(db->type_attr_map_array,
+                                    value * sizeof(struct ebitmap),
+                                    (value - 1) * sizeof(struct ebitmap));
+                  if (!new_type_attr_map_array)
+                      return false;
+
+                  new_type_val_to_struct =
+                      ksu_kvrealloc(db->type_val_to_struct,
+                                    sizeof(*db->type_val_to_struct) * value,
+                                    sizeof(*db->type_val_to_struct) *
+                                        (value - 1));
+                  if (!new_type_val_to_struct)
+                      return false;
+
+                  new_val_to_name_types =
+                      ksu_kvrealloc(db->sym_val_to_name[SYM_TYPES],
+                                    sizeof(char *) * value,
+                                    sizeof(char *) * (value - 1));
+                  if (!new_val_to_name_types)
+                      return false;
+
+                  db->type_attr_map_array = new_type_attr_map_array;
+                  ebitmap_init(&db->type_attr_map_array[value - 1]);
+                  ebitmap_set_bit(&db->type_attr_map_array[value - 1],
+                                  value - 1, 1);
+
+                  db->type_val_to_struct = new_type_val_to_struct;
+                  db->type_val_to_struct[value - 1] = type;
+
+                  db->sym_val_to_name[SYM_TYPES] = new_val_to_name_types;
+                  db->sym_val_to_name[SYM_TYPES][value - 1] = key;
+
+                  for (i = 0; i < db->p_roles.nprim; ++i)
+                      ebitmap_set_bit(&db->role_val_to_struct[i]->types,
+                                      value - 1, 1);
+
+                  return true;
+              }
+          #endif
+          }
+          '''
+          s = replace_function(
+              s,
+              "static bool add_type(struct policydb *db,",
+              "static bool set_type_state(struct policydb *db,",
+              add_type_compat,
+          )
+
+          # ----------------------------------------------------------
+          # 4) typeattribute map lookup also differs on flex-array
+          #    policydb kernels.
+          # ----------------------------------------------------------
+          typeattr_compat = r'''
+          static void add_typeattribute_raw(struct policydb *db,
+                                            struct type_datum *type,
+                                            struct type_datum *attr)
+          {
+              struct ebitmap *sattr;
+              struct hashtab_node *node;
+              struct constraint_node *n;
+              struct constraint_expr *e;
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
+              sattr = flex_array_get(db->type_attr_map_array,
+                                     type->value - 1);
+          #else
+              sattr = &db->type_attr_map_array[type->value - 1];
+          #endif
+              if (!sattr)
+                  return;
+
+              ebitmap_set_bit(sattr, attr->value - 1, 1);
+
+              ksu_hashtab_for_each(db->p_classes.table, node)
+              {
+                  struct class_datum *cls =
+                      (struct class_datum *)node->datum;
+                  for (n = cls->constraints; n; n = n->next) {
+                      for (e = n->expr; e; e = e->next) {
+                          if (e->expr_type == CEXPR_NAMES &&
+                              ebitmap_get_bit(&e->type_names->types,
+                                              attr->value - 1))
+                              ebitmap_set_bit(&e->names,
+                                              type->value - 1, 1);
+                      }
+                  }
+              };
+          }
+          '''
+          s = replace_function(
+              s,
+              "static void add_typeattribute_raw(struct policydb *db,",
+              "static bool add_typeattribute(struct policydb *db,",
+              typeattr_compat,
+          )
+
+          # Validation of the compatibility paths.
+          checks = [
+              "struct filename_trans key;",
+              "type_val_to_struct_array",
+              "flex_array_get(db->type_attr_map_array",
+              "Old SELinux avtab uses flex_array buckets",
+          ]
+          for needle in checks:
+              if needle not in s:
+                  raise SystemExit(f"missing expected compatibility code: {needle}")
+
+          p.write_text(s)
+          print("Samsung 4.19 flex-array SELinux policydb compatibility applied")
+          PY
+
+          echo "=== sepolicy 4.19 compatibility verification ==="
+          grep -n 'struct filename_trans key' KernelSU-Next/kernel/selinux/sepolicy.c
+          grep -n 'type_val_to_struct_array' KernelSU-Next/kernel/selinux/sepolicy.c | head -10
+          grep -n 'flex_array_get(db->type_attr_map_array' KernelSU-Next/kernel/selinux/sepolicy.c
+          grep -n 'Old SELinux avtab uses flex_array buckets' KernelSU-Next/kernel/selinux/sepolicy.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
