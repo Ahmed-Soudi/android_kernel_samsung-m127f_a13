@@ -1809,6 +1809,55 @@ jobs:
           grep -n 'untagged_addr' KernelSU-Next/kernel/sulog/event.c | head -10
           grep -n 'strncpy_from_user(' KernelSU-Next/kernel/sulog/event.c
 
+      - name: Backport KSUN supercall task helpers to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/dispatch.c")
+          s = p.read_text()
+
+          # Linux 4.19 exposes tasklist_lock and init_task through
+          # sched/task.h, while task_pgrp()/task_session() are in
+          # sched/signal.h. sched/signal.h includes sched/task.h, so
+          # one explicit include supplies the whole API cluster.
+          if "#include <linux/sched/signal.h>" not in s:
+              marker = "#include <linux/thread_info.h>\n"
+              if marker not in s:
+                  raise SystemExit("dispatch.c include anchor not found")
+              s = s.replace(
+                  marker,
+                  marker + "#include <linux/sched/signal.h>\n",
+                  1,
+              )
+
+          # Verify the function that failed is still intact; this patch
+          # only exposes the correct 4.19 declarations and does not
+          # alter process-group/session semantics.
+          required = [
+              "write_lock_irq(&tasklist_lock);",
+              "task_pgrp(&init_task)",
+              "task_session(p)",
+              "change_pid(p, PIDTYPE_PGID, init_group);",
+              "write_unlock_irq(&tasklist_lock);",
+          ]
+          for needle in required:
+              if needle not in s:
+                  raise SystemExit(
+                      f"do_set_init_pgrp unexpectedly changed: {needle}"
+                  )
+
+          p.write_text(s)
+          print("Samsung 4.19 supercall task helper declarations enabled")
+          PY
+
+          echo "=== supercall 4.19 verification ==="
+          grep -n '#include <linux/sched/signal.h>' \
+            KernelSU-Next/kernel/supercall/dispatch.c
+          sed -n '720,760p' KernelSU-Next/kernel/supercall/dispatch.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
