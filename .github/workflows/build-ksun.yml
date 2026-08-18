@@ -612,6 +612,60 @@ jobs:
           grep -q '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)' \
             KernelSU-Next/kernel/policy/app_profile.c
 
+      - name: Backport KSUN ksud nofault uaccess helpers to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/runtime/ksud_integration.c")
+          s = p.read_text()
+
+          # Samsung 4.19 does not expose the newer *_user_nofault helpers
+          # used by KSUN v3.3.0. This code executes in normal process
+          # context while inspecting/updating the current task's userspace,
+          # so use the corresponding 4.19 uaccess helpers.
+          replacements = {
+              "strncpy_from_user_nofault(buf, p, buf_len)":
+                  "strncpy_from_user(buf, p, buf_len)",
+              "copy_from_user_nofault(&size, st_size_ptr, sizeof(long))":
+                  "copy_from_user(&size, st_size_ptr, sizeof(long))",
+              "copy_to_user_nofault(st_size_ptr, &new_size, sizeof(long))":
+                  "copy_to_user(st_size_ptr, &new_size, sizeof(long))",
+          }
+
+          changed = 0
+          for old, new in replacements.items():
+              if old in s:
+                  s = s.replace(old, new)
+                  changed += 1
+
+          if changed != 3:
+              missing = [old for old in replacements if old in s]
+              # If an expression was already patched, don't fail just for that.
+              remaining_nofault = [
+                  "strncpy_from_user_nofault(",
+                  "copy_from_user_nofault(",
+                  "copy_to_user_nofault(",
+              ]
+              leftovers = [x for x in remaining_nofault if x in s]
+              if leftovers:
+                  raise SystemExit(
+                      f"ksud uaccess patch incomplete; remaining helpers: {leftovers}"
+                  )
+
+          p.write_text(s)
+          PY
+
+          echo "=== Patched ksud_integration.c uaccess calls ==="
+          grep -nE 'strncpy_from_user\(|copy_(from|to)_user\('             KernelSU-Next/kernel/runtime/ksud_integration.c | head -30
+
+          if grep -qE 'strncpy_from_user_nofault|copy_from_user_nofault|copy_to_user_nofault'             KernelSU-Next/kernel/runtime/ksud_integration.c; then
+            echo "ERROR: unsupported nofault helper remains"
+            exit 1
+          fi
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
