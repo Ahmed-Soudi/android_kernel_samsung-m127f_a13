@@ -1164,7 +1164,6 @@ jobs:
 
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           p = Path("KernelSU-Next/kernel/selinux/sepolicy.c")
           s = p.read_text()
@@ -1689,29 +1688,43 @@ jobs:
                   raise SystemExit(f"missing expected compatibility code: {needle}")
 
           # Guard against accidentally replacing top-of-file prototypes again.
-          for fn in [
-              "add_filename_trans",
-              "add_type",
-              "add_typeattribute_raw",
-              "is_redundant_avtab_node",
-              "remove_avtab_node",
-          ]:
-              defs = len(re.findall(
-                  r"static\\s+(?:bool|void)\\s+" + re.escape(fn) +
-                  r"\\s*\\([^;]*?\\)\\s*\\{",
-                  s,
-                  flags=re.S,
-              ))
-              if defs != 1:
+          # Use the same declaration-aware definition finder as the patcher;
+          # do not depend on C formatting or multiline signatures.
+          function_signatures = [
+              ("add_filename_trans", "static bool add_filename_trans"),
+              ("add_type", "static bool add_type"),
+              ("add_typeattribute_raw", "static void add_typeattribute_raw"),
+              ("is_redundant_avtab_node", "static bool is_redundant_avtab_node"),
+              ("remove_avtab_node", "static bool remove_avtab_node"),
+          ]
+
+          for fn, sig in function_signatures:
+              first = find_definition(s, sig)
+
+              # A second real definition would mean the workflow duplicated
+              # the function instead of replacing its original body.
+              try:
+                  second = find_definition(s, sig, first + len(sig))
+              except SystemExit:
+                  second = -1
+
+              if second >= 0:
                   raise SystemExit(
-                      f"{fn}: expected exactly one definition after patch, found {defs}"
+                      f"{fn}: duplicate real function definition remains"
                   )
 
           # These compatibility macros must appear before the patched functions.
-          if s.find("#define symtab_search") > s.find("static bool add_filename_trans"):
-              raise SystemExit("patched definitions appeared before symtab compatibility macros")
-          if s.find("#define ksu_hashtab_for_each") > s.find("static bool add_typeattribute"):
-              raise SystemExit("patched definitions appeared before hashtab compatibility macros")
+          filename_def = find_definition(s, "static bool add_filename_trans")
+          typeattr_def = find_definition(s, "static bool add_typeattribute")
+
+          if s.find("#define symtab_search") > filename_def:
+              raise SystemExit(
+                  "patched definitions appeared before symtab compatibility macros"
+              )
+          if s.find("#define ksu_hashtab_for_each") > typeattr_def:
+              raise SystemExit(
+                  "patched definitions appeared before hashtab compatibility macros"
+              )
 
           p.write_text(s)
           print("Samsung 4.19 flex-array SELinux policydb compatibility applied")
