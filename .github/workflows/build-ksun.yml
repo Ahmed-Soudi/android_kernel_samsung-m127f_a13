@@ -1152,13 +1152,31 @@ jobs:
                   raise SystemExit("sepolicy include anchor missing")
               s = s.replace(inc, inc + "#include <linux/flex_array.h>\n", 1)
 
-          def replace_function(text, signature, next_marker, replacement):
-              start = text.find(signature)
-              if start < 0:
-                  raise SystemExit(f"function not found: {signature}")
-              end = text.find(next_marker, start)
-              if end < 0:
-                  raise SystemExit(f"next marker not found after: {signature}")
+          def find_definition(text, signature, start_at=0):
+              """
+              Find a real C function definition, never a forward declaration.
+              The previous version used text.find(signature), which matched the
+              prototypes near the top of sepolicy.c and caused duplicate
+              definitions later in the file.
+              """
+              pos = start_at
+              while True:
+                  pos = text.find(signature, pos)
+                  if pos < 0:
+                      raise SystemExit(f"function definition not found: {signature}")
+
+                  semi = text.find(";", pos)
+                  brace = text.find("{", pos)
+
+                  # A declaration terminates with ';' before any opening body.
+                  if brace >= 0 and (semi < 0 or brace < semi):
+                      return pos
+
+                  pos += len(signature)
+
+          def replace_function(text, signature, next_signature, replacement):
+              start = find_definition(text, signature)
+              end = find_definition(text, next_signature, start + len(signature))
               return text[:start] + replacement.rstrip() + "\n\n" + text[end:]
 
           # ----------------------------------------------------------
@@ -1645,6 +1663,31 @@ jobs:
           for needle in checks:
               if needle not in s:
                   raise SystemExit(f"missing expected compatibility code: {needle}")
+
+          # Guard against accidentally replacing top-of-file prototypes again.
+          for fn in [
+              "add_filename_trans",
+              "add_type",
+              "add_typeattribute_raw",
+              "is_redundant_avtab_node",
+              "remove_avtab_node",
+          ]:
+              defs = len(re.findall(
+                  r"static\\s+(?:bool|void)\\s+" + re.escape(fn) +
+                  r"\\s*\\([^;]*?\\)\\s*\\{",
+                  s,
+                  flags=re.S,
+              ))
+              if defs != 1:
+                  raise SystemExit(
+                      f"{fn}: expected exactly one definition after patch, found {defs}"
+                  )
+
+          # These compatibility macros must appear before the patched functions.
+          if s.find("#define symtab_search") > s.find("static bool add_filename_trans"):
+              raise SystemExit("patched definitions appeared before symtab compatibility macros")
+          if s.find("#define ksu_hashtab_for_each") > s.find("static bool add_typeattribute"):
+              raise SystemExit("patched definitions appeared before hashtab compatibility macros")
 
           p.write_text(s)
           print("Samsung 4.19 flex-array SELinux policydb compatibility applied")
