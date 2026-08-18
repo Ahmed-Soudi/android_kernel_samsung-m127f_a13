@@ -2004,6 +2004,102 @@ jobs:
           grep -n -A6 -B2 'put_seccomp_filter(fake)' \
             KernelSU-Next/kernel/policy/app_profile.c
 
+      - name: Disable only SELinux Hide early status-open text patch on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
+          s = p.read_text()
+
+          old = r'''void __init ksu_selinux_hide_init()
+          {
+              if (ksu_register_feature_handler(&selinux_hide_handler)) {
+                  pr_err("Failed to register selinux_hide feature handler\n");
+              }
+              if (ksu_late_loaded) {
+                  initialize_fake_status();
+              } else {
+                  static_key_enable(&fake_status_initialize_key.key);
+              }
+              hook_selinux_status_open();
+          }
+          '''
+
+          new = r'''void __init ksu_selinux_hide_init()
+          {
+              if (ksu_register_feature_handler(&selinux_hide_handler)) {
+                  pr_err("Failed to register selinux_hide feature handler\n");
+              }
+              if (ksu_late_loaded) {
+                  initialize_fake_status();
+              } else {
+                  static_key_enable(&fake_status_initialize_key.key);
+              }
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              /*
+               * Samsung 4.19 runtime-isolation test:
+               *
+               * Keep SELinux Hide compiled and registered, but do NOT patch
+               * sel_handle_status_ops->open during early boot.
+               *
+               * The previous runtime log showed:
+               *   failed to find phy addr for patch dst addr ...
+               *   selinux_hide: init: patch_text sel_open_handle_status err: -2
+               *
+               * This leaves the feature handler, backup policy, fake-status
+               * machinery, context/access hooks and setprocattr path intact.
+               * If the phone boots, the next test is to make the status-open
+               * hook Samsung-safe rather than permanently removing it.
+               */
+              pr_warn("selinux_hide: Samsung 4.19 test: skip early status-open text patch\n");
+          #else
+              hook_selinux_status_open();
+          #endif
+          }
+          '''
+
+          if old not in s:
+              raise SystemExit(
+                  "exact ksu_selinux_hide_init() body not found; refusing broad replacement"
+              )
+
+          s = s.replace(old, new, 1)
+
+          # Structural verification: feature must remain registered and the
+          # normal enable path must still contain hook_selinux_status_open().
+          required = [
+              "ksu_register_feature_handler(&selinux_hide_handler)",
+              "static int ksu_selinux_hide_enable()",
+              "hook_selinux_status_open();",
+              "static int selinux_hide_feature_set(u64 value)",
+              "KSU_FEATURE_SELINUX_HIDE",
+              "Samsung 4.19 test: skip early status-open text patch",
+          ]
+          for needle in required:
+              if needle not in s:
+                  raise SystemExit(f"missing required SELinux Hide code: {needle}")
+
+          # There should still be at least one real hook call for the runtime
+          # enable path. We are isolating early boot only.
+          if s.count("hook_selinux_status_open();") < 2:
+              raise SystemExit(
+                  "SELinux Hide status hook was removed too broadly"
+              )
+
+          p.write_text(s)
+          print("Early SELinux status-open patch disabled only for Samsung 4.19 boot test")
+          PY
+
+          echo "=== SELinux Hide early-hook isolation verification ==="
+          grep -n -A28 'void __init ksu_selinux_hide_init' \
+            KernelSU-Next/kernel/feature/selinux_hide.c
+          grep -n -A18 'static int ksu_selinux_hide_enable' \
+            KernelSU-Next/kernel/feature/selinux_hide.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
