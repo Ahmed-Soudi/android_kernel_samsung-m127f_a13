@@ -1736,6 +1736,79 @@ jobs:
           grep -n 'flex_array_get(db->type_attr_map_array' KernelSU-Next/kernel/selinux/sepolicy.c
           grep -n 'Old SELinux avtab uses flex_array buckets' KernelSU-Next/kernel/selinux/sepolicy.c
 
+      - name: Backport KSUN SULog helpers to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/sulog/event.c")
+          s = p.read_text()
+
+          # linux/minmax.h is newer than this Samsung 4.19 tree.
+          # min()/min_t() are provided by linux/kernel.h on 4.19.
+          s = s.replace(
+              "#include <linux/minmax.h>\n",
+              "#include <linux/kernel.h>\n",
+              1,
+          )
+
+          # This Samsung 4.19 tree does not expose the newer nofault
+          # user-string helper. SULog captures argv/filename in normal
+          # process context, so the 4.19 strncpy_from_user() helper is
+          # the appropriate compatibility path.
+          s = s.replace(
+              "strncpy_from_user_nofault(dst, "
+              "(const void __user *)untagged_addr((unsigned long)filename_user), "
+              "dst_len)",
+              "strncpy_from_user(dst, "
+              "(const void __user *)untagged_addr((unsigned long)filename_user), "
+              "dst_len)",
+          )
+
+          s = s.replace(
+              "strncpy_from_user_nofault(arg, "
+              "(const void __user *)untagged_addr((unsigned long)arg_user), "
+              "sizeof(arg))",
+              "strncpy_from_user(arg, "
+              "(const void __user *)untagged_addr((unsigned long)arg_user), "
+              "sizeof(arg))",
+          )
+
+          # Older 4.19 vendor trees may not provide the generic
+          # untagged_addr() helper. Identity is correct for this old
+          # arm64 userspace-access path and keeps the source portable.
+          compat = '''
+          #ifndef untagged_addr
+          #define untagged_addr(addr) (addr)
+          #endif
+
+          '''
+          marker = '#include "sulog/event.h"\n'
+          if "#ifndef untagged_addr" not in s:
+              if marker not in s:
+                  raise SystemExit("SULog include anchor not found")
+              s = s.replace(marker, marker + compat, 1)
+
+          # Fail before compilation if the known 4.19-incompatible
+          # constructs still remain in this file.
+          if "#include <linux/minmax.h>" in s:
+              raise SystemExit("linux/minmax.h still present")
+          if "strncpy_from_user_nofault(" in s:
+              raise SystemExit("SULog nofault user-string helper still present")
+          if "#include <linux/kernel.h>" not in s:
+              raise SystemExit("linux/kernel.h compatibility include missing")
+
+          p.write_text(s)
+          print("Samsung 4.19 SULog compatibility applied")
+          PY
+
+          echo "=== SULog 4.19 verification ==="
+          grep -n '#include <linux/kernel.h>' KernelSU-Next/kernel/sulog/event.c
+          grep -n 'untagged_addr' KernelSU-Next/kernel/sulog/event.c | head -10
+          grep -n 'strncpy_from_user(' KernelSU-Next/kernel/sulog/event.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
