@@ -2277,6 +2277,79 @@ jobs:
           grep -n -A70 'void __init ksu_syscall_hook_manager_init' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
+      - name: Disable only KSUD input_event kprobe on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/runtime/ksud_integration.c")
+          s = p.read_text()
+
+          old = r'''void __init ksu_ksud_init()
+          {
+              int ret;
+
+              ksu_syscall_table_hook(__NR_read, ksu_sys_read, &orig_sys_read);
+              ksu_syscall_table_hook(__NR_fstat, ksu_sys_fstat, &orig_sys_fstat);
+
+              ret = register_kprobe(&input_event_kp);
+              pr_info("ksud: input_event_kp: %d\n", ret);
+
+              INIT_WORK(&stop_input_hook_work, do_stop_input_hook);
+          }
+          '''
+
+          new = r'''void __init ksu_ksud_init()
+          {
+              ksu_syscall_table_hook(__NR_read, ksu_sys_read, &orig_sys_read);
+              ksu_syscall_table_hook(__NR_fstat, ksu_sys_fstat, &orig_sys_fstat);
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              /*
+               * Samsung 4.19 / Exynos diagnostic:
+               *
+               * Preserve KSUD's read/fstat syscall-table hooks and work item,
+               * but skip only the input_event kprobe. Previous diagnostics
+               * proved multiple kprobe/kretprobe registrations trigger TZASC.
+               */
+              pr_warn("ksud: Samsung 4.19 diagnostic: input_event kprobe skipped\n");
+          #else
+              {
+                  int ret = register_kprobe(&input_event_kp);
+                  pr_info("ksud: input_event_kp: %d\n", ret);
+              }
+          #endif
+
+              INIT_WORK(&stop_input_hook_work, do_stop_input_hook);
+          }
+          '''
+
+          if old not in s:
+              raise SystemExit("exact ksu_ksud_init() body not found; refusing unsafe edit")
+
+          s = s.replace(old, new, 1)
+
+          required = [
+              "ksu_syscall_table_hook(__NR_read",
+              "ksu_syscall_table_hook(__NR_fstat",
+              "INIT_WORK(&stop_input_hook_work",
+              "input_event kprobe skipped",
+              "register_kprobe(&input_event_kp)",
+          ]
+          for needle in required:
+              if needle not in s:
+                  raise SystemExit(f"required KSUD code missing: {needle}")
+
+          p.write_text(s)
+          print("KSUD input_event kprobe isolated successfully")
+          PY
+
+          echo "=== KSUD input_event kprobe isolation verification ==="
+          grep -n -A36 'void __init ksu_ksud_init' \
+            KernelSU-Next/kernel/runtime/ksud_integration.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -2371,7 +2444,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-KSUDOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-KSUD-NoInputKprobe.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2384,8 +2457,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-KSUDOnly
-          path: M127F-KSUN-v3.3.0-DIAG-KSUDOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-KSUD-NoInputKprobe
+          path: M127F-KSUN-v3.3.0-DIAG-KSUD-NoInputKprobe.zip
           if-no-files-found: error
           compression-level: 0
 
