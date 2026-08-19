@@ -2135,7 +2135,7 @@ jobs:
 
           echo "SELinux Hide and full KSUN runtime remain enabled."
 
-      - name: Test allowlist after probe-safe hook manager on Samsung 4.19
+      - name: Test throne tracker after probe-safe allowlist on Samsung 4.19
         run: |
           set -euxo pipefail
           python3 - <<'PY'
@@ -2161,7 +2161,7 @@ jobs:
                   return -ENOSYS;
               }
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: allowlist-only begin\n");
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: throne-tracker-only begin\n");
 
               ksu_init_symbol_resolver();
               pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
@@ -2192,7 +2192,10 @@ jobs:
               ksu_allowlist_init();
               pr_warn("KernelSU: diagnostic passed allowlist_init\n");
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before throne_tracker/ksud/file_wrapper\n");
+              ksu_throne_tracker_init();
+              pr_warn("KernelSU: diagnostic passed throne_tracker_init\n");
+
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before ksud/file_wrapper\n");
               return 0;
           #endif
           '''
@@ -2201,9 +2204,9 @@ jobs:
           p.write_text(s)
           PY
 
-          echo "=== Allowlist-only diagnostic verification ==="
-          grep -n -A115 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
-          grep -n 'diagnostic passed\|allowlist-only' KernelSU-Next/kernel/core/init.c
+          echo "=== Throne tracker-only diagnostic verification ==="
+          grep -n -A120 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
+          grep -n 'diagnostic passed\|throne-tracker-only' KernelSU-Next/kernel/core/init.c
 
       - name: Disable only syscall hook manager kretprobes on Samsung 4.19
         run: |
@@ -2343,7 +2346,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-AllowlistOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-ThroneTrackerOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2356,8 +2359,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-AllowlistOnly
-          path: M127F-KSUN-v3.3.0-DIAG-AllowlistOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-ThroneTrackerOnly
+          path: M127F-KSUN-v3.3.0-DIAG-ThroneTrackerOnly.zip
           if-no-files-found: error
           compression-level: 0
 
