@@ -2340,39 +2340,20 @@ jobs:
           grep -n 'void apply_kernelsu_rules' \
             KernelSU-Next/kernel/selinux/rules.c
 
-      - name: Enable first half of KSUN runtime on Samsung 4.19
+      - name: Enable KSUN through syscall manager and allowlist on Samsung 4.19
         run: |
           set -euxo pipefail
-
           python3 - <<'PY'
           from pathlib import Path
-
           p = Path("KernelSU-Next/kernel/core/init.c")
           s = p.read_text()
-
           sig = "int __init kernelsu_init(void)\n{"
           pos = s.find(sig)
           if pos < 0:
               raise SystemExit("kernelsu_init() not found")
-
           insert_at = pos + len(sig)
-
           marker = r'''
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              /*
-               * Samsung 4.19 binary-search diagnostic:
-               *
-               * Run only the FIRST HALF of KSUN runtime initialization:
-               *   - prepare_creds
-               *   - symbol resolver
-               *   - syscall hook core
-               *   - feature core
-               *   - SULog
-               *   - ADB root
-               *   - LSM hook core
-               *
-               * Then return BEFORE SELinux Hide and all later runtime pieces.
-               */
               ksu_late_loaded = false;
 
               ksu_cred = prepare_creds();
@@ -2381,7 +2362,7 @@ jobs:
                   return -ENOSYS;
               }
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: first-half runtime begin\n");
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: mid-runtime begin\n");
 
               ksu_init_symbol_resolver();
               pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
@@ -2401,42 +2382,31 @@ jobs:
               ksu_lsm_hook_init();
               pr_warn("KernelSU: diagnostic passed lsm_hook_init\n");
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: first-half runtime complete; stopping before selinux_hide\n");
+              /*
+               * SELinux Hide runtime is already isolated by an earlier
+               * diagnostic patch in this workflow.
+               */
+
+              ksu_supercalls_init();
+              pr_warn("KernelSU: diagnostic passed supercalls_init\n");
+
+              ksu_syscall_hook_manager_init();
+              pr_warn("KernelSU: diagnostic passed syscall_hook_manager_init\n");
+
+              ksu_allowlist_init();
+              pr_warn("KernelSU: diagnostic passed allowlist_init\n");
+
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before throne_tracker/ksud/file_wrapper\n");
               return 0;
           #endif
           '''
-
-          if "first-half runtime begin" in s:
-              raise SystemExit("first-half diagnostic already present")
-          if "all runtime initialization skipped" in s:
-              raise SystemExit("runtime-inert marker unexpectedly present in source")
-
           s = s[:insert_at] + marker + s[insert_at:]
-
-          required = [
-              "ksu_init_symbol_resolver();",
-              "ksu_syscall_hook_init();",
-              "ksu_feature_init();",
-              "ksu_sulog_init();",
-              "ksu_adb_root_init();",
-              "ksu_lsm_hook_init();",
-              "ksu_selinux_hide_init();",
-              "ksu_supercalls_init();",
-              "ksu_syscall_hook_manager_init();",
-              "ksu_ksud_init();",
-              "ksu_file_wrapper_init();",
-          ]
-          for needle in required:
-              if needle not in s:
-                  raise SystemExit(f"expected KSUN init call missing: {needle}")
-
           p.write_text(s)
-          print("First-half KSUN runtime diagnostic injected successfully")
           PY
 
-          echo "=== First-half runtime diagnostic verification ==="
-          grep -n -A80 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
-          grep -n 'diagnostic passed\|first-half runtime' KernelSU-Next/kernel/core/init.c
+          echo "=== Mid-runtime diagnostic verification ==="
+          grep -n -A100 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
+          grep -n 'diagnostic passed\|mid-runtime' KernelSU-Next/kernel/core/init.c
 
       - name: Configure M127F kernel
         run: |
@@ -2532,7 +2502,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FirstHalfRuntime.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-MidRuntime.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2545,8 +2515,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FirstHalfRuntime
-          path: M127F-KSUN-v3.3.0-DIAG-FirstHalfRuntime.zip
+          name: M127F-KSUN-v3.3.0-DIAG-MidRuntime
+          path: M127F-KSUN-v3.3.0-DIAG-MidRuntime.zip
           if-no-files-found: error
           compression-level: 0
 
