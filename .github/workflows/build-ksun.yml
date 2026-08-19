@@ -2397,6 +2397,83 @@ jobs:
           grep -n -A95 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
           grep -n 'diagnostic passed\|supercalls-only' KernelSU-Next/kernel/core/init.c
 
+      - name: Isolate reboot kprobe inside KSUN supercalls on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          old = r'''void __init ksu_supercalls_init(void)
+          {
+              int rc;
+
+              ksu_supercall_dump_commands();
+
+              rc = register_kprobe(&reboot_kp);
+              if (rc) {
+                  pr_err("reboot kprobe failed: %d\n", rc);
+              } else {
+                  pr_info("reboot kprobe registered successfully\n");
+              }
+          }
+          '''
+
+          new = r'''void __init ksu_supercalls_init(void)
+          {
+              /*
+               * Samsung 4.19 diagnostic:
+               *
+               * Keep the non-hook supercall initialization, but skip the
+               * reboot kprobe registration. register_kprobe() may patch kernel
+               * text, which is a strong suspect on this Exynos/TZASC kernel.
+               *
+               * Diagnostic only; this disables the legacy reboot-kprobe
+               * supercall transport and manager autodetection through it.
+               */
+              ksu_supercall_dump_commands();
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: reboot kprobe registration skipped\n");
+              return;
+          #else
+              {
+                  int rc = register_kprobe(&reboot_kp);
+                  if (rc) {
+                      pr_err("reboot kprobe failed: %d\n", rc);
+                  } else {
+                      pr_info("reboot kprobe registered successfully\n");
+                  }
+              }
+          #endif
+          }
+          '''
+
+          if old not in s:
+              raise SystemExit("exact ksu_supercalls_init() body not found; refusing broad edit")
+
+          s = s.replace(old, new, 1)
+
+          required = [
+              "ksu_supercall_dump_commands();",
+              "register_kprobe(&reboot_kp)",
+              "reboot kprobe registration skipped",
+          ]
+          for needle in required:
+              if needle not in s:
+                  raise SystemExit(f"missing expected supercall code: {needle}")
+
+          p.write_text(s)
+          print("Supercall reboot kprobe isolated successfully")
+          PY
+
+          echo "=== Supercall kprobe isolation verification ==="
+          grep -n -A34 'void __init ksu_supercalls_init' \
+            KernelSU-Next/kernel/supercall/supercall.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -2491,7 +2568,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SupercallsOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SupercallNoRebootKprobe.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2504,8 +2581,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-SupercallsOnly
-          path: M127F-KSUN-v3.3.0-DIAG-SupercallsOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-SupercallNoRebootKprobe
+          path: M127F-KSUN-v3.3.0-DIAG-SupercallNoRebootKprobe.zip
           if-no-files-found: error
           compression-level: 0
 
