@@ -2246,6 +2246,100 @@ jobs:
           grep -n -A18 'static int selinux_hide_feature_set' \
             KernelSU-Next/kernel/feature/selinux_hide.c
 
+      - name: Isolate initial KSUN SELinux rule application on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/selinux/rules.c")
+          s = p.read_text()
+
+          guard = "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)"
+          g = s.find(guard)
+          if g < 0:
+              raise SystemExit("4.19 rules compatibility guard not found")
+
+          sig = "void apply_kernelsu_rules()\n{"
+          start = s.find(sig, g)
+          if start < 0:
+              raise SystemExit("4.19 apply_kernelsu_rules() not found")
+
+          body = s.find("{", start)
+          depth = 0
+          end = None
+          for i in range(body, len(s)):
+              if s[i] == "{":
+                  depth += 1
+              elif s[i] == "}":
+                  depth -= 1
+                  if depth == 0:
+                      end = i + 1
+                      break
+          if end is None:
+              raise SystemExit("could not find end of 4.19 apply_kernelsu_rules()")
+
+          original = s[start:end]
+
+          # Safety: ensure we are replacing the 4.19 direct-live-policy path,
+          # not the untouched 5.10+ upstream implementation.
+          required_old = [
+              "struct selinux_ss *ss;",
+              "mutex_lock(&ksu_rules_419);",
+              "backup_sepolicy = ksu_dup_sepolicy(&old_wrap);",
+              "db = &ss->policydb;",
+              "reset_avc_cache();",
+          ]
+          for needle in required_old:
+              if needle not in original:
+                  raise SystemExit(
+                      f"refusing diagnostic replacement; expected 4.19 code missing: {needle}"
+                  )
+
+          replacement = r'''void apply_kernelsu_rules()
+          {
+              /*
+               * Samsung 4.19 diagnostic only:
+               *
+               * Do not duplicate, mutate, or reset the live SELinux policy
+               * during KSUN boot. The previous SELinux-Hide-off build still
+               * panicked, so this isolates the 4.19 initial policy backport
+               * from the rest of KernelSU-Next early runtime.
+               *
+               * This build is expected to have reduced/non-functional KSUN
+               * root policy behavior. It is NOT a final build.
+               */
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: initial sepolicy rules skipped\n");
+              backup_sepolicy = NULL;
+              return;
+          }'''
+
+          s = s[:start] + replacement + s[end:]
+
+          # Verify 5.10+ implementation still exists after the #else branch.
+          else_pos = s.find("#else", start)
+          if else_pos < 0:
+              raise SystemExit("5.10+ #else branch missing after diagnostic patch")
+          new_branch_pos = s.find("void apply_kernelsu_rules()", else_pos)
+          if new_branch_pos < 0:
+              raise SystemExit("5.10+ apply_kernelsu_rules() unexpectedly removed")
+
+          if "Samsung 4.19 diagnostic: initial sepolicy rules skipped" not in s:
+              raise SystemExit("diagnostic marker missing")
+          if "static DEFINE_MUTEX(ksu_rules_419);" not in s:
+              raise SystemExit("4.19 compatibility branch unexpectedly damaged")
+
+          p.write_text(s)
+          print("4.19 initial KSUN sepolicy application isolated successfully")
+          PY
+
+          echo "=== Initial sepolicy isolation verification ==="
+          grep -n -A20 'Samsung 4.19 diagnostic: initial sepolicy rules skipped' \
+            KernelSU-Next/kernel/selinux/rules.c
+          grep -n 'void apply_kernelsu_rules' \
+            KernelSU-Next/kernel/selinux/rules.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
