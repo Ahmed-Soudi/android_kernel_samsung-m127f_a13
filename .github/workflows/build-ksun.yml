@@ -2004,400 +2004,7 @@ jobs:
           grep -n -A6 -B2 'put_seccomp_filter(fake)' \
             KernelSU-Next/kernel/policy/app_profile.c
 
-      - name: Disable only SELinux Hide early status-open text patch on Samsung 4.19
-        run: |
-          set -euxo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
-          s = p.read_text()
-
-          old = r'''void __init ksu_selinux_hide_init()
-          {
-              if (ksu_register_feature_handler(&selinux_hide_handler)) {
-                  pr_err("Failed to register selinux_hide feature handler\n");
-              }
-              if (ksu_late_loaded) {
-                  initialize_fake_status();
-              } else {
-                  static_key_enable(&fake_status_initialize_key.key);
-              }
-              hook_selinux_status_open();
-          }
-          '''
-
-          new = r'''void __init ksu_selinux_hide_init()
-          {
-              if (ksu_register_feature_handler(&selinux_hide_handler)) {
-                  pr_err("Failed to register selinux_hide feature handler\n");
-              }
-              if (ksu_late_loaded) {
-                  initialize_fake_status();
-              } else {
-                  static_key_enable(&fake_status_initialize_key.key);
-              }
-
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              /*
-               * Samsung 4.19 runtime-isolation test:
-               *
-               * Keep SELinux Hide compiled and registered, but do NOT patch
-               * sel_handle_status_ops->open during early boot.
-               *
-               * The previous runtime log showed:
-               *   failed to find phy addr for patch dst addr ...
-               *   selinux_hide: init: patch_text sel_open_handle_status err: -2
-               *
-               * This leaves the feature handler, backup policy, fake-status
-               * machinery, context/access hooks and setprocattr path intact.
-               * If the phone boots, the next test is to make the status-open
-               * hook Samsung-safe rather than permanently removing it.
-               */
-              pr_warn("selinux_hide: Samsung 4.19 test: skip early status-open text patch\n");
-          #else
-              hook_selinux_status_open();
-          #endif
-          }
-          '''
-
-          if old not in s:
-              raise SystemExit(
-                  "exact ksu_selinux_hide_init() body not found; refusing broad replacement"
-              )
-
-          s = s.replace(old, new, 1)
-
-          # Structural verification: feature must remain registered and the
-          # normal enable path must still contain hook_selinux_status_open().
-          required = [
-              "ksu_register_feature_handler(&selinux_hide_handler)",
-              "static int ksu_selinux_hide_enable()",
-              "hook_selinux_status_open();",
-              "static int selinux_hide_feature_set(u64 value)",
-              "KSU_FEATURE_SELINUX_HIDE",
-              "Samsung 4.19 test: skip early status-open text patch",
-          ]
-          for needle in required:
-              if needle not in s:
-                  raise SystemExit(f"missing required SELinux Hide code: {needle}")
-
-          # There should still be at least one real hook call for the runtime
-          # enable path. We are isolating early boot only.
-          if s.count("hook_selinux_status_open();") < 2:
-              raise SystemExit(
-                  "SELinux Hide status hook was removed too broadly"
-              )
-
-          p.write_text(s)
-          print("Early SELinux status-open patch disabled only for Samsung 4.19 boot test")
-          PY
-
-          echo "=== SELinux Hide early-hook isolation verification ==="
-          grep -n -A28 'void __init ksu_selinux_hide_init' \
-            KernelSU-Next/kernel/feature/selinux_hide.c
-          grep -n -A18 'static int ksu_selinux_hide_enable' \
-            KernelSU-Next/kernel/feature/selinux_hide.c
-
-      - name: Fully isolate SELinux Hide runtime on Samsung 4.19
-        run: |
-          set -euxo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
-          s = p.read_text()
-
-          old_init = r'''void __init ksu_selinux_hide_init()
-          {
-              if (ksu_register_feature_handler(&selinux_hide_handler)) {
-                  pr_err("Failed to register selinux_hide feature handler\n");
-              }
-              if (ksu_late_loaded) {
-                  initialize_fake_status();
-              } else {
-                  static_key_enable(&fake_status_initialize_key.key);
-              }
-
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              /*
-               * Samsung 4.19 runtime-isolation test:
-               *
-               * Keep SELinux Hide compiled and registered, but do NOT patch
-               * sel_handle_status_ops->open during early boot.
-               *
-               * The previous runtime log showed:
-               *   failed to find phy addr for patch dst addr ...
-               *   selinux_hide: init: patch_text sel_open_handle_status err: -2
-               *
-               * This leaves the feature handler, backup policy, fake-status
-               * machinery, context/access hooks and setprocattr path intact.
-               * If the phone boots, the next test is to make the status-open
-               * hook Samsung-safe rather than permanently removing it.
-               */
-              pr_warn("selinux_hide: Samsung 4.19 test: skip early status-open text patch\n");
-          #else
-              hook_selinux_status_open();
-          #endif
-          }
-          '''
-
-          new_init = r'''void __init ksu_selinux_hide_init()
-          {
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              /*
-               * Diagnostic only: completely skip SELinux Hide runtime
-               * initialization on this Samsung 4.19 kernel. The code remains
-               * compiled so this test isolates runtime initialization from
-               * the rest of KSUN and our 4.19 SELinux policy backport.
-               */
-              pr_warn("selinux_hide: Samsung 4.19 diagnostic: runtime init disabled\n");
-              return;
-          #else
-              if (ksu_register_feature_handler(&selinux_hide_handler)) {
-                  pr_err("Failed to register selinux_hide feature handler\n");
-              }
-              if (ksu_late_loaded) {
-                  initialize_fake_status();
-              } else {
-                  static_key_enable(&fake_status_initialize_key.key);
-              }
-              hook_selinux_status_open();
-          #endif
-          }
-          '''
-
-          if old_init not in s:
-              raise SystemExit("patched ksu_selinux_hide_init() body not found exactly")
-          s = s.replace(old_init, new_init, 1)
-
-          # Prevent any accidental userspace activation on the diagnostic build.
-          fn = "static int selinux_hide_feature_set(u64 value)"
-          start = s.find(fn)
-          if start < 0:
-              raise SystemExit("selinux_hide_feature_set not found")
-          body = s.find("{", start)
-          if body < 0:
-              raise SystemExit("selinux_hide_feature_set body not found")
-
-          depth = 0
-          end = None
-          for i in range(body, len(s)):
-              if s[i] == "{":
-                  depth += 1
-              elif s[i] == "}":
-                  depth -= 1
-                  if depth == 0:
-                      end = i + 1
-                      break
-          if end is None:
-              raise SystemExit("selinux_hide_feature_set end not found")
-
-          replacement = r'''static int selinux_hide_feature_set(u64 value)
-          {
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              pr_warn("selinux_hide: Samsung 4.19 diagnostic: runtime enable blocked\n");
-              return -EOPNOTSUPP;
-          #else
-              bool enable = value != 0;
-              int ret = 0;
-              pr_info("selinux_hide: set to %d\n", enable);
-              mutex_lock(&selinux_hide_mutex);
-              ksu_selinux_hide_enabled = enable;
-              if (enable) {
-                  if (!ksu_selinux_hide_running) {
-                      ret = ksu_selinux_hide_enable();
-                      if (!ret) {
-                          ksu_selinux_hide_running = true;
-                      }
-                  }
-              } else {
-                  if (ksu_selinux_hide_running) {
-                      ksu_selinux_hide_disable();
-                      ksu_selinux_hide_running = false;
-                  }
-              }
-              mutex_unlock(&selinux_hide_mutex);
-              return ret;
-          #endif
-          }'''
-
-          s = s[:start] + replacement + s[end:]
-
-          required = [
-              "runtime init disabled",
-              "runtime enable blocked",
-              "static int ksu_selinux_hide_enable()",
-              "KSU_FEATURE_SELINUX_HIDE",
-          ]
-          for needle in required:
-              if needle not in s:
-                  raise SystemExit(f"missing diagnostic/feature code: {needle}")
-
-          p.write_text(s)
-          print("SELinux Hide runtime fully isolated for Samsung 4.19 diagnostic boot")
-          PY
-
-          echo "=== SELinux Hide full runtime isolation ==="
-          grep -n -A24 'void __init ksu_selinux_hide_init' \
-            KernelSU-Next/kernel/feature/selinux_hide.c
-          grep -n -A18 'static int selinux_hide_feature_set' \
-            KernelSU-Next/kernel/feature/selinux_hide.c
-
-      - name: Isolate initial KSUN SELinux rule application on Samsung 4.19
-        run: |
-          set -euxo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("KernelSU-Next/kernel/selinux/rules.c")
-          s = p.read_text()
-
-          guard = "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)"
-          g = s.find(guard)
-          if g < 0:
-              raise SystemExit("4.19 rules compatibility guard not found")
-
-          sig = "void apply_kernelsu_rules()\n{"
-          start = s.find(sig, g)
-          if start < 0:
-              raise SystemExit("4.19 apply_kernelsu_rules() not found")
-
-          body = s.find("{", start)
-          depth = 0
-          end = None
-          for i in range(body, len(s)):
-              if s[i] == "{":
-                  depth += 1
-              elif s[i] == "}":
-                  depth -= 1
-                  if depth == 0:
-                      end = i + 1
-                      break
-          if end is None:
-              raise SystemExit("could not find end of 4.19 apply_kernelsu_rules()")
-
-          original = s[start:end]
-
-          # Safety: ensure we are replacing the 4.19 direct-live-policy path,
-          # not the untouched 5.10+ upstream implementation.
-          required_old = [
-              "struct selinux_ss *ss;",
-              "mutex_lock(&ksu_rules_419);",
-              "backup_sepolicy = ksu_dup_sepolicy(&old_wrap);",
-              "db = &ss->policydb;",
-              "reset_avc_cache();",
-          ]
-          for needle in required_old:
-              if needle not in original:
-                  raise SystemExit(
-                      f"refusing diagnostic replacement; expected 4.19 code missing: {needle}"
-                  )
-
-          replacement = r'''void apply_kernelsu_rules()
-          {
-              /*
-               * Samsung 4.19 diagnostic only:
-               *
-               * Do not duplicate, mutate, or reset the live SELinux policy
-               * during KSUN boot. The previous SELinux-Hide-off build still
-               * panicked, so this isolates the 4.19 initial policy backport
-               * from the rest of KernelSU-Next early runtime.
-               *
-               * This build is expected to have reduced/non-functional KSUN
-               * root policy behavior. It is NOT a final build.
-               */
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: initial sepolicy rules skipped\n");
-              backup_sepolicy = NULL;
-              return;
-          }'''
-
-          s = s[:start] + replacement + s[end:]
-
-          # Verify 5.10+ implementation still exists after the #else branch.
-          else_pos = s.find("#else", start)
-          if else_pos < 0:
-              raise SystemExit("5.10+ #else branch missing after diagnostic patch")
-          new_branch_pos = s.find("void apply_kernelsu_rules()", else_pos)
-          if new_branch_pos < 0:
-              raise SystemExit("5.10+ apply_kernelsu_rules() unexpectedly removed")
-
-          if "Samsung 4.19 diagnostic: initial sepolicy rules skipped" not in s:
-              raise SystemExit("diagnostic marker missing")
-          if "static DEFINE_MUTEX(ksu_rules_419);" not in s:
-              raise SystemExit("4.19 compatibility branch unexpectedly damaged")
-
-          p.write_text(s)
-          print("4.19 initial KSUN sepolicy application isolated successfully")
-          PY
-
-          echo "=== Initial sepolicy isolation verification ==="
-          grep -n -A20 'Samsung 4.19 diagnostic: initial sepolicy rules skipped' \
-            KernelSU-Next/kernel/selinux/rules.c
-          grep -n 'void apply_kernelsu_rules' \
-            KernelSU-Next/kernel/selinux/rules.c
-
-      - name: Test KSUN supercalls only after known-good first half on Samsung 4.19
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("KernelSU-Next/kernel/core/init.c")
-          s = p.read_text()
-          sig = "int __init kernelsu_init(void)\n{"
-          pos = s.find(sig)
-          if pos < 0:
-              raise SystemExit("kernelsu_init() not found")
-          insert_at = pos + len(sig)
-          marker = r'''
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              ksu_late_loaded = false;
-
-              ksu_cred = prepare_creds();
-              if (!ksu_cred) {
-                  pr_err("KernelSU: diagnostic prepare_creds failed\n");
-                  return -ENOSYS;
-              }
-
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: supercalls-only begin\n");
-
-              ksu_init_symbol_resolver();
-              pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
-
-              ksu_syscall_hook_init();
-              pr_warn("KernelSU: diagnostic passed syscall_hook\n");
-
-              ksu_feature_init();
-              pr_warn("KernelSU: diagnostic passed feature_init\n");
-
-              ksu_sulog_init();
-              pr_warn("KernelSU: diagnostic passed sulog_init\n");
-
-              ksu_adb_root_init();
-              pr_warn("KernelSU: diagnostic passed adb_root_init\n");
-
-              ksu_lsm_hook_init();
-              pr_warn("KernelSU: diagnostic passed lsm_hook_init\n");
-
-              ksu_supercalls_init();
-              pr_warn("KernelSU: diagnostic passed supercalls_init\n");
-
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: supercalls-only complete; stopping before syscall_hook_manager\n");
-              return 0;
-          #endif
-          '''
-          s = s[:insert_at] + marker + s[insert_at:]
-          p.write_text(s)
-          PY
-
-          echo "=== Supercalls-only diagnostic verification ==="
-          grep -n -A95 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
-          grep -n 'diagnostic passed\|supercalls-only' KernelSU-Next/kernel/core/init.c
-
-      - name: Isolate reboot kprobe inside KSUN supercalls on Samsung 4.19
+      - name: Disable only KSUN reboot kprobe on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2424,21 +2031,24 @@ jobs:
 
           new = r'''void __init ksu_supercalls_init(void)
           {
-              /*
-               * Samsung 4.19 diagnostic:
-               *
-               * Keep the non-hook supercall initialization, but skip the
-               * reboot kprobe registration. register_kprobe() may patch kernel
-               * text, which is a strong suspect on this Exynos/TZASC kernel.
-               *
-               * Diagnostic only; this disables the legacy reboot-kprobe
-               * supercall transport and manager autodetection through it.
-               */
               ksu_supercall_dump_commands();
 
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: reboot kprobe registration skipped\n");
-              return;
+              /*
+               * Samsung 4.19 / Exynos compatibility:
+               *
+               * The reboot kprobe is the isolated boot trigger on this device.
+               * Keep the rest of KernelSU-Next runtime intact, including:
+               *   - SELinux Hide init/enable path
+               *   - SELinux policy backup/application
+               *   - syscall hooks / hook manager
+               *   - SULog / ADB root / allowlist / throne tracker / KSUD
+               *   - file wrapper
+               *   - supercall command table/state
+               *
+               * Only the reboot-kprobe transport is skipped on <5.10.
+               */
+              pr_warn("KernelSU: Samsung 4.19: reboot kprobe disabled for compatibility\n");
           #else
               {
                   int rc = register_kprobe(&reboot_kp);
@@ -2453,26 +2063,77 @@ jobs:
           '''
 
           if old not in s:
-              raise SystemExit("exact ksu_supercalls_init() body not found; refusing broad edit")
+              raise SystemExit(
+                  "exact upstream ksu_supercalls_init() not found; refusing unsafe edit"
+              )
 
           s = s.replace(old, new, 1)
 
           required = [
               "ksu_supercall_dump_commands();",
               "register_kprobe(&reboot_kp)",
-              "reboot kprobe registration skipped",
+              "reboot kprobe disabled for compatibility",
           ]
           for needle in required:
               if needle not in s:
-                  raise SystemExit(f"missing expected supercall code: {needle}")
+                  raise SystemExit(f"missing expected supercall code after patch: {needle}")
 
           p.write_text(s)
-          print("Supercall reboot kprobe isolated successfully")
+          print("Samsung 4.19 reboot-kprobe compatibility patch applied")
           PY
 
-          echo "=== Supercall kprobe isolation verification ==="
-          grep -n -A34 'void __init ksu_supercalls_init' \
+          echo "=== Supercall compatibility verification ==="
+          grep -n -A36 'void __init ksu_supercalls_init' \
             KernelSU-Next/kernel/supercall/supercall.c
+
+      - name: Verify SELinux Hide remains fully enabled
+        run: |
+          set -euxo pipefail
+
+          HIDE="KernelSU-Next/kernel/feature/selinux_hide.c"
+          INIT="KernelSU-Next/kernel/core/init.c"
+          RULES="KernelSU-Next/kernel/selinux/rules.c"
+
+          echo "=== SELinux Hide verification ==="
+
+          grep -n 'ksu_register_feature_handler(&selinux_hide_handler)' "$HIDE"
+          grep -n 'hook_selinux_status_open();' "$HIDE"
+          grep -n 'ksu_patch_text(context_write' "$HIDE"
+          grep -n 'ksu_patch_text(access_write' "$HIDE"
+          grep -n 'ksu_lsm_hook(&selinux_setprocattr_hook)' "$HIDE"
+
+          echo "=== KernelSU init path verification ==="
+          grep -n 'ksu_selinux_hide_init();' "$INIT"
+          grep -n 'ksu_supercalls_init();' "$INIT"
+          grep -n 'ksu_syscall_hook_manager_init();' "$INIT"
+          grep -n 'ksu_ksud_init();' "$INIT"
+          grep -n 'ksu_file_wrapper_init();' "$INIT"
+
+          echo "=== SELinux policy path verification ==="
+          grep -n 'void apply_kernelsu_rules' "$RULES"
+          grep -n 'backup_sepolicy' "$RULES" | head -n 10
+
+          if grep -q 'runtime init disabled' "$HIDE"; then
+            echo "ERROR: SELinux Hide diagnostic-disable marker found"
+            exit 1
+          fi
+
+          if grep -q 'runtime enable blocked' "$HIDE"; then
+            echo "ERROR: SELinux Hide runtime-enable block found"
+            exit 1
+          fi
+
+          if grep -q 'initial sepolicy rules skipped' "$RULES"; then
+            echo "ERROR: initial sepolicy diagnostic skip found"
+            exit 1
+          fi
+
+          if grep -q 'all runtime initialization skipped' "$INIT"; then
+            echo "ERROR: runtime-inert diagnostic marker found"
+            exit 1
+          fi
+
+          echo "SELinux Hide and full KSUN runtime remain enabled."
 
       - name: Configure M127F kernel
         run: |
@@ -2568,7 +2229,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SupercallNoRebootKprobe.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-SELinuxHide-NoRebootKprobe.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2581,8 +2242,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-SupercallNoRebootKprobe
-          path: M127F-KSUN-v3.3.0-DIAG-SupercallNoRebootKprobe.zip
+          name: M127F-KSUN-v3.3.0-SELinuxHide-NoRebootKprobe
+          path: M127F-KSUN-v3.3.0-SELinuxHide-NoRebootKprobe.zip
           if-no-files-found: error
           compression-level: 0
 
