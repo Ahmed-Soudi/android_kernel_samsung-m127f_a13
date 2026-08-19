@@ -2135,7 +2135,7 @@ jobs:
 
           echo "SELinux Hide and full KSUN runtime remain enabled."
 
-      - name: Test throne tracker after probe-safe allowlist on Samsung 4.19
+      - name: Test ksud after probe-safe throne tracker on Samsung 4.19
         run: |
           set -euxo pipefail
           python3 - <<'PY'
@@ -2153,6 +2153,28 @@ jobs:
 
           marker = r'''
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              /*
+               * Samsung 4.19 diagnostic:
+               *
+               * Known-good base:
+               *   prepare_creds
+               *   symbol resolver
+               *   syscall hook core
+               *   feature core
+               *   SULog
+               *   ADB root
+               *   LSM hook core
+               *   supercalls with reboot kprobe disabled
+               *   syscall hook manager with both kretprobes disabled
+               *   allowlist
+               *   throne tracker
+               *
+               * Add ONLY:
+               *   ksu_ksud_init()
+               *
+               * SELinux Hide remains skipped for this diagnostic.
+               * Stop before file wrapper.
+               */
               ksu_late_loaded = false;
 
               ksu_cred = prepare_creds();
@@ -2161,7 +2183,7 @@ jobs:
                   return -ENOSYS;
               }
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: throne-tracker-only begin\n");
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: ksud-only begin\n");
 
               ksu_init_symbol_resolver();
               pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
@@ -2195,7 +2217,10 @@ jobs:
               ksu_throne_tracker_init();
               pr_warn("KernelSU: diagnostic passed throne_tracker_init\n");
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before ksud/file_wrapper\n");
+              ksu_ksud_init();
+              pr_warn("KernelSU: diagnostic passed ksud_init\n");
+
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before file_wrapper\n");
               return 0;
           #endif
           '''
@@ -2204,9 +2229,9 @@ jobs:
           p.write_text(s)
           PY
 
-          echo "=== Throne tracker-only diagnostic verification ==="
-          grep -n -A120 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
-          grep -n 'diagnostic passed\|throne-tracker-only' KernelSU-Next/kernel/core/init.c
+          echo "=== KSUD-only diagnostic verification ==="
+          grep -n -A125 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
+          grep -n 'diagnostic passed\|ksud-only' KernelSU-Next/kernel/core/init.c
 
       - name: Disable only syscall hook manager kretprobes on Samsung 4.19
         run: |
@@ -2346,7 +2371,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-ThroneTrackerOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-KSUDOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2359,8 +2384,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-ThroneTrackerOnly
-          path: M127F-KSUN-v3.3.0-DIAG-ThroneTrackerOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-KSUDOnly
+          path: M127F-KSUN-v3.3.0-DIAG-KSUDOnly.zip
           if-no-files-found: error
           compression-level: 0
 
