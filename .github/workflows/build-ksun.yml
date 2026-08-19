@@ -2202,6 +2202,50 @@ jobs:
           grep -n -A105 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
           grep -n 'diagnostic passed\|syscall-hook-manager-only' KernelSU-Next/kernel/core/init.c
 
+      - name: Disable only syscall hook manager kretprobes on Samsung 4.19
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
+          s = p.read_text()
+
+          old = '''#ifdef CONFIG_KRETPROBES
+              syscall_regfunc_rp = init_kretprobe("syscall_regfunc", syscall_regfunc_handler);
+              syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
+          #endif
+          '''
+
+          new = '''#ifdef CONFIG_KRETPROBES
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              pr_warn("hook_manager: Samsung 4.19 diagnostic: kretprobes skipped\\n");
+          #else
+              syscall_regfunc_rp = init_kretprobe("syscall_regfunc", syscall_regfunc_handler);
+              syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
+          #endif
+          #endif
+          '''
+
+          if old not in s:
+              raise SystemExit("exact kretprobe init block not found")
+          s = s.replace(old, new, 1)
+
+          for needle in [
+              'register_trace_sys_enter(ksu_sys_enter_handler, NULL)',
+              'ksu_setuid_hook_init();',
+              'ksu_sucompat_init();',
+              'ksu_avc_spoof_init();',
+              'kretprobes skipped',
+          ]:
+              if needle not in s:
+                  raise SystemExit(f"required code missing: {needle}")
+
+          p.write_text(s)
+          PY
+
+          grep -n -A70 'void __init ksu_syscall_hook_manager_init' \
+            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -2296,7 +2340,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SyscallHookManagerOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-HookManager-NoKretprobes.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2309,8 +2353,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-SyscallHookManagerOnly
-          path: M127F-KSUN-v3.3.0-DIAG-SyscallHookManagerOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-HookManager-NoKretprobes
+          path: M127F-KSUN-v3.3.0-DIAG-HookManager-NoKretprobes.zip
           if-no-files-found: error
           compression-level: 0
 
