@@ -2004,13 +2004,14 @@ jobs:
           grep -n -A6 -B2 'put_seccomp_filter(fake)' \
             KernelSU-Next/kernel/policy/app_profile.c
 
-      - name: Disable only KSUN reboot kprobe on Samsung 4.19
+      - name: Apply Samsung 4.19 probe-safe KSUN compatibility fixes
         run: |
           set -euxo pipefail
 
           python3 - <<'PY'
           from pathlib import Path
 
+          # 1) Disable reboot kprobe only on Samsung/Linux <5.10
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
 
@@ -2036,17 +2037,8 @@ jobs:
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
                * Samsung 4.19 / Exynos compatibility:
-               *
-               * The reboot kprobe is the isolated boot trigger on this device.
-               * Keep the rest of KernelSU-Next runtime intact, including:
-               *   - SELinux Hide init/enable path
-               *   - SELinux policy backup/application
-               *   - syscall hooks / hook manager
-               *   - SULog / ADB root / allowlist / throne tracker / KSUD
-               *   - file wrapper
-               *   - supercall command table/state
-               *
-               * Only the reboot-kprobe transport is skipped on <5.10.
+               * reboot kprobe registration was isolated as a TZASC boot trigger.
+               * Keep all non-kprobe supercall state and command handling.
                */
               pr_warn("KernelSU: Samsung 4.19: reboot kprobe disabled for compatibility\n");
           #else
@@ -2063,162 +2055,29 @@ jobs:
           '''
 
           if old not in s:
-              raise SystemExit(
-                  "exact upstream ksu_supercalls_init() not found; refusing unsafe edit"
-              )
-
+              raise SystemExit("exact ksu_supercalls_init() body not found")
           s = s.replace(old, new, 1)
-
-          required = [
-              "ksu_supercall_dump_commands();",
-              "register_kprobe(&reboot_kp)",
-              "reboot kprobe disabled for compatibility",
-          ]
-          for needle in required:
-              if needle not in s:
-                  raise SystemExit(f"missing expected supercall code after patch: {needle}")
-
           p.write_text(s)
-          print("Samsung 4.19 reboot-kprobe compatibility patch applied")
-          PY
 
-          echo "=== Supercall compatibility verification ==="
-          grep -n -A36 'void __init ksu_supercalls_init' \
-            KernelSU-Next/kernel/supercall/supercall.c
-
-      - name: Verify SELinux Hide remains fully enabled
-        run: |
-          set -euxo pipefail
-
-          HIDE="KernelSU-Next/kernel/feature/selinux_hide.c"
-          INIT="KernelSU-Next/kernel/core/init.c"
-          RULES="KernelSU-Next/kernel/selinux/rules.c"
-
-          echo "=== SELinux Hide verification ==="
-
-          grep -n 'ksu_register_feature_handler(&selinux_hide_handler)' "$HIDE"
-          grep -n 'hook_selinux_status_open();' "$HIDE"
-          grep -n 'ksu_patch_text(context_write' "$HIDE"
-          grep -n 'ksu_patch_text(access_write' "$HIDE"
-          grep -n 'ksu_lsm_hook(&selinux_setprocattr_hook)' "$HIDE"
-
-          echo "=== KernelSU init path verification ==="
-          grep -n 'ksu_selinux_hide_init();' "$INIT"
-          grep -n 'ksu_supercalls_init();' "$INIT"
-          grep -n 'ksu_syscall_hook_manager_init();' "$INIT"
-          grep -n 'ksu_ksud_init();' "$INIT"
-          grep -n 'ksu_file_wrapper_init();' "$INIT"
-
-          echo "=== SELinux policy path verification ==="
-          grep -n 'void apply_kernelsu_rules' "$RULES"
-          grep -n 'backup_sepolicy' "$RULES" | head -n 10
-
-          if grep -q 'runtime init disabled' "$HIDE"; then
-            echo "ERROR: SELinux Hide diagnostic-disable marker found"
-            exit 1
-          fi
-
-          if grep -q 'runtime enable blocked' "$HIDE"; then
-            echo "ERROR: SELinux Hide runtime-enable block found"
-            exit 1
-          fi
-
-          if grep -q 'initial sepolicy rules skipped' "$RULES"; then
-            echo "ERROR: initial sepolicy diagnostic skip found"
-            exit 1
-          fi
-
-          if grep -q 'all runtime initialization skipped' "$INIT"; then
-            echo "ERROR: runtime-inert diagnostic marker found"
-            exit 1
-          fi
-
-          echo "SELinux Hide and full KSUN runtime remain enabled."
-
-      - name: Test syscall hook manager only after reboot-kprobe fix on Samsung 4.19
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("KernelSU-Next/kernel/core/init.c")
-          s = p.read_text()
-
-          sig = "int __init kernelsu_init(void)\n{"
-          pos = s.find(sig)
-          if pos < 0:
-              raise SystemExit("kernelsu_init() not found")
-
-          insert_at = pos + len(sig)
-
-          marker = r'''
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              ksu_late_loaded = false;
-
-              ksu_cred = prepare_creds();
-              if (!ksu_cred) {
-                  pr_err("KernelSU: diagnostic prepare_creds failed\n");
-                  return -ENOSYS;
-              }
-
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: syscall-hook-manager-only begin\n");
-
-              ksu_init_symbol_resolver();
-              pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
-
-              ksu_syscall_hook_init();
-              pr_warn("KernelSU: diagnostic passed syscall_hook\n");
-
-              ksu_feature_init();
-              pr_warn("KernelSU: diagnostic passed feature_init\n");
-
-              ksu_sulog_init();
-              pr_warn("KernelSU: diagnostic passed sulog_init\n");
-
-              ksu_adb_root_init();
-              pr_warn("KernelSU: diagnostic passed adb_root_init\n");
-
-              ksu_lsm_hook_init();
-              pr_warn("KernelSU: diagnostic passed lsm_hook_init\n");
-
-              /* SELinux Hide intentionally skipped in this diagnostic split. */
-
-              ksu_supercalls_init();
-              pr_warn("KernelSU: diagnostic passed supercalls_init (reboot kprobe disabled)\n");
-
-              ksu_syscall_hook_manager_init();
-              pr_warn("KernelSU: diagnostic passed syscall_hook_manager_init\n");
-
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before allowlist/throne_tracker/ksud/file_wrapper\n");
-              return 0;
-          #endif
-          '''
-
-          s = s[:insert_at] + marker + s[insert_at:]
-          p.write_text(s)
-          PY
-
-          echo "=== Syscall hook manager-only diagnostic verification ==="
-          grep -n -A105 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
-          grep -n 'diagnostic passed\|syscall-hook-manager-only' KernelSU-Next/kernel/core/init.c
-
-      - name: Disable only syscall hook manager kretprobes on Samsung 4.19
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
+          # 2) Disable hook-manager kretprobes only on Samsung/Linux <5.10
           p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
           s = p.read_text()
 
-          old = '''#ifdef CONFIG_KRETPROBES
+          old = r'''#ifdef CONFIG_KRETPROBES
               syscall_regfunc_rp = init_kretprobe("syscall_regfunc", syscall_regfunc_handler);
               syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
           #endif
           '''
 
-          new = '''#ifdef CONFIG_KRETPROBES
+          new = r'''#ifdef CONFIG_KRETPROBES
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              pr_warn("hook_manager: Samsung 4.19 diagnostic: kretprobes skipped\\n");
+              /*
+               * Samsung 4.19 / Exynos compatibility:
+               * these kretprobes were isolated as a second TZASC boot trigger.
+               * Keep syscall hook registrations, sys_enter tracepoint,
+               * setuid hook, sucompat and AVC spoof active.
+               */
+              pr_warn("hook_manager: Samsung 4.19: kretprobes disabled for compatibility\n");
           #else
               syscall_regfunc_rp = init_kretprobe("syscall_regfunc", syscall_regfunc_handler);
               syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
@@ -2227,24 +2086,70 @@ jobs:
           '''
 
           if old not in s:
-              raise SystemExit("exact kretprobe init block not found")
+              raise SystemExit("exact hook-manager kretprobe block not found")
           s = s.replace(old, new, 1)
-
-          for needle in [
-              'register_trace_sys_enter(ksu_sys_enter_handler, NULL)',
-              'ksu_setuid_hook_init();',
-              'ksu_sucompat_init();',
-              'ksu_avc_spoof_init();',
-              'kretprobes skipped',
-          ]:
-              if needle not in s:
-                  raise SystemExit(f"required code missing: {needle}")
-
           p.write_text(s)
+
+          print("Samsung 4.19 probe-safe compatibility patches applied")
           PY
 
-          grep -n -A70 'void __init ksu_syscall_hook_manager_init' \
+          echo "=== Probe-safe compatibility verification ==="
+          grep -n -A34 'void __init ksu_supercalls_init' \
+            KernelSU-Next/kernel/supercall/supercall.c
+          grep -n -A72 'void __init ksu_syscall_hook_manager_init' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
+
+      - name: Verify SELinux Hide and full KSUN runtime remain enabled
+        run: |
+          set -euxo pipefail
+
+          HIDE="KernelSU-Next/kernel/feature/selinux_hide.c"
+          INIT="KernelSU-Next/kernel/core/init.c"
+          RULES="KernelSU-Next/kernel/selinux/rules.c"
+          HM="KernelSU-Next/kernel/hook/syscall_hook_manager.c"
+
+          echo "=== SELinux Hide ==="
+          grep -n 'ksu_register_feature_handler(&selinux_hide_handler)' "$HIDE"
+          grep -n 'hook_selinux_status_open();' "$HIDE"
+          grep -n 'ksu_patch_text(context_write' "$HIDE"
+          grep -n 'ksu_patch_text(access_write' "$HIDE"
+          grep -n 'ksu_lsm_hook(&selinux_setprocattr_hook)' "$HIDE"
+
+          echo "=== Full KSUN init sequence ==="
+          grep -n 'ksu_selinux_hide_init();' "$INIT"
+          grep -n 'ksu_supercalls_init();' "$INIT"
+          grep -n 'ksu_syscall_hook_manager_init();' "$INIT"
+          grep -n 'ksu_allowlist_init();' "$INIT"
+          grep -n 'ksu_throne_tracker_init();' "$INIT"
+          grep -n 'ksu_ksud_init();' "$INIT"
+          grep -n 'ksu_file_wrapper_init();' "$INIT"
+
+          echo "=== Hook-manager non-probe paths preserved ==="
+          grep -n 'register_trace_sys_enter(ksu_sys_enter_handler, NULL)' "$HM"
+          grep -n 'ksu_setuid_hook_init();' "$HM"
+          grep -n 'ksu_sucompat_init();' "$HM"
+          grep -n 'ksu_avc_spoof_init();' "$HM"
+
+          echo "=== SELinux policy path ==="
+          grep -n 'void apply_kernelsu_rules' "$RULES"
+          grep -n 'backup_sepolicy' "$RULES" | head -n 10
+
+          for bad in \
+            'runtime init disabled' \
+            'runtime enable blocked' \
+            'initial sepolicy rules skipped' \
+            'all runtime initialization skipped' \
+            'first-half runtime begin' \
+            'mid-runtime begin' \
+            'syscall-hook-manager-only begin'
+          do
+            if grep -R -q "$bad" KernelSU-Next/kernel; then
+              echo "ERROR: diagnostic marker found: $bad"
+              exit 1
+            fi
+          done
+
+          echo "SELinux Hide and full KSUN runtime verified enabled."
 
       - name: Configure M127F kernel
         run: |
@@ -2340,7 +2245,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-HookManager-NoKretprobes.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-SELinuxHide-ProbeSafe.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2353,8 +2258,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-HookManager-NoKretprobes
-          path: M127F-KSUN-v3.3.0-DIAG-HookManager-NoKretprobes.zip
+          name: M127F-KSUN-v3.3.0-SELinuxHide-ProbeSafe
+          path: M127F-KSUN-v3.3.0-SELinuxHide-ProbeSafe.zip
           if-no-files-found: error
           compression-level: 0
 
