@@ -2340,7 +2340,7 @@ jobs:
           grep -n 'void apply_kernelsu_rules' \
             KernelSU-Next/kernel/selinux/rules.c
 
-      - name: Enable KSUN through syscall manager and allowlist on Samsung 4.19
+      - name: Test KSUN supercalls only after known-good first half on Samsung 4.19
         run: |
           set -euxo pipefail
           python3 - <<'PY'
@@ -2362,7 +2362,7 @@ jobs:
                   return -ENOSYS;
               }
 
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: mid-runtime begin\n");
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: supercalls-only begin\n");
 
               ksu_init_symbol_resolver();
               pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
@@ -2382,21 +2382,10 @@ jobs:
               ksu_lsm_hook_init();
               pr_warn("KernelSU: diagnostic passed lsm_hook_init\n");
 
-              /*
-               * SELinux Hide runtime is already isolated by an earlier
-               * diagnostic patch in this workflow.
-               */
-
               ksu_supercalls_init();
               pr_warn("KernelSU: diagnostic passed supercalls_init\n");
 
-              ksu_syscall_hook_manager_init();
-              pr_warn("KernelSU: diagnostic passed syscall_hook_manager_init\n");
-
-              ksu_allowlist_init();
-              pr_warn("KernelSU: diagnostic passed allowlist_init\n");
-
-              pr_warn("KernelSU: Samsung 4.19 diagnostic: stopping before throne_tracker/ksud/file_wrapper\n");
+              pr_warn("KernelSU: Samsung 4.19 diagnostic: supercalls-only complete; stopping before syscall_hook_manager\n");
               return 0;
           #endif
           '''
@@ -2404,9 +2393,9 @@ jobs:
           p.write_text(s)
           PY
 
-          echo "=== Mid-runtime diagnostic verification ==="
-          grep -n -A100 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
-          grep -n 'diagnostic passed\|mid-runtime' KernelSU-Next/kernel/core/init.c
+          echo "=== Supercalls-only diagnostic verification ==="
+          grep -n -A95 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
+          grep -n 'diagnostic passed\|supercalls-only' KernelSU-Next/kernel/core/init.c
 
       - name: Configure M127F kernel
         run: |
@@ -2502,7 +2491,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-MidRuntime.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SupercallsOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2515,8 +2504,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-MidRuntime
-          path: M127F-KSUN-v3.3.0-DIAG-MidRuntime.zip
+          name: M127F-KSUN-v3.3.0-DIAG-SupercallsOnly
+          path: M127F-KSUN-v3.3.0-DIAG-SupercallsOnly.zip
           if-no-files-found: error
           compression-level: 0
 
