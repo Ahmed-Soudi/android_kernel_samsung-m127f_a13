@@ -2379,7 +2379,7 @@ jobs:
 
           echo "Full probe-safe runtime with SELinux Hide verified."
 
-      - name: Test FD number allocation only from reboot syscall dispatcher on Samsung 4.19
+      - name: Test anon inode creation after FD allocation on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2462,20 +2462,30 @@ jobs:
 
               /*
                * Samsung 4.19 diagnostic:
-               *
-               * Split ksu_install_fd() at its first primitive.
-               * Allocate an unused FD number, then immediately release it.
-               * Do NOT create an anon inode file.
-               * Do NOT call fd_install().
-               * Do NOT copy an FD back to userspace.
+               * Allocate an FD number, create the anon [ksu_driver] file,
+               * then immediately fput() it and release the FD number.
+               * No fd_install(), copy_to_user(), or task_work.
                */
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
+                  struct file *filp;
                   int fd = get_unused_fd_flags(O_CLOEXEC);
 
                   pr_info("Samsung 4.19 diagnostic: get_unused_fd_flags -> %d\\n", fd);
 
-                  if (fd >= 0)
+                  if (fd >= 0) {
+                      filp = anon_inode_getfile("[ksu_driver]", &anon_ksu_fops,
+                                                NULL, O_RDWR | O_CLOEXEC);
+
+                      if (IS_ERR(filp)) {
+                          pr_err("Samsung 4.19 diagnostic: anon_inode_getfile failed: %ld\\n",
+                                 PTR_ERR(filp));
+                      } else {
+                          pr_info("Samsung 4.19 diagnostic: anon_inode_getfile succeeded\\n");
+                          fput(filp);
+                      }
+
                       put_unused_fd(fd);
+                  }
               }
 
               return ksu_syscall_table[orig_nr](regs);
@@ -2585,7 +2595,7 @@ jobs:
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
-          # Verify this split tests ONLY get_unused_fd_flags()/put_unused_fd().
+          # Verify anon inode creation is tested without installing the FD.
           python3 - <<'PY'
           from pathlib import Path
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
@@ -2600,15 +2610,15 @@ jobs:
 
           required = [
               "get_unused_fd_flags(O_CLOEXEC)",
+              'anon_inode_getfile("[ksu_driver]", &anon_ksu_fops',
+              "fput(filp);",
               "put_unused_fd(fd);",
-              "get_unused_fd_flags -> %d",
           ]
           for needle in required:
               if needle not in body:
-                  raise SystemExit(f"missing allocate-only path: {needle}")
+                  raise SystemExit(f"missing anon-inode diagnostic path: {needle}")
 
           forbidden = [
-              "anon_inode_getfile(\"[ksu_driver]\"",
               "fd_install(fd,",
               "ksu_install_fd();",
               "copy_to_user((int __user *)arg4",
@@ -2616,9 +2626,9 @@ jobs:
           ]
           for needle in forbidden:
               if needle in body:
-                  raise SystemExit(f"unexpected later FD primitive in allocate-only handler: {needle}")
+                  raise SystemExit(f"unexpected later FD primitive in anon-inode handler: {needle}")
 
-          print("Verified: allocate-only FD diagnostic")
+          print("Verified: anon-inode-only FD diagnostic")
           PY
 
       - name: Configure M127F kernel
@@ -2715,7 +2725,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly-Fixed.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-AnonInodeOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2728,8 +2738,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly-Fixed
-          path: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly-Fixed.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FD-AnonInodeOnly
+          path: M127F-KSUN-v3.3.0-DIAG-FD-AnonInodeOnly.zip
           if-no-files-found: error
           compression-level: 0
 
