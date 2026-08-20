@@ -2379,6 +2379,193 @@ jobs:
 
           echo "Full probe-safe runtime with SELinux Hide verified."
 
+      - name: Route KSU install-FD request through safe syscall dispatcher on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # ---------------------------------------------------------------
+          # supercall.h: expose the Samsung-safe reboot syscall handler.
+          # ---------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/supercall/supercall.h")
+          s = p.read_text()
+
+          old = '''// Install KSU fd to current process
+          int ksu_install_fd(void);
+
+          void ksu_supercalls_init(void);
+          '''
+
+          new = '''// Install KSU fd to current process
+          int ksu_install_fd(void);
+
+          /*
+           * Samsung 4.19 compatibility:
+           * install the KSU control FD through the existing syscall dispatcher
+           * instead of the unsafe reboot kprobe.
+           */
+          long ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs);
+
+          void ksu_supercalls_init(void);
+          '''
+
+          if old not in s:
+              raise SystemExit("supercall.h insertion anchor not found")
+
+          s = s.replace(old, new, 1)
+
+          if '#include <linux/ptrace.h>' not in s:
+              s = s.replace('#include <linux/types.h>\n',
+                            '#include <linux/types.h>\n#include <linux/ptrace.h>\n', 1)
+
+          p.write_text(s)
+
+          # ---------------------------------------------------------------
+          # supercall.c:
+          # Add a dispatcher hook that handles ONLY KSU_INSTALL_MAGIC1/2.
+          # It schedules the same task_work used by the upstream reboot
+          # kprobe, then calls the real reboot syscall. The magic reboot call
+          # is expected to fail normally, but task_work runs on return and
+          # writes the newly-installed anon FD to userspace.
+          # ---------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          include_anchor = '#include "manager/manager_identity.h"\n'
+          if include_anchor not in s:
+              raise SystemExit("supercall.c include anchor not found")
+
+          if '#include "hook/syscall_hook.h"' not in s:
+              s = s.replace(
+                  include_anchor,
+                  include_anchor + '#include "hook/syscall_hook.h"\n',
+                  1
+              )
+
+          func_anchor = '''static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
+          {
+          '''
+
+          safe_func = r'''/*
+           * Samsung 4.19 / Exynos compatibility transport.
+           *
+           * register_kprobe(&reboot_kp) is unsafe on this kernel and was
+           * isolated as a TZASC boot trigger. Reuse KernelSU's already-working
+           * syscall dispatcher to catch only the install-FD magic request.
+           */
+          long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
+          {
+              int magic1 = (int)PT_REGS_PARM1(regs);
+              int magic2 = (int)PT_REGS_PARM2(regs);
+              unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
+
+              if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
+                  struct ksu_install_fd_tw *tw;
+
+                  tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
+                  if (tw) {
+                      tw->outp = (int __user *)arg4;
+                      tw->cb.func = ksu_install_fd_tw_func;
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+                      if (task_work_add(current, &tw->cb, true)) {
+          #else
+                      if (task_work_add(current, &tw->cb, TWA_RESUME)) {
+          #endif
+                          kfree(tw);
+                          pr_warn("install fd dispatcher task_work failed\n");
+                      } else {
+                          pr_info("install fd request routed via syscall dispatcher\n");
+                      }
+                  }
+              }
+
+              return ksu_syscall_table[orig_nr](regs);
+          }
+
+          '''
+
+          if func_anchor not in s:
+              raise SystemExit("reboot_handler_pre anchor not found")
+
+          s = s.replace(func_anchor, safe_func + func_anchor, 1)
+          p.write_text(s)
+
+          # ---------------------------------------------------------------
+          # syscall_hook_manager.c:
+          # Register __NR_reboot with the dispatcher only on old Samsung 4.19.
+          # Keep the reboot kprobe disabled by the earlier compatibility step.
+          # ---------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
+          s = p.read_text()
+
+          include_anchor = '#include "hook/syscall_event_bridge.h"\n'
+          if include_anchor not in s:
+              raise SystemExit("hook manager include anchor not found")
+          if '#include "supercall/supercall.h"' not in s:
+              s = s.replace(
+                  include_anchor,
+                  include_anchor + '#include "supercall/supercall.h"\n',
+                  1
+              )
+
+          reg_anchor = '''    ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
+          '''
+
+          reg_new = '''    ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
+
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              /*
+               * Samsung 4.19: safe replacement for reboot_kp, used only to
+               * bootstrap the anon [ksu_driver] control FD.
+               */
+              ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd);
+              pr_info("hook_manager: reboot install-FD syscall hook registered\n");
+          #endif
+          '''
+
+          if reg_anchor not in s:
+              raise SystemExit("hook manager registration anchor not found")
+          s = s.replace(reg_anchor, reg_new, 1)
+
+          unreg_anchor = '''    ksu_unregister_syscall_hook(__NR_faccessat);
+          '''
+
+          unreg_new = '''    ksu_unregister_syscall_hook(__NR_faccessat);
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              ksu_unregister_syscall_hook(__NR_reboot);
+          #endif
+          '''
+
+          if unreg_anchor not in s:
+              raise SystemExit("hook manager unregister anchor not found")
+          s = s.replace(unreg_anchor, unreg_new, 1)
+
+          p.write_text(s)
+
+          print("Samsung-safe install-FD syscall transport patch applied")
+          PY
+
+          echo "=== Safe FD transport verification ==="
+          grep -n -A45 'ksu_hook_reboot_install_fd' \
+            KernelSU-Next/kernel/supercall/supercall.c
+          grep -n -B5 -A18 '__NR_reboot' \
+            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+
+          # The unsafe reboot kprobe must remain disabled by the proven fix.
+          if grep -A25 'void __init ksu_supercalls_init' \
+              KernelSU-Next/kernel/supercall/supercall.c | \
+              grep -q 'rc = register_kprobe(&reboot_kp)'; then
+            echo "ERROR: unsafe reboot kprobe registration is active"
+            exit 1
+          fi
+
+          # The safe syscall route must exist.
+          grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
+            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -2473,7 +2660,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SELinuxHide-Restored.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2486,8 +2673,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-SELinuxHide-Restored
-          path: M127F-KSUN-v3.3.0-DIAG-SELinuxHide-Restored.zip
+          name: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide
+          path: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide.zip
           if-no-files-found: error
           compression-level: 0
 
