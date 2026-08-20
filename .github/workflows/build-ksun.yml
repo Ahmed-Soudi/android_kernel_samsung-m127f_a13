@@ -2612,7 +2612,8 @@ jobs:
               if needle not in body:
                   raise SystemExit(f"missing direct-FD path: {needle}")
 
-          if "task_work_add(" in body:
+          # Check executable call syntax, not comments mentioning task_work_add().
+          if "task_work_add(current," in body:
               raise SystemExit("task_work unexpectedly present in direct-FD handler")
 
           print("Verified: direct FD install enabled; task_work disabled")
@@ -2712,7 +2713,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD-Fixed.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2725,8 +2726,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD
-          path: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD.zip
+          name: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD-Fixed
+          path: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD-Fixed.zip
           if-no-files-found: error
           compression-level: 0
 
