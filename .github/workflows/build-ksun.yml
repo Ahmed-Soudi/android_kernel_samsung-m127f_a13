@@ -2379,7 +2379,7 @@ jobs:
 
           echo "Full probe-safe runtime with SELinux Hide verified."
 
-      - name: Route KSU install-FD request through safe syscall dispatcher on Samsung 4.19
+      - name: Test reboot syscall dispatcher without FD installation on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2459,28 +2459,15 @@ jobs:
           {
               int magic1 = (int)PT_REGS_PARM1(regs);
               int magic2 = (int)PT_REGS_PARM2(regs);
-              unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
 
-              if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
-                  struct ksu_install_fd_tw *tw;
-
-                  tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
-                  if (tw) {
-                      tw->outp = (int __user *)arg4;
-                      tw->cb.func = ksu_install_fd_tw_func;
-
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-                      if (task_work_add(current, &tw->cb, true)) {
-          #else
-                      if (task_work_add(current, &tw->cb, TWA_RESUME)) {
-          #endif
-                          kfree(tw);
-                          pr_warn("install fd dispatcher task_work failed\n");
-                      } else {
-                          pr_info("install fd request routed via syscall dispatcher\n");
-                      }
-                  }
-              }
+              /*
+               * Samsung 4.19 diagnostic split:
+               * Keep __NR_reboot routed through KSUN's syscall dispatcher,
+               * but intentionally do NOT schedule task_work and do NOT call
+               * ksu_install_fd().
+               */
+              if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2)
+                  pr_warn("Samsung 4.19 diagnostic: install-FD magic observed but intentionally ignored\\n");
 
               return ksu_syscall_table[orig_nr](regs);
           }
@@ -2585,19 +2572,27 @@ jobs:
           print("Verified: Samsung <5.10 branch does not register reboot kprobe")
           PY
 
-          # The safe syscall route must exist.
+          # The reboot syscall route must remain registered.
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
-          # Catch the exact accidental split-string bug from the previous workflow.
+          # This diagnostic must not install the FD from the dispatcher hook.
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
-          expected = 'pr_info("hook_manager: reboot install-FD syscall hook registered\\n");'
-          if expected not in s:
-              raise SystemExit("reboot install-FD pr_info C string is malformed")
-          print("Generated hook-manager C string verified")
+          start = s.find("long __nocfi ksu_hook_reboot_install_fd")
+          end = s.find("static int reboot_handler_pre", start)
+          if start < 0 or end < 0:
+              raise SystemExit("cannot locate diagnostic reboot dispatcher handler")
+          body = s[start:end]
+          if "task_work_add(" in body:
+              raise SystemExit("diagnostic handler still schedules task_work")
+          if "ksu_install_fd()" in body:
+              raise SystemExit("diagnostic handler still calls ksu_install_fd()")
+          if "install-FD magic observed but intentionally ignored" not in body:
+              raise SystemExit("diagnostic ignore marker missing")
+          print("Verified: reboot dispatcher active, FD installation intentionally disabled")
           PY
 
       - name: Configure M127F kernel
@@ -2694,7 +2689,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide-Fixed.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-RebootDispatch-NoFD.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2707,8 +2702,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide-Fixed
-          path: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide-Fixed.zip
+          name: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-NoFD
+          path: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-NoFD.zip
           if-no-files-found: error
           compression-level: 0
 
