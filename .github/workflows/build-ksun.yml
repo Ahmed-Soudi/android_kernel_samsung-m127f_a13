@@ -2522,7 +2522,7 @@ jobs:
                * bootstrap the anon [ksu_driver] control FD.
                */
               ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd);
-              pr_info("hook_manager: reboot install-FD syscall hook registered\n");
+              pr_info("hook_manager: reboot install-FD syscall hook registered\\n");
           #endif
           '''
 
@@ -2554,17 +2554,51 @@ jobs:
           grep -n -B5 -A18 '__NR_reboot' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
-          # The unsafe reboot kprobe must remain disabled by the proven fix.
-          if grep -A25 'void __init ksu_supercalls_init' \
-              KernelSU-Next/kernel/supercall/supercall.c | \
-              grep -q 'rc = register_kprobe(&reboot_kp)'; then
-            echo "ERROR: unsafe reboot kprobe registration is active"
-            exit 1
-          fi
+          # Verify Samsung <5.10 takes the no-kprobe branch.
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
+
+          start = s.find("void __init ksu_supercalls_init(void)")
+          end = s.find("void __exit ksu_supercalls_exit", start)
+          if start < 0 or end < 0:
+              raise SystemExit("cannot locate ksu_supercalls_init for verification")
+
+          body = s[start:end]
+
+          required = [
+              "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)",
+              "reboot kprobe disabled for compatibility",
+              "#else",
+              "register_kprobe(&reboot_kp)",
+          ]
+          for needle in required:
+              if needle not in body:
+                  raise SystemExit(f"missing expected probe-safe structure: {needle}")
+
+          if body.index("reboot kprobe disabled for compatibility") > body.index("#else"):
+              raise SystemExit("Samsung no-kprobe branch is not before #else")
+
+          if body.index("register_kprobe(&reboot_kp)") < body.index("#else"):
+              raise SystemExit("unsafe reboot kprobe appears in Samsung <5.10 branch")
+
+          print("Verified: Samsung <5.10 branch does not register reboot kprobe")
+          PY
 
           # The safe syscall route must exist.
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
+
+          # Catch the exact accidental split-string bug from the previous workflow.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
+          s = p.read_text()
+          expected = 'pr_info("hook_manager: reboot install-FD syscall hook registered\\n");'
+          if expected not in s:
+              raise SystemExit("reboot install-FD pr_info C string is malformed")
+          print("Generated hook-manager C string verified")
+          PY
 
       - name: Configure M127F kernel
         run: |
@@ -2660,7 +2694,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide-Fixed.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2673,8 +2707,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide
-          path: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide.zip
+          name: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide-Fixed
+          path: M127F-KSUN-v3.3.0-DIAG-SafeFD-SELinuxHide-Fixed.zip
           if-no-files-found: error
           compression-level: 0
 
