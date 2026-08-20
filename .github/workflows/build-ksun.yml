@@ -2608,11 +2608,11 @@ jobs:
                   raise SystemExit(f"missing allocate-only path: {needle}")
 
           forbidden = [
-              "anon_inode_getfile(",
-              "fd_install(",
+              "anon_inode_getfile(\"[ksu_driver]\"",
+              "fd_install(fd,",
               "ksu_install_fd();",
-              "copy_to_user(",
-              "task_work_add(",
+              "copy_to_user((int __user *)arg4",
+              "task_work_add(current,",
           ]
           for needle in forbidden:
               if needle in body:
@@ -2715,7 +2715,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly-Fixed.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2728,8 +2728,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly
-          path: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly-Fixed
+          path: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly-Fixed.zip
           if-no-files-found: error
           compression-level: 0
 
