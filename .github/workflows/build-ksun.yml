@@ -2379,7 +2379,7 @@ jobs:
 
           echo "Full probe-safe runtime with SELinux Hide verified."
 
-      - name: Test direct KSU FD installation from reboot syscall dispatcher on Samsung 4.19
+      - name: Test FD number allocation only from reboot syscall dispatcher on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2459,29 +2459,23 @@ jobs:
           {
               int magic1 = (int)PT_REGS_PARM1(regs);
               int magic2 = (int)PT_REGS_PARM2(regs);
-              unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
 
               /*
-               * Samsung 4.19 / Exynos compatibility:
+               * Samsung 4.19 diagnostic:
                *
-               * This handler runs from KernelSU's normal syscall dispatcher,
-               * not from kprobe context. Install the anon KSU FD directly
-               * in syscall context and copy it back immediately.
-               *
-               * Avoid task_work_add(); that deferral was needed by the
-               * original reboot kprobe path, not by normal syscall context.
+               * Split ksu_install_fd() at its first primitive.
+               * Allocate an unused FD number, then immediately release it.
+               * Do NOT create an anon inode file.
+               * Do NOT call fd_install().
+               * Do NOT copy an FD back to userspace.
                */
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
-                  int fd = ksu_install_fd();
+                  int fd = get_unused_fd_flags(O_CLOEXEC);
 
-                  pr_info("Samsung 4.19: direct KSU fd install via syscall dispatcher: %d\\n", fd);
+                  pr_info("Samsung 4.19 diagnostic: get_unused_fd_flags -> %d\\n", fd);
 
-                  if (fd >= 0) {
-                      if (copy_to_user((int __user *)arg4, &fd, sizeof(fd))) {
-                          pr_err("Samsung 4.19: direct install fd reply failed\\n");
-                          ksu_close_fd(fd);
-                      }
-                  }
+                  if (fd >= 0)
+                      put_unused_fd(fd);
               }
 
               return ksu_syscall_table[orig_nr](regs);
@@ -2591,32 +2585,40 @@ jobs:
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
-          # Verify direct FD installation exists and task_work remains absent.
+          # Verify this split tests ONLY get_unused_fd_flags()/put_unused_fd().
           python3 - <<'PY'
           from pathlib import Path
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
+
           start = s.find("long __nocfi ksu_hook_reboot_install_fd")
           end = s.find("static int reboot_handler_pre", start)
           if start < 0 or end < 0:
               raise SystemExit("cannot locate reboot dispatcher handler")
+
           body = s[start:end]
 
           required = [
-              "int fd = ksu_install_fd();",
-              "copy_to_user((int __user *)arg4, &fd, sizeof(fd))",
-              "ksu_close_fd(fd);",
-              "direct KSU fd install via syscall dispatcher",
+              "get_unused_fd_flags(O_CLOEXEC)",
+              "put_unused_fd(fd);",
+              "get_unused_fd_flags -> %d",
           ]
           for needle in required:
               if needle not in body:
-                  raise SystemExit(f"missing direct-FD path: {needle}")
+                  raise SystemExit(f"missing allocate-only path: {needle}")
 
-          # Check executable call syntax, not comments mentioning task_work_add().
-          if "task_work_add(current," in body:
-              raise SystemExit("task_work unexpectedly present in direct-FD handler")
+          forbidden = [
+              "anon_inode_getfile(",
+              "fd_install(",
+              "ksu_install_fd();",
+              "copy_to_user(",
+              "task_work_add(",
+          ]
+          for needle in forbidden:
+              if needle in body:
+                  raise SystemExit(f"unexpected later FD primitive in allocate-only handler: {needle}")
 
-          print("Verified: direct FD install enabled; task_work disabled")
+          print("Verified: allocate-only FD diagnostic")
           PY
 
       - name: Configure M127F kernel
@@ -2713,7 +2715,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD-Fixed.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2726,8 +2728,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD-Fixed
-          path: M127F-KSUN-v3.3.0-DIAG-RebootDispatch-DirectFD-Fixed.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly
+          path: M127F-KSUN-v3.3.0-DIAG-FD-AllocateOnly.zip
           if-no-files-found: error
           compression-level: 0
 
