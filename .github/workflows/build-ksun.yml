@@ -2379,7 +2379,7 @@ jobs:
 
           echo "Full probe-safe runtime with SELinux Hide verified."
 
-      - name: Test fd_install after anon inode creation on Samsung 4.19
+      - name: Test copy_to_user after fd_install on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2459,6 +2459,7 @@ jobs:
           {
               int magic1 = (int)PT_REGS_PARM1(regs);
               int magic2 = (int)PT_REGS_PARM2(regs);
+              unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
 
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
                   struct file *filp;
@@ -2478,6 +2479,12 @@ jobs:
                           pr_info("Samsung 4.19 diagnostic: before fd_install(%d)\\n", fd);
                           fd_install(fd, filp);
                           pr_info("Samsung 4.19 diagnostic: after fd_install(%d)\\n", fd);
+
+                          pr_info("Samsung 4.19 diagnostic: before copy_to_user fd reply\\n");
+                          if (copy_to_user((int __user *)arg4, &fd, sizeof(fd)))
+                              pr_err("Samsung 4.19 diagnostic: copy_to_user fd reply failed\\n");
+                          else
+                              pr_info("Samsung 4.19 diagnostic: copy_to_user fd reply succeeded\\n");
                       }
                   }
               }
@@ -2589,7 +2596,7 @@ jobs:
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
-          # Verify fd_install() is tested without copy_to_user/task_work.
+          # Verify copy_to_user() is the only newly added primitive.
           python3 - <<'PY'
           from pathlib import Path
           s = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
@@ -2602,19 +2609,18 @@ jobs:
               "get_unused_fd_flags(O_CLOEXEC)",
               'anon_inode_getfile("[ksu_driver]", &anon_ksu_fops',
               "fd_install(fd, filp);",
-              "before fd_install(%d)",
-              "after fd_install(%d)",
+              "copy_to_user((int __user *)arg4, &fd, sizeof(fd))",
+              "copy_to_user fd reply succeeded",
           ]:
               if needle not in body:
-                  raise SystemExit(f"missing fd-install path: {needle}")
+                  raise SystemExit(f"missing copy-to-user path: {needle}")
           for needle in [
               "ksu_install_fd();",
-              "copy_to_user((int __user *)arg4",
               "task_work_add(current,",
           ]:
               if needle in body:
                   raise SystemExit(f"unexpected later primitive: {needle}")
-          print("Verified: fd_install diagnostic only")
+          print("Verified: copy_to_user diagnostic only")
           PY
 
       - name: Configure M127F kernel
@@ -2711,7 +2717,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-InstallOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-CopyToUser.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2724,8 +2730,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FD-InstallOnly
-          path: M127F-KSUN-v3.3.0-DIAG-FD-InstallOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FD-CopyToUser
+          path: M127F-KSUN-v3.3.0-DIAG-FD-CopyToUser.zip
           if-no-files-found: error
           compression-level: 0
 
