@@ -2379,7 +2379,7 @@ jobs:
 
           echo "Full probe-safe runtime with SELinux Hide verified."
 
-      - name: Test anon inode creation after FD allocation on Samsung 4.19
+      - name: Test fd_install after anon inode creation on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2460,12 +2460,6 @@ jobs:
               int magic1 = (int)PT_REGS_PARM1(regs);
               int magic2 = (int)PT_REGS_PARM2(regs);
 
-              /*
-               * Samsung 4.19 diagnostic:
-               * Allocate an FD number, create the anon [ksu_driver] file,
-               * then immediately fput() it and release the FD number.
-               * No fd_install(), copy_to_user(), or task_work.
-               */
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
                   struct file *filp;
                   int fd = get_unused_fd_flags(O_CLOEXEC);
@@ -2479,12 +2473,12 @@ jobs:
                       if (IS_ERR(filp)) {
                           pr_err("Samsung 4.19 diagnostic: anon_inode_getfile failed: %ld\\n",
                                  PTR_ERR(filp));
+                          put_unused_fd(fd);
                       } else {
-                          pr_info("Samsung 4.19 diagnostic: anon_inode_getfile succeeded\\n");
-                          fput(filp);
+                          pr_info("Samsung 4.19 diagnostic: before fd_install(%d)\\n", fd);
+                          fd_install(fd, filp);
+                          pr_info("Samsung 4.19 diagnostic: after fd_install(%d)\\n", fd);
                       }
-
-                      put_unused_fd(fd);
                   }
               }
 
@@ -2595,40 +2589,32 @@ jobs:
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
-          # Verify anon inode creation is tested without installing the FD.
+          # Verify fd_install() is tested without copy_to_user/task_work.
           python3 - <<'PY'
           from pathlib import Path
-          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
-          s = p.read_text()
-
+          s = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
           start = s.find("long __nocfi ksu_hook_reboot_install_fd")
           end = s.find("static int reboot_handler_pre", start)
           if start < 0 or end < 0:
               raise SystemExit("cannot locate reboot dispatcher handler")
-
           body = s[start:end]
-
-          required = [
+          for needle in [
               "get_unused_fd_flags(O_CLOEXEC)",
               'anon_inode_getfile("[ksu_driver]", &anon_ksu_fops',
-              "fput(filp);",
-              "put_unused_fd(fd);",
-          ]
-          for needle in required:
+              "fd_install(fd, filp);",
+              "before fd_install(%d)",
+              "after fd_install(%d)",
+          ]:
               if needle not in body:
-                  raise SystemExit(f"missing anon-inode diagnostic path: {needle}")
-
-          forbidden = [
-              "fd_install(fd,",
+                  raise SystemExit(f"missing fd-install path: {needle}")
+          for needle in [
               "ksu_install_fd();",
               "copy_to_user((int __user *)arg4",
               "task_work_add(current,",
-          ]
-          for needle in forbidden:
+          ]:
               if needle in body:
-                  raise SystemExit(f"unexpected later FD primitive in anon-inode handler: {needle}")
-
-          print("Verified: anon-inode-only FD diagnostic")
+                  raise SystemExit(f"unexpected later primitive: {needle}")
+          print("Verified: fd_install diagnostic only")
           PY
 
       - name: Configure M127F kernel
@@ -2725,7 +2711,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-AnonInodeOnly.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-InstallOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2738,8 +2724,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FD-AnonInodeOnly
-          path: M127F-KSUN-v3.3.0-DIAG-FD-AnonInodeOnly.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FD-InstallOnly
+          path: M127F-KSUN-v3.3.0-DIAG-FD-InstallOnly.zip
           if-no-files-found: error
           compression-level: 0
 
