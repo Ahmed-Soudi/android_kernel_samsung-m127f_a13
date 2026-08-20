@@ -2460,8 +2460,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-KSUD-NoInputKprobe
-          path: M127F-KSUN-v3.3.0-DIAG-KSUD-NoInputKprobe.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FileWrapperOnly
+          path: M127F-KSUN-v3.3.0-DIAG-FileWrapperOnly.zip
           if-no-files-found: error
           compression-level: 0
 
