@@ -2624,7 +2624,7 @@ jobs:
           PY
 
 
-      - name: Allow only K02 ioctl handshake on Samsung 4.19
+      - name: Allow only K02 and K03 ioctls on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2650,21 +2650,21 @@ jobs:
               long ret;
 
               /*
-               * Samsung 4.19 diagnostic stage 2:
-               * The userspace-visible FD transport is proven safe. Permit
-               * only the two K02 ioctl encodings observed from ksud/Manager;
-               * keep every later command blocked so we can identify the next
-               * protocol step without enabling the complete ioctl surface.
+               * Samsung 4.19 diagnostic stage 3:
+               * K02 is proven boot-safe and returns 0. The next observed
+               * userspace command is K03 (0x40004b03). Permit only K02 and
+               * that exact K03 encoding; block and log everything after it.
                */
-              if (cmd == 0x80104b02U || cmd == 0x80004b02U) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing K02 ioctl cmd=0x%x\\n", cmd);
+              if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
+                  cmd == 0x40004b03U) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing K02/K03 ioctl cmd=0x%x\\n", cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
-                  pr_warn("Samsung 4.19 diagnostic: K02 ioctl cmd=0x%x returned %ld\\n",
+                  pr_warn("Samsung 4.19 diagnostic: K02/K03 ioctl cmd=0x%x returned %ld\\n",
                           cmd, ret);
                   return ret;
               }
 
-              pr_warn("Samsung 4.19 diagnostic: blocked post-K02 ioctl cmd=0x%x\\n", cmd);
+              pr_warn("Samsung 4.19 diagnostic: blocked post-K03 ioctl cmd=0x%x\\n", cmd);
               return -ENOTTY;
           #else
               return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
@@ -2678,13 +2678,13 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 K02-only ioctl diagnostic ==="
-          grep -n -A28 -B2 'static long anon_ksu_ioctl' \
+          echo "=== Samsung 4.19 K02+K03 ioctl diagnostic ==="
+          grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing K02 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
-          grep -q 'blocked post-K02 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
-          grep -q 'cmd == 0x80104b02U || cmd == 0x80004b02U' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing K02/K03 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'blocked post-K03 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
 
       - name: Configure M127F kernel
         run: |
