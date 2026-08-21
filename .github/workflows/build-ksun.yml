@@ -2624,7 +2624,7 @@ jobs:
           PY
 
 
-      - name: Allow only K02 and K03 ioctls on Samsung 4.19
+      - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2650,18 +2650,34 @@ jobs:
               long ret;
 
               /*
-               * Samsung 4.19 diagnostic stage 3:
-               * K02 is proven boot-safe and returns 0. The next observed
-               * userspace command is K03 (0x40004b03). Permit only K02 and
-               * that exact K03 encoding; block and log everything after it.
+               * Samsung 4.19 diagnostic stage 4:
+               * - K02 GET_INFO is proven boot-safe, so execute it normally.
+               * - K03 REPORT_EVENT is the first command associated with the
+               *   rebooting build. For K03, copy only the event ID from
+               *   userspace, log it, and return success WITHOUT dispatching
+               *   on_post_fs_data(), on_boot_completed(), or
+               *   on_module_mounted().
+               * - Block every other ioctl.
                */
-              if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
-                  cmd == 0x40004b03U) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing K02/K03 ioctl cmd=0x%x\\n", cmd);
+              if (cmd == 0x80104b02U || cmd == 0x80004b02U) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing K02 ioctl cmd=0x%x\\n", cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
-                  pr_warn("Samsung 4.19 diagnostic: K02/K03 ioctl cmd=0x%x returned %ld\\n",
+                  pr_warn("Samsung 4.19 diagnostic: K02 ioctl cmd=0x%x returned %ld\\n",
                           cmd, ret);
                   return ret;
+              }
+
+              if (cmd == 0x40004b03U) {
+                  struct ksu_report_event_cmd evt;
+
+                  if (copy_from_user(&evt, (void __user *)arg, sizeof(evt))) {
+                      pr_err("Samsung 4.19 diagnostic: K03 event copy_from_user failed\\n");
+                      return -EFAULT;
+                  }
+
+                  pr_warn("Samsung 4.19 diagnostic: observed K03 REPORT_EVENT event=%u; handler suppressed\\n",
+                          evt.event);
+                  return 0;
               }
 
               pr_warn("Samsung 4.19 diagnostic: blocked post-K03 ioctl cmd=0x%x\\n", cmd);
@@ -2678,13 +2694,35 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 K02+K03 ioctl diagnostic ==="
-          grep -n -A30 -B2 'static long anon_ksu_ioctl' \
+          echo "=== Samsung 4.19 K03 observer-only diagnostic ==="
+          grep -n -A45 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing K02/K03 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
-          grep -q 'blocked post-K03 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing K02 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'observed K03 REPORT_EVENT event=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'handler suppressed' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
+
+          python3 - <<'PY'
+          from pathlib import Path
+          s = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
+          start = s.find("static long anon_ksu_ioctl")
+          end = s.find("static const struct file_operations anon_ksu_fops", start)
+          if start < 0 or end < 0:
+              raise SystemExit("cannot isolate anon_ksu_ioctl")
+          body = s[start:end]
+          if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
+              raise SystemExit("K02 real ioctl path missing")
+          if "struct ksu_report_event_cmd evt;" not in body:
+              raise SystemExit("K03 observer event struct missing")
+          if "copy_from_user(&evt, (void __user *)arg, sizeof(evt))" not in body:
+              raise SystemExit("K03 observer copy_from_user missing")
+          # Ensure the K03 branch itself cannot invoke the real dispatcher.
+          k03 = body[body.find("if (cmd == 0x40004b03U)"):body.find("pr_warn(\"Samsung 4.19 diagnostic: blocked post-K03", body.find("if (cmd == 0x40004b03U)"))]
+          if "ksu_supercall_handle_ioctl" in k03:
+              raise SystemExit("K03 observer unexpectedly dispatches real ioctl handler")
+          print("Verified: K03 is observer-only; event handlers suppressed")
+          PY
 
       - name: Configure M127F kernel
         run: |
@@ -2780,7 +2818,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-Userspace-IOCTL-Inert.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-K03-Observer-Only.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2793,8 +2831,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FD-Userspace-IOCTL-Inert
-          path: M127F-KSUN-v3.3.0-DIAG-FD-Userspace-IOCTL-Inert.zip
+          name: M127F-KSUN-v3.3.0-DIAG-K03-Observer-Only
+          path: M127F-KSUN-v3.3.0-DIAG-K03-Observer-Only.zip
           if-no-files-found: error
           compression-level: 0
 
