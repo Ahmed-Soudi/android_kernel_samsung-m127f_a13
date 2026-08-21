@@ -2660,7 +2660,7 @@ jobs:
           #endif
           }"""
 
-          ns, n = pattern.subn(replacement, s, count=1)
+          ns, n = pattern.subn(lambda _m: replacement, s, count=1)
           if n != 1:
               raise SystemExit("anon_ksu_ioctl anchor not found or changed")
 
