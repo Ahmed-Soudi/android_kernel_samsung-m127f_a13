@@ -2623,6 +2623,56 @@ jobs:
           print("Verified: copy_to_user diagnostic only")
           PY
 
+
+      - name: Make KSU control FD ioctl path inert for Samsung 4.19 diagnostic
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          pattern = re.compile(
+              r'static\s+long\s+anon_ksu_ioctl\s*\(\s*struct\s+file\s*\*\s*filp\s*,\s*'
+              r'unsigned\s+int\s+cmd\s*,\s*unsigned\s+long\s+arg\s*\)\s*\{\s*'
+              r'return\s+ksu_supercall_handle_ioctl\s*\(\s*cmd\s*,\s*'
+              r'\(void\s+__user\s*\*\)\s*arg\s*\)\s*;\s*\}',
+              re.S
+          )
+
+          replacement = """static long anon_ksu_ioctl(struct file *filp, unsigned int cmd,
+                                   unsigned long arg)
+          {
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              /*
+               * Samsung 4.19 diagnostic:
+               * Userspace receives a real KSU anon FD, but every ioctl is
+               * intentionally blocked. This separates FD handoff/copy_to_user
+               * from the first userspace control command.
+               */
+              pr_warn("Samsung 4.19 diagnostic: blocked KSU ioctl cmd=0x%x\\n", cmd);
+              return -ENOTTY;
+          #else
+              return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
+          #endif
+          }"""
+
+          ns, n = pattern.subn(replacement, s, count=1)
+          if n != 1:
+              raise SystemExit("anon_ksu_ioctl anchor not found or changed")
+
+          p.write_text(ns)
+          PY
+
+          echo "=== Samsung 4.19 inert ioctl diagnostic ==="
+          grep -n -A18 -B2 'static long anon_ksu_ioctl' \
+            KernelSU-Next/kernel/supercall/supercall.c
+
+          grep -q 'blocked KSU ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -2717,7 +2767,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-CopyToUser.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-FD-Userspace-IOCTL-Inert.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2730,8 +2780,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-FD-CopyToUser
-          path: M127F-KSUN-v3.3.0-DIAG-FD-CopyToUser.zip
+          name: M127F-KSUN-v3.3.0-DIAG-FD-Userspace-IOCTL-Inert
+          path: M127F-KSUN-v3.3.0-DIAG-FD-Userspace-IOCTL-Inert.zip
           if-no-files-found: error
           compression-level: 0
 
