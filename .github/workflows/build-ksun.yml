@@ -2624,7 +2624,7 @@ jobs:
           PY
 
 
-      - name: Make KSU control FD ioctl path inert for Samsung 4.19 diagnostic
+      - name: Allow only K02 ioctl handshake on Samsung 4.19
         run: |
           set -euxo pipefail
 
@@ -2647,13 +2647,24 @@ jobs:
                                    unsigned long arg)
           {
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              long ret;
+
               /*
-               * Samsung 4.19 diagnostic:
-               * Userspace receives a real KSU anon FD, but every ioctl is
-               * intentionally blocked. This separates FD handoff/copy_to_user
-               * from the first userspace control command.
+               * Samsung 4.19 diagnostic stage 2:
+               * The userspace-visible FD transport is proven safe. Permit
+               * only the two K02 ioctl encodings observed from ksud/Manager;
+               * keep every later command blocked so we can identify the next
+               * protocol step without enabling the complete ioctl surface.
                */
-              pr_warn("Samsung 4.19 diagnostic: blocked KSU ioctl cmd=0x%x\\n", cmd);
+              if (cmd == 0x80104b02U || cmd == 0x80004b02U) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing K02 ioctl cmd=0x%x\\n", cmd);
+                  ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
+                  pr_warn("Samsung 4.19 diagnostic: K02 ioctl cmd=0x%x returned %ld\\n",
+                          cmd, ret);
+                  return ret;
+              }
+
+              pr_warn("Samsung 4.19 diagnostic: blocked post-K02 ioctl cmd=0x%x\\n", cmd);
               return -ENOTTY;
           #else
               return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
@@ -2667,11 +2678,13 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 inert ioctl diagnostic ==="
-          grep -n -A18 -B2 'static long anon_ksu_ioctl' \
+          echo "=== Samsung 4.19 K02-only ioctl diagnostic ==="
+          grep -n -A28 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'blocked KSU ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing K02 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'blocked post-K02 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'cmd == 0x80104b02U || cmd == 0x80004b02U' KernelSU-Next/kernel/supercall/supercall.c
 
       - name: Configure M127F kernel
         run: |
