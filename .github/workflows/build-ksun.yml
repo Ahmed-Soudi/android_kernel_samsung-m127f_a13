@@ -2675,6 +2675,15 @@ jobs:
                       return -EFAULT;
                   }
 
+                  if (evt.event == EVENT_BOOT_COMPLETED) {
+                      pr_warn("Samsung 4.19 diagnostic: dispatching K03 EVENT_BOOT_COMPLETED event=%u\\n",
+                              evt.event);
+                      ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
+                      pr_warn("Samsung 4.19 diagnostic: K03 EVENT_BOOT_COMPLETED returned %ld\\n",
+                              ret);
+                      return ret;
+                  }
+
                   pr_warn("Samsung 4.19 diagnostic: observed K03 REPORT_EVENT event=%u; handler suppressed\\n",
                           evt.event);
                   return 0;
@@ -2694,11 +2703,12 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 K03 observer-only diagnostic ==="
+          echo "=== Samsung 4.19 K03 event2-only diagnostic ==="
           grep -n -A45 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
           grep -q 'allowing K02 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'dispatching K03 EVENT_BOOT_COMPLETED' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'observed K03 REPORT_EVENT event=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'handler suppressed' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
@@ -2717,11 +2727,14 @@ jobs:
               raise SystemExit("K03 observer event struct missing")
           if "copy_from_user(&evt, (void __user *)arg, sizeof(evt))" not in body:
               raise SystemExit("K03 observer copy_from_user missing")
-          # Ensure the K03 branch itself cannot invoke the real dispatcher.
           k03 = body[body.find("if (cmd == 0x40004b03U)"):body.find("pr_warn(\"Samsung 4.19 diagnostic: blocked post-K03", body.find("if (cmd == 0x40004b03U)"))]
-          if "ksu_supercall_handle_ioctl" in k03:
-              raise SystemExit("K03 observer unexpectedly dispatches real ioctl handler")
-          print("Verified: K03 is observer-only; event handlers suppressed")
+          if "EVENT_BOOT_COMPLETED" not in k03:
+              raise SystemExit("K03 event2 selector missing")
+          if "ksu_supercall_handle_ioctl" not in k03:
+              raise SystemExit("K03 event2 real dispatcher path missing")
+          if "handler suppressed" not in k03:
+              raise SystemExit("K03 non-event2 suppression path missing")
+          print("Verified: K03 event2-only dispatch; events 1/3 suppressed")
           PY
 
       - name: Configure M127F kernel
@@ -2818,7 +2831,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-K03-Observer-Only.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-K03-Event2-Only.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2831,8 +2844,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-K03-Observer-Only
-          path: M127F-KSUN-v3.3.0-DIAG-K03-Observer-Only.zip
+          name: M127F-KSUN-v3.3.0-DIAG-K03-Event2-Only
+          path: M127F-KSUN-v3.3.0-DIAG-K03-Event2-Only.zip
           if-no-files-found: error
           compression-level: 0
 
