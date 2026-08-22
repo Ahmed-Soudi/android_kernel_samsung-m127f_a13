@@ -2703,7 +2703,7 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 K03 event2-only diagnostic ==="
+          echo "=== Samsung 4.19 K03 event2 track-throne + SELinux backup-drop diagnostic ==="
           grep -n -A45 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
@@ -2773,7 +2773,7 @@ jobs:
           p = Path("KernelSU-Next/kernel/runtime/boot_event.c")
           s = p.read_text()
           old = "void on_boot_completed(void)\n{\n    ksu_boot_completed = true;\n    pr_info(\"on_boot_completed!\\n\");\n    track_throne(true);\n    ksu_selinux_hide_drop_backup_if_unused();\n    ksu_avc_spoof_late_init();\n}\n"
-          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 diagnostic: event2 + track_throne only. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 diagnostic: on_boot_completed track-throne-only entered\\n\");\n    track_throne(true);\n    pr_warn(\"Samsung 4.19 diagnostic: track_throne(true) returned\\n\");\n}\n"
+          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 diagnostic: event2 + track_throne + SELinux backup drop. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 diagnostic: on_boot_completed track-throne+selinux-drop entered\\n\");\n    track_throne(true);\n    pr_warn(\"Samsung 4.19 diagnostic: track_throne(true) returned\\n\");\n    ksu_selinux_hide_drop_backup_if_unused();\n    pr_warn(\"Samsung 4.19 diagnostic: selinux_hide_drop_backup_if_unused returned\\n\");\n}\n"
           if old not in s:
               raise SystemExit("original on_boot_completed body not found")
           p.write_text(s.replace(old, new, 1))
