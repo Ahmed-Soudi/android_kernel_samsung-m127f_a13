@@ -2773,14 +2773,14 @@ jobs:
           p = Path("KernelSU-Next/kernel/runtime/boot_event.c")
           s = p.read_text()
           old = "void on_boot_completed(void)\n{\n    ksu_boot_completed = true;\n    pr_info(\"on_boot_completed!\\n\");\n    track_throne(true);\n    ksu_selinux_hide_drop_backup_if_unused();\n    ksu_avc_spoof_late_init();\n}\n"
-          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 diagnostic: event2 + track_throne + SELinux backup drop. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 diagnostic: on_boot_completed track-throne+selinux-drop entered\\n\");\n    track_throne(true);\n    pr_warn(\"Samsung 4.19 diagnostic: track_throne(true) returned\\n\");\n    ksu_selinux_hide_drop_backup_if_unused();\n    pr_warn(\"Samsung 4.19 diagnostic: selinux_hide_drop_backup_if_unused returned\\n\");\n}\n"
+          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 diagnostic: full boot-completed handler with staged logs. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 diagnostic: on_boot_completed full-handler entered\\n\");\n    track_throne(true);\n    pr_warn(\"Samsung 4.19 diagnostic: track_throne(true) returned\\n\");\n    ksu_selinux_hide_drop_backup_if_unused();\n    pr_warn(\"Samsung 4.19 diagnostic: selinux_hide_drop_backup_if_unused returned\\n\");\n    ksu_avc_spoof_late_init();\n    pr_warn(\"Samsung 4.19 diagnostic: ksu_avc_spoof_late_init returned\\n\");\n}\n"
           if old not in s:
               raise SystemExit("original on_boot_completed body not found")
           p.write_text(s.replace(old, new, 1))
           PY2
 
           grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
-          grep -q 'on_boot_completed track-throne+selinux-drop entered' KernelSU-Next/kernel/runtime/boot_event.c
+          grep -q 'on_boot_completed full-handler entered' KernelSU-Next/kernel/runtime/boot_event.c
 
       - name: Build M127F kernel
         run: |
