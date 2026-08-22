@@ -2777,10 +2777,20 @@ jobs:
           if old not in s:
               raise SystemExit("original on_boot_completed body not found")
           p.write_text(s.replace(old, new, 1))
+
+          p = Path("KernelSU-Next/kernel/extras.c")
+          s = p.read_text()
+          old = '#ifdef CONFIG_KPROBES\n\tpr_info("avc_spoof/init: register slow_avc_audit kprobe!\\n");\n\tslow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);\n#endif'
+          new = '#ifdef CONFIG_KPROBES\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n\tpr_warn("Samsung 4.19 diagnostic: avc_spoof slow_avc_audit kprobe suppressed\\n");\n#else\n\tpr_info("avc_spoof/init: register slow_avc_audit kprobe!\\n");\n\tslow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);\n#endif\n#endif'
+          if old not in s:
+              raise SystemExit("AVC spoof kprobe registration block not found")
+          p.write_text(s.replace(old, new, 1))
           PY2
 
           grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
           grep -q 'on_boot_completed full-handler entered' KernelSU-Next/kernel/runtime/boot_event.c
+          grep -nA8 -B4 'slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
+          grep -q 'avc_spoof slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
 
       - name: Build M127F kernel
         run: |
