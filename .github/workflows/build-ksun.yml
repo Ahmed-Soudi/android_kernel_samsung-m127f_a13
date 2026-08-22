@@ -2763,6 +2763,25 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
+
+      - name: Make boot-completed handler flag-only on Samsung 4.19
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY2'
+          from pathlib import Path
+          
+          p = Path("KernelSU-Next/kernel/runtime/boot_event.c")
+          s = p.read_text()
+          old = "void on_boot_completed(void)\n{\n    ksu_boot_completed = true;\n    pr_info(\"on_boot_completed!\\n\");\n    track_throne(true);\n    ksu_selinux_hide_drop_backup_if_unused();\n    ksu_avc_spoof_late_init();\n}\n"
+          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 diagnostic: event2 entry only; sub-actions suppressed. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 diagnostic: on_boot_completed flag-only entered\\n\");\n}\n"
+          if old not in s:
+              raise SystemExit("original on_boot_completed body not found")
+          p.write_text(s.replace(old, new, 1))
+          PY2
+
+          grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
+          grep -q 'on_boot_completed flag-only entered' KernelSU-Next/kernel/runtime/boot_event.c
+
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
@@ -2831,7 +2850,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-K03-Event2-Only.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-DIAG-K03-Event2-FlagOnly.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2844,8 +2863,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-DIAG-K03-Event2-Only
-          path: M127F-KSUN-v3.3.0-DIAG-K03-Event2-Only.zip
+          name: M127F-KSUN-v3.3.0-DIAG-K03-Event2-FlagOnly
+          path: M127F-KSUN-v3.3.0-DIAG-K03-Event2-FlagOnly.zip
           if-no-files-found: error
           compression-level: 0
 
