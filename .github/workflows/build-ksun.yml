@@ -2780,7 +2780,7 @@ jobs:
           PY2
 
           grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
-          grep -q 'on_boot_completed track-throne-only entered' KernelSU-Next/kernel/runtime/boot_event.c
+          grep -q 'on_boot_completed track-throne+selinux-drop entered' KernelSU-Next/kernel/runtime/boot_event.c
 
       - name: Build M127F kernel
         run: |
