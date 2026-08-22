@@ -2658,16 +2658,16 @@ jobs:
                * - Block every ioctl after K03.
                */
               if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
-                  cmd == 0x40004b03U) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing K02/K03 ioctl cmd=0x%x\\n",
+                  cmd == 0x40004b03U || cmd == 0x80004b63U) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing K02/K03/GET_VERSION_TAG ioctl cmd=0x%x\\n",
                           cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
-                  pr_warn("Samsung 4.19 diagnostic: K02/K03 ioctl cmd=0x%x returned %ld\\n",
+                  pr_warn("Samsung 4.19 diagnostic: allowed ioctl cmd=0x%x returned %ld\\n",
                           cmd, ret);
                   return ret;
               }
 
-              pr_warn("Samsung 4.19 diagnostic: blocked post-K03 ioctl cmd=0x%x\\n", cmd);
+              pr_warn("Samsung 4.19 diagnostic: blocked post-version-tag ioctl cmd=0x%x\\n", cmd);
               return -ENOTTY;
           #else
               return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
@@ -2681,13 +2681,13 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 K03 all-events + AVC-safe diagnostic ==="
+          echo "=== Samsung 4.19 GET_VERSION_TAG diagnostic ==="
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing K02/K03 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing K02/K03/GET_VERSION_TAG ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
-          grep -q 'blocked post-K03 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'blocked post-version-tag ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
 
           python3 - <<'PY'
           from pathlib import Path
@@ -2699,11 +2699,13 @@ jobs:
           body = s[start:end]
           if "cmd == 0x40004b03U" not in body:
               raise SystemExit("K03 allow path missing")
+          if "cmd == 0x80004b63U" not in body:
+              raise SystemExit("GET_VERSION_TAG allow path missing")
           if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
               raise SystemExit("real K02/K03 dispatcher path missing")
           if "struct ksu_report_event_cmd evt;" in body or "handler suppressed" in body:
               raise SystemExit("stale K03 observer/suppression logic still present")
-          print("Verified: K02/K03 real dispatch for all K03 events; post-K03 ioctls blocked")
+          print("Verified: K02/K03 + GET_VERSION_TAG allowed; later ioctls blocked")
           PY
 
 
