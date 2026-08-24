@@ -2660,8 +2660,8 @@ jobs:
               if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
                   cmd == 0x40004b03U || cmd == 0x80004b63U ||
                   cmd == 0x80004b05U || cmd == 0xc0004b0dU ||
-                  cmd == 0xc0044b06U) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing through NEW_GET_ALLOW_LIST ioctl cmd=0x%x\\n",
+                  cmd == 0xc0044b06U || cmd == 0x80004b62U) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing through GET_HOOK_MODE K98 ioctl cmd=0x%x\\n",
                           cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
                   pr_warn("Samsung 4.19 diagnostic: allowed ioctl cmd=0x%x returned %ld\\n",
@@ -2683,11 +2683,11 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 TRIAL-08 NEW_GET_ALLOW_LIST K06 diagnostic ==="
+          echo "=== Samsung 4.19 TRIAL-09 GET_HOOK_MODE K98 diagnostic ==="
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing through NEW_GET_ALLOW_LIST ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing through GET_HOOK_MODE K98 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'blocked post-version-tag ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
 
@@ -2709,11 +2709,13 @@ jobs:
               raise SystemExit("GET_FEATURE K13 allow path missing")
           if "cmd == 0xc0044b06U" not in body:
               raise SystemExit("NEW_GET_ALLOW_LIST K06 allow path missing")
+          if "cmd == 0x80004b62U" not in body:
+              raise SystemExit("GET_HOOK_MODE K98 allow path missing")
           if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
               raise SystemExit("real K02/K03 dispatcher path missing")
           if "struct ksu_report_event_cmd evt;" in body or "handler suppressed" in body:
               raise SystemExit("stale K03 observer/suppression logic still present")
-          print("Verified: previous safe ioctls + NEW_GET_ALLOW_LIST K06 allowed; later ioctls blocked")
+          print("Verified: previous safe ioctls + GET_HOOK_MODE K98 allowed; later ioctls blocked")
           PY
 
 
@@ -2840,7 +2842,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-08-NEW-GET-ALLOW-LIST-K06.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-09-GET-HOOK-MODE-K98.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2853,8 +2855,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-08-NEW-GET-ALLOW-LIST-K06
-          path: M127F-KSUN-v3.3.0-TRIAL-08-NEW-GET-ALLOW-LIST-K06.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-09-GET-HOOK-MODE-K98
+          path: M127F-KSUN-v3.3.0-TRIAL-09-GET-HOOK-MODE-K98.zip
           if-no-files-found: error
           compression-level: 0
 
