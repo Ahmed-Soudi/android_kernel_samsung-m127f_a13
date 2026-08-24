@@ -2658,8 +2658,9 @@ jobs:
                * - Block every ioctl after K03.
                */
               if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
-                  cmd == 0x40004b03U || cmd == 0x80004b63U) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing K02/K03/GET_VERSION_TAG ioctl cmd=0x%x\\n",
+                  cmd == 0x40004b03U || cmd == 0x80004b63U ||
+                  cmd == 0x80004b05U) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing K02/K03/GET_VERSION_TAG/CHECK_SAFEMODE ioctl cmd=0x%x\\n",
                           cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
                   pr_warn("Samsung 4.19 diagnostic: allowed ioctl cmd=0x%x returned %ld\\n",
@@ -2685,7 +2686,7 @@ jobs:
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing K02/K03/GET_VERSION_TAG ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing K02/K03/GET_VERSION_TAG/CHECK_SAFEMODE ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'blocked post-version-tag ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
 
@@ -2701,11 +2702,13 @@ jobs:
               raise SystemExit("K03 allow path missing")
           if "cmd == 0x80004b63U" not in body:
               raise SystemExit("GET_VERSION_TAG allow path missing")
+          if "cmd == 0x80004b05U" not in body:
+              raise SystemExit("CHECK_SAFEMODE allow path missing")
           if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
               raise SystemExit("real K02/K03 dispatcher path missing")
           if "struct ksu_report_event_cmd evt;" in body or "handler suppressed" in body:
               raise SystemExit("stale K03 observer/suppression logic still present")
-          print("Verified: K02/K03 + GET_VERSION_TAG allowed; later ioctls blocked")
+          print("Verified: K02/K03 + GET_VERSION_TAG + CHECK_SAFEMODE allowed; later ioctls blocked")
           PY
 
 
