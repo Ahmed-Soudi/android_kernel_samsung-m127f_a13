@@ -2661,8 +2661,8 @@ jobs:
                   cmd == 0x40004b03U || cmd == 0x80004b63U ||
                   cmd == 0x80004b05U || cmd == 0xc0004b0dU ||
                   cmd == 0xc0044b06U || cmd == 0x80004b62U ||
-                  cmd == 0xc0004b0bU) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing through GET_APP_PROFILE K11 ioctl cmd=0x%x\\n",
+                  cmd == 0xc0004b0bU || cmd == 0x40004b0cU) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing through SET_APP_PROFILE K12 ioctl cmd=0x%x\\n",
                           cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
                   pr_warn("Samsung 4.19 diagnostic: allowed ioctl cmd=0x%x returned %ld\\n",
@@ -2684,11 +2684,11 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 TRIAL-10 GET_APP_PROFILE K11 diagnostic ==="
+          echo "=== Samsung 4.19 TRIAL-11 SET_APP_PROFILE K12 diagnostic ==="
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing through GET_APP_PROFILE K11 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing through SET_APP_PROFILE K12 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'blocked post-version-tag ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
 
@@ -2714,11 +2714,13 @@ jobs:
               raise SystemExit("GET_HOOK_MODE K98 allow path missing")
           if "cmd == 0xc0004b0bU" not in body:
               raise SystemExit("GET_APP_PROFILE K11 allow path missing")
+          if "cmd == 0x40004b0cU" not in body:
+              raise SystemExit("SET_APP_PROFILE K12 allow path missing")
           if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
               raise SystemExit("real K02/K03 dispatcher path missing")
           if "struct ksu_report_event_cmd evt;" in body or "handler suppressed" in body:
               raise SystemExit("stale K03 observer/suppression logic still present")
-          print("Verified: previous safe ioctls + GET_APP_PROFILE K11 allowed; later ioctls blocked")
+          print("Verified: previous safe ioctls + SET_APP_PROFILE K12 allowed; later ioctls blocked")
           PY
 
 
@@ -2845,7 +2847,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-10-GET-APP-PROFILE-K11.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-11-SET-APP-PROFILE-K12.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2858,8 +2860,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-10-GET-APP-PROFILE-K11
-          path: M127F-KSUN-v3.3.0-TRIAL-10-GET-APP-PROFILE-K11.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-11-SET-APP-PROFILE-K12
+          path: M127F-KSUN-v3.3.0-TRIAL-11-SET-APP-PROFILE-K12.zip
           if-no-files-found: error
           compression-level: 0
 
