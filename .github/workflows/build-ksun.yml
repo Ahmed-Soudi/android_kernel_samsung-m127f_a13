@@ -2086,6 +2086,66 @@ jobs:
           grep -n -A36 'void __init ksu_supercalls_init' \
             KernelSU-Next/kernel/supercall/supercall.c
 
+      - name: Persist SELinux Hide enable request across required reboot
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
+          s = p.read_text()
+
+          old = (
+              "            ret = ksu_selinux_hide_enable();\n"
+              "            if (!ret) {\n"
+              "                ksu_selinux_hide_running = true;\n"
+              "            }\n"
+          )
+
+          new = (
+              "            ret = ksu_selinux_hide_enable();\n"
+              "            if (ret == -EAGAIN) {\n"
+              "                /*\n"
+              "                 * The pristine backup policy may already have been dropped\n"
+              "                 * by boot-completed before userspace enables this feature for\n"
+              "                 * the first time. Keep ksu_selinux_hide_enabled=true, report\n"
+              "                 * success so userspace persists the preference, and leave\n"
+              "                 * ksu_selinux_hide_running=false until the next boot.\n"
+              "                 */\n"
+              "                pr_info(\"selinux_hide: enable deferred until reboot; preserving requested state\\\\n\");\n"
+              "                ret = 0;\n"
+              "            } else if (!ret) {\n"
+              "                ksu_selinux_hide_running = true;\n"
+              "            }\n"
+          )
+
+          if old not in s:
+              raise SystemExit("selinux_hide_feature_set enable block not found")
+          if s.count(old) != 1:
+              raise SystemExit(f"unexpected selinux_hide enable block count: {s.count(old)}")
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          body = p.read_text()
+          checks = [
+              "ret == -EAGAIN",
+              "enable deferred until reboot; preserving requested state",
+              "ksu_selinux_hide_running = true;",
+              "ksu_selinux_hide_enabled = enable;",
+          ]
+          for needle in checks:
+              if needle not in body:
+                  raise SystemExit(f"Trial 14 verification missing: {needle}")
+
+          print("Trial 14 SELinux Hide deferred-enable persistence patch applied")
+          PY
+
+          echo "=== Trial 14 SELinux Hide persistence verification ==="
+          grep -n -A24 'ret = ksu_selinux_hide_enable();' \
+            KernelSU-Next/kernel/feature/selinux_hide.c
+
       - name: Verify SELinux Hide remains fully enabled
         run: |
           set -euxo pipefail
@@ -2876,7 +2936,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-13B-OBSERVE-GET-WRAPPER-FD-K15.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-14-SELINUX-HIDE-PERSIST-REBOOT.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2889,8 +2949,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-13B-OBSERVE-GET-WRAPPER-FD-K15
-          path: M127F-KSUN-v3.3.0-TRIAL-13B-OBSERVE-GET-WRAPPER-FD-K15.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-14-SELINUX-HIDE-PERSIST-REBOOT
+          path: M127F-KSUN-v3.3.0-TRIAL-14-SELINUX-HIDE-PERSIST-REBOOT.zip
           if-no-files-found: error
           compression-level: 0
 
