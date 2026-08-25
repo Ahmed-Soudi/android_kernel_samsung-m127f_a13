@@ -2773,6 +2773,11 @@ jobs:
               block_end += 1
           s = s[:block_start] + new + s[block_end:]
 
+          new_unreg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              ksu_syscall_table_unhook(__NR_reboot);
+          #endif
+          '''
+
           target = "ksu_unregister_syscall_hook(__NR_reboot);"
           pos = s.find(target)
           if pos < 0:
