@@ -2632,8 +2632,16 @@ jobs:
           from pathlib import Path
 
           # supercall.h: declare the direct reboot syscall-table wrapper.
+          # Pull in syscall_fn_t before exposing ksu_orig_reboot_syscall.
           p = Path("KernelSU-Next/kernel/supercall/supercall.h")
           s = p.read_text()
+
+          include_marker = '#include <linux/uaccess.h>\n'
+          include_line = '#include "../hook/syscall_hook.h"\n'
+          if include_line not in s:
+              if include_marker not in s:
+                  raise SystemExit("Trial 15 supercall.h include anchor not found")
+              s = s.replace(include_marker, include_marker + include_line, 1)
 
           old = '''long ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs);
 
@@ -2835,6 +2843,8 @@ jobs:
               if needle not in hm:
                   raise SystemExit(f"Trial 15 hook-manager verification missing: {needle}")
 
+          if '#include "../hook/syscall_hook.h"' not in sh:
+              raise SystemExit("Trial 15 syscall_fn_t provider include missing")
           if "extern syscall_fn_t ksu_orig_reboot_syscall;" not in sh:
               raise SystemExit("Trial 15 original reboot declaration missing")
 
