@@ -2662,8 +2662,8 @@ jobs:
                   cmd == 0x80004b05U || cmd == 0xc0004b0dU ||
                   cmd == 0xc0044b06U || cmd == 0x80004b62U ||
                   cmd == 0xc0004b0bU || cmd == 0x40004b0cU ||
-                  cmd == 0x40004b0eU) {
-                  pr_warn("Samsung 4.19 diagnostic: allowing through SET_FEATURE K14 ioctl cmd=0x%x\\n",
+                  cmd == 0x40004b0eU || cmd == 0x40004b0fU) {
+                  pr_warn("Samsung 4.19 diagnostic: allowing through GET_WRAPPER_FD K15 ioctl cmd=0x%x\\n",
                           cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
                   pr_warn("Samsung 4.19 diagnostic: allowed ioctl cmd=0x%x returned %ld\\n",
@@ -2671,7 +2671,7 @@ jobs:
                   return ret;
               }
 
-              pr_warn("Samsung 4.19 diagnostic: blocked post-SET_FEATURE-K14 ioctl cmd=0x%x\\n", cmd);
+              pr_warn("Samsung 4.19 diagnostic: blocked post-GET_WRAPPER_FD-K15 ioctl cmd=0x%x\\n", cmd);
               return -ENOTTY;
           #else
               return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
@@ -2685,13 +2685,13 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 TRIAL-12 SET_FEATURE K14 diagnostic ==="
+          echo "=== Samsung 4.19 TRIAL-12 GET_WRAPPER_FD K15 diagnostic ==="
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          grep -q 'allowing through SET_FEATURE K14 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'allowing through GET_WRAPPER_FD K15 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
-          grep -q 'blocked post-SET_FEATURE-K14 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'blocked post-GET_WRAPPER_FD-K15 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
 
           python3 - <<'PY'
           from pathlib import Path
@@ -2719,11 +2719,13 @@ jobs:
               raise SystemExit("SET_APP_PROFILE K12 allow path missing")
           if "cmd == 0x40004b0eU" not in body:
               raise SystemExit("SET_FEATURE K14 allow path missing")
+          if "cmd == 0x40004b0fU" not in body:
+              raise SystemExit("GET_WRAPPER_FD K15 allow path missing")
           if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
               raise SystemExit("real K02/K03 dispatcher path missing")
           if "struct ksu_report_event_cmd evt;" in body or "handler suppressed" in body:
               raise SystemExit("stale K03 observer/suppression logic still present")
-          print("Verified: previous safe ioctls + SET_FEATURE K14 allowed; later ioctls blocked")
+          print("Verified: previous safe ioctls + GET_WRAPPER_FD K15 allowed; later ioctls blocked")
           PY
 
 
@@ -2850,7 +2852,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-12-SET-FEATURE-K14.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-13-GET-WRAPPER-FD-K15.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2863,8 +2865,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-12-SET-FEATURE-K14
-          path: M127F-KSUN-v3.3.0-TRIAL-12-SET-FEATURE-K14.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-13-GET-WRAPPER-FD-K15
+          path: M127F-KSUN-v3.3.0-TRIAL-13-GET-WRAPPER-FD-K15.zip
           if-no-files-found: error
           compression-level: 0
 
