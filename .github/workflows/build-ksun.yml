@@ -2755,21 +2755,38 @@ jobs:
           #endif
           '''
 
-          if old not in s:
-              raise SystemExit("Trial 15 old reboot registration block not found")
-          s = s.replace(old, new, 1)
+          # The source comments/spacing differ from the workflow's original
+          # assumption. Replace the containing #if block by locating the
+          # behavior line itself.
+          target = "ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd);"
+          pos = s.find(target)
+          if pos < 0:
+              raise SystemExit("Trial 15 reboot registration call not found")
+          block_start = s.rfind("#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)", 0, pos)
+          block_end = s.find("#endif", pos)
+          if block_start < 0 or block_end < 0:
+              raise SystemExit("Trial 15 reboot registration #if block not found")
+          block_end = s.find("\n", block_end)
+          if block_end < 0:
+              block_end = len(s)
+          else:
+              block_end += 1
+          s = s[:block_start] + new + s[block_end:]
 
-          old_unreg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              ksu_unregister_syscall_hook(__NR_reboot);
-          #endif
-          '''
-          new_unreg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              ksu_syscall_table_unhook(__NR_reboot);
-          #endif
-          '''
-          if old_unreg not in s:
-              raise SystemExit("Trial 15 reboot unregister block not found")
-          s = s.replace(old_unreg, new_unreg, 1)
+          target = "ksu_unregister_syscall_hook(__NR_reboot);"
+          pos = s.find(target)
+          if pos < 0:
+              raise SystemExit("Trial 15 reboot unregister call not found")
+          block_start = s.rfind("#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)", 0, pos)
+          block_end = s.find("#endif", pos)
+          if block_start < 0 or block_end < 0:
+              raise SystemExit("Trial 15 reboot unregister #if block not found")
+          block_end = s.find("\n", block_end)
+          if block_end < 0:
+              block_end = len(s)
+          else:
+              block_end += 1
+          s = s[:block_start] + new_unreg + s[block_end:]
 
           p.write_text(s)
 
