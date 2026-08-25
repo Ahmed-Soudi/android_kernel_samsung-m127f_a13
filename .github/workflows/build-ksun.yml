@@ -2657,12 +2657,30 @@ jobs:
                *   slow_avc_audit kprobe is suppressed separately.
                * - Block every ioctl after K03.
                */
+              if (cmd == 0x40004b0fU) {
+                  struct ksu_get_wrapper_fd_cmd k15 = { 0 };
+
+                  pr_warn("Samsung 4.19 diagnostic: K15 GET_WRAPPER_FD entered arg=0x%lx\\n",
+                          arg);
+                  if (copy_from_user(&k15, (void __user *)arg, sizeof(k15))) {
+                      pr_err("Samsung 4.19 diagnostic: K15 copy_from_user failed\\n");
+                      return -EFAULT;
+                  }
+
+                  pr_warn("Samsung 4.19 diagnostic: K15 request fd=%u flags=0x%x\\n",
+                          k15.fd, k15.flags);
+                  ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
+                  pr_warn("Samsung 4.19 diagnostic: K15 GET_WRAPPER_FD returned %ld\\n",
+                          ret);
+                  return ret;
+              }
+
               if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
                   cmd == 0x40004b03U || cmd == 0x80004b63U ||
                   cmd == 0x80004b05U || cmd == 0xc0004b0dU ||
                   cmd == 0xc0044b06U || cmd == 0x80004b62U ||
                   cmd == 0xc0004b0bU || cmd == 0x40004b0cU ||
-                  cmd == 0x40004b0eU || cmd == 0x40004b0fU) {
+                  cmd == 0x40004b0eU) {
                   pr_warn("Samsung 4.19 diagnostic: allowing through GET_WRAPPER_FD K15 ioctl cmd=0x%x\\n",
                           cmd);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
@@ -2685,7 +2703,7 @@ jobs:
           p.write_text(ns)
           PY
 
-          echo "=== Samsung 4.19 TRIAL-12 GET_WRAPPER_FD K15 diagnostic ==="
+          echo "=== Samsung 4.19 TRIAL-13B GET_WRAPPER_FD K15 observer diagnostic ==="
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
 
@@ -2721,11 +2739,17 @@ jobs:
               raise SystemExit("SET_FEATURE K14 allow path missing")
           if "cmd == 0x40004b0fU" not in body:
               raise SystemExit("GET_WRAPPER_FD K15 allow path missing")
+          if "K15 GET_WRAPPER_FD entered" not in body:
+              raise SystemExit("K15 observer entry log missing")
+          if "K15 request fd=%u flags=0x%x" not in body:
+              raise SystemExit("K15 payload observer log missing")
+          if "K15 GET_WRAPPER_FD returned %ld" not in body:
+              raise SystemExit("K15 return observer log missing")
           if "ksu_supercall_handle_ioctl(cmd, (void __user *)arg)" not in body:
               raise SystemExit("real K02/K03 dispatcher path missing")
           if "struct ksu_report_event_cmd evt;" in body or "handler suppressed" in body:
               raise SystemExit("stale K03 observer/suppression logic still present")
-          print("Verified: previous safe ioctls + GET_WRAPPER_FD K15 allowed; later ioctls blocked")
+          print("Verified: previous safe ioctls + K15 observer enabled; later ioctls blocked")
           PY
 
 
@@ -2852,7 +2876,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-13-GET-WRAPPER-FD-K15.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-13B-OBSERVE-GET-WRAPPER-FD-K15.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -2865,8 +2889,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-13-GET-WRAPPER-FD-K15
-          path: M127F-KSUN-v3.3.0-TRIAL-13-GET-WRAPPER-FD-K15.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-13B-OBSERVE-GET-WRAPPER-FD-K15
+          path: M127F-KSUN-v3.3.0-TRIAL-13B-OBSERVE-GET-WRAPPER-FD-K15.zip
           if-no-files-found: error
           compression-level: 0
 
