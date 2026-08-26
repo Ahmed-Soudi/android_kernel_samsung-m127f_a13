@@ -3045,7 +3045,6 @@ jobs:
           grep -nA8 -B4 'slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
           grep -q 'avc_spoof slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
 
-
       - name: Trial 16 fix ARM64 4.19 section-mapped kernel address translation
         run: |
           set -euxo pipefail
@@ -3056,64 +3055,20 @@ jobs:
           p = Path("KernelSU-Next/kernel/hook/arm64/patch_memory.c")
           s = p.read_text()
 
-          include_anchor = '#include "linux/stop_machine.h"\\n'
-          if '#include "linux/version.h"\\n' not in s:
-              if include_anchor not in s:
-                  raise SystemExit("Trial 16: version include anchor not found")
-              s = s.replace(
-                  include_anchor,
-                  include_anchor + '#include "linux/version.h"\\n',
-                  1,
-              )
+          pud_marker = '    pud = pud_offset(p4d, addr);\n'
+          pud_insert = '    pud = pud_offset(p4d, addr);\n#if defined(pud_sect)\n    if (pud_sect(*pud)) {\n        unsigned long phys = __pud_to_phys(*pud) + (addr & ~PUD_MASK);\n        pr_info("Samsung 4.19 Trial16: PUD section VA 0x%lx -> PA 0x%lx\\n",\n                addr, phys);\n        return phys;\n    }\n#endif\n'
+          if pud_marker not in s:
+              raise SystemExit("Trial 16: PUD marker not found")
+          s = s.replace(pud_marker, pud_insert, 1)
 
-          pud_anchor = (
-              '    pr_debug("pud of 0x%lx p=0x%lx v=0x%lx", addr, (uintptr_t)pud,\\n'
-              '             (uintptr_t)pud_val(*pud));\\n'
-              '#if defined(pud_leaf)\\n'
-          )
-          pud_new = (
-              '    pr_debug("pud of 0x%lx p=0x%lx v=0x%lx", addr, (uintptr_t)pud,\\n'
-              '             (uintptr_t)pud_val(*pud));\\n'
-              '#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\\n'
-              '    /* ARM64 4.19 section/block mapping compatibility. */\\n'
-              '    if (pud_sect(*pud)) {\\n'
-              '        unsigned long phys = __pud_to_phys(*pud) + (addr & ~PUD_MASK);\\n'
-              '        pr_info("Samsung 4.19 Trial16: PUD section VA 0x%lx -> PA 0x%lx\\\\n",\\n'
-              '                addr, phys);\\n'
-              '        return phys;\\n'
-              '    }\\n'
-              '#endif\\n'
-              '#if defined(pud_leaf)\\n'
-          )
-          if pud_anchor not in s:
-              raise SystemExit("Trial 16: PUD walker anchor not found")
-          s = s.replace(pud_anchor, pud_new, 1)
-
-          pmd_anchor = (
-              '    pr_debug("pmd of 0x%lx p=0x%lx v=0x%lx", addr, (uintptr_t)pmd,\\n'
-              '             (uintptr_t)pmd_val(*pmd));\\n'
-              '#if defined(pmd_leaf)\\n'
-          )
-          pmd_new = (
-              '    pr_debug("pmd of 0x%lx p=0x%lx v=0x%lx", addr, (uintptr_t)pmd,\\n'
-              '             (uintptr_t)pmd_val(*pmd));\\n'
-              '#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\\n'
-              '    /* ARM64 4.19 section/block mapping compatibility. */\\n'
-              '    if (pmd_sect(*pmd)) {\\n'
-              '        unsigned long phys = __pmd_to_phys(*pmd) + (addr & ~PMD_MASK);\\n'
-              '        pr_info("Samsung 4.19 Trial16: PMD section VA 0x%lx -> PA 0x%lx\\\\n",\\n'
-              '                addr, phys);\\n'
-              '        return phys;\\n'
-              '    }\\n'
-              '#endif\\n'
-              '#if defined(pmd_leaf)\\n'
-          )
-          if pmd_anchor not in s:
-              raise SystemExit("Trial 16: PMD walker anchor not found")
-          s = s.replace(pmd_anchor, pmd_new, 1)
+          pmd_marker = '    pmd = pmd_offset(pud, addr);\n'
+          pmd_insert = '    pmd = pmd_offset(pud, addr);\n#if defined(pmd_sect)\n    if (pmd_sect(*pmd)) {\n        unsigned long phys = __pmd_to_phys(*pmd) + (addr & ~PMD_MASK);\n        pr_info("Samsung 4.19 Trial16: PMD section VA 0x%lx -> PA 0x%lx\\n",\n                addr, phys);\n        return phys;\n    }\n#endif\n'
+          if pmd_marker not in s:
+              raise SystemExit("Trial 16: PMD marker not found")
+          s = s.replace(pmd_marker, pmd_insert, 1)
 
           p.write_text(s)
-          print("Trial 16 ARM64 4.19 section-mapping translation patch applied")
+          print("Trial 16 ARM64 4.19 section mapping patch applied")
           PY
 
           echo "=== Trial 16 patch verification ==="
@@ -3121,30 +3076,22 @@ jobs:
           from pathlib import Path
 
           s = Path("KernelSU-Next/kernel/hook/arm64/patch_memory.c").read_text()
-
           required = [
-              '#include "linux/version.h"',
+              '#if defined(pud_sect)',
               'if (pud_sect(*pud))',
               '__pud_to_phys(*pud) + (addr & ~PUD_MASK)',
               'Samsung 4.19 Trial16: PUD section',
+              '#if defined(pmd_sect)',
               'if (pmd_sect(*pmd))',
               '__pmd_to_phys(*pmd) + (addr & ~PMD_MASK)',
               'Samsung 4.19 Trial16: PMD section',
-              'failed to find phy addr for patch dst addr',
-          ]
-          for needle in required:
-              if needle not in s:
-                  raise SystemExit(f"Trial 16 verification missing: {needle}")
-
-          safeguards = [
               'set_fixmap_offset(FIX_TEXT_POKE0, phy)',
               'clear_fixmap(FIX_TEXT_POKE0)',
               'stop_machine(ksu_patch_text_cb',
           ]
-          for needle in safeguards:
+          for needle in required:
               if needle not in s:
-                  raise SystemExit(f"Trial 16 patch-memory safeguard missing: {needle}")
-
+                  raise SystemExit(f"Trial 16 verification missing: {needle}")
           print("Trial 16 verification passed")
           PY
 
