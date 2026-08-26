@@ -2759,7 +2759,7 @@ jobs:
               ksu_syscall_table_hook(__NR_reboot,
                                      (syscall_fn_t)ksu_sys_reboot_install_fd,
                                      &ksu_orig_reboot_syscall);
-              pr_info("hook_manager: Trial15 direct reboot FD bootstrap installed\n");
+              pr_info("hook_manager: Trial15 direct reboot FD bootstrap installed\\n");
           #endif
           '''
 
