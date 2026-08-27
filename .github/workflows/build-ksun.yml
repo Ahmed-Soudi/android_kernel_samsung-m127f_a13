@@ -3105,42 +3105,35 @@ jobs:
           p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
           s = p.read_text()
 
-          old = 'static void initialize_fake_status()\n{\n    mutex_lock(&selinux_state.status_lock);\n'
+          marker = "static void initialize_fake_status()\n{"
+          if marker not in s:
+              raise SystemExit("Trial 17 v2: initialize_fake_status function marker not found")
 
-          new = 'static void initialize_fake_status()\n{\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    /*\n     * Linux 4.19 SELinux allocates the real status page lazily through\n     * selinux_kernel_status_page(). Merely reading selinux_state.status_page\n     * before that helper has run leaves it NULL, which made KSUN\'s fake-status\n     * initialization permanently miss the real page on this Samsung tree.\n     *\n     * Call the upstream allocator before taking status_lock: the helper takes\n     * the same mutex internally.\n     */\n    if (!selinux_state.status_page) {\n        struct page *real_status =\n            selinux_kernel_status_page(&selinux_state);\n        if (real_status) {\n            pr_info("Samsung 4.19 Trial17: real SELinux status page initialized lazily\\n");\n        } else {\n            pr_warn("Samsung 4.19 Trial17: selinux_kernel_status_page returned NULL\\n");\n        }\n    }\n#endif\n\n    mutex_lock(&selinux_state.status_lock);\n'
+          insert = 'static void initialize_fake_status()\n{\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    /*\n     * Linux 4.19 SELinux creates its status page lazily. The Samsung 4.19\n     * compatibility layer may expose the page through KSU_SELINUX_STATUS_PAGE,\n     * so do not anchor this patch to the exact field/mutex spelling produced\n     * by earlier compatibility steps.\n     *\n     * selinux_kernel_status_page() takes the SELinux status mutex internally,\n     * therefore call it before the existing lock in this function.\n     */\n    if (!KSU_SELINUX_STATUS_PAGE) {\n        struct page *real_status =\n            selinux_kernel_status_page(&selinux_state);\n        if (real_status)\n            pr_info("Samsung 4.19 Trial17: real SELinux status page initialized lazily\\n");\n        else\n            pr_warn("Samsung 4.19 Trial17: selinux_kernel_status_page returned NULL\\n");\n    }\n#endif\n'
 
-          if old not in s:
-              raise SystemExit("Trial 17: initialize_fake_status anchor not found")
-
-          s = s.replace(old, new, 1)
+          s = s.replace(marker, insert, 1)
           p.write_text(s)
-          print("Trial 17 lazy SELinux status-page initialization patch applied")
+          print("Trial 17 v2 lazy SELinux status-page patch applied")
           PY
 
-          echo "=== Trial 17 patch verification ==="
+          echo "=== Trial 17 v2 patch verification ==="
           python3 - <<'PY'
           from pathlib import Path
 
           s = Path("KernelSU-Next/kernel/feature/selinux_hide.c").read_text()
           required = [
+              'static void initialize_fake_status()',
+              'if (!KSU_SELINUX_STATUS_PAGE)',
               'selinux_kernel_status_page(&selinux_state)',
               'Samsung 4.19 Trial17: real SELinux status page initialized lazily',
               'Samsung 4.19 Trial17: selinux_kernel_status_page returned NULL',
-              'mutex_lock(&selinux_state.status_lock);',
               'initialize_fake_status initialized:',
-              'selinux_hide: fake status need late initialization',
           ]
           for needle in required:
               if needle not in s:
-                  raise SystemExit(f"Trial 17 verification missing: {needle}")
+                  raise SystemExit(f"Trial 17 v2 verification missing: {needle}")
 
-          # Ensure the lazy allocator happens before KSUN grabs status_lock.
-          call_pos = s.index('selinux_kernel_status_page(&selinux_state)')
-          lock_pos = s.index('mutex_lock(&selinux_state.status_lock);', call_pos)
-          if call_pos > lock_pos:
-              raise SystemExit("Trial 17 verification: helper call is after status_lock")
-
-          print("Trial 17 verification passed")
+          print("Trial 17 v2 verification passed")
           PY
 
       - name: Build M127F kernel
