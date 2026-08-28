@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 SUSFS Core
 
 on:
   workflow_dispatch:
@@ -3017,6 +3017,52 @@ jobs:
           grep -i 'KPROBE' .config || true
 
 
+
+      - name: Trial 18 enable SUSFS core only
+        run: |
+          set -euxo pipefail
+
+          echo "=== Trial 18: discover existing SUSFS integration ==="
+          grep -Rns --include='Kconfig*' \
+            -E 'config[[:space:]]+KSU_SUSFS|KSU_SUSFS' \
+            KernelSU-Next fs include kernel 2>/dev/null | head -n 120 || true
+
+          find KernelSU-Next fs include kernel \
+            -type f \
+            \( -iname '*susfs*' -o -iname '*sus_su*' \) \
+            -print 2>/dev/null | sort | head -n 200 || true
+
+          if ! grep -Rqs --include='Kconfig*' \
+              -E 'config[[:space:]]+KSU_SUSFS([[:space:]]|$)' \
+              KernelSU-Next fs include kernel 2>/dev/null; then
+            echo "::error::Trial 18: CONFIG_KSU_SUSFS is not present in this branch. Do not import a random SUSFS patchset on top of the proven Samsung 4.19 base."
+            exit 1
+          fi
+
+          test -x scripts/config
+
+          # First SUSFS runtime trial is deliberately minimal:
+          # enable the SUSFS core only and leave optional hide/spoof features
+          # at their Kconfig defaults. This isolates boot compatibility from
+          # feature-specific behavior.
+          ./scripts/config --enable KSU_SUSFS
+
+          make ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          echo "=== Trial 18 final SUSFS config ==="
+          grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config || true
+
+          if ! grep -q '^CONFIG_KSU_SUSFS=y$' .config; then
+            echo "::error::Trial 18: olddefconfig did not retain CONFIG_KSU_SUSFS=y; inspect unmet Kconfig dependencies above."
+            exit 1
+          fi
+
+          echo "Trial 18: SUSFS core enabled; optional SUSFS features intentionally left at defaults."
+
       - name: Make boot-completed handler track-throne-only on Samsung 4.19
         run: |
           set -euxo pipefail
@@ -3204,7 +3250,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17-SELINUXHIDE-LAZY-STATUS-PAGE-INIT.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-SUSFS-CORE-BOOT-VALIDATION.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3217,8 +3263,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17-SELINUXHIDE-LAZY-STATUS-PAGE-INIT
-          path: M127F-KSUN-v3.3.0-TRIAL-17-SELINUXHIDE-LAZY-STATUS-PAGE-INIT.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-18-SUSFS-CORE-BOOT-VALIDATION
+          path: M127F-KSUN-v3.3.0-TRIAL-18-SUSFS-CORE-BOOT-VALIDATION.zip
           if-no-files-found: error
           compression-level: 0
 
