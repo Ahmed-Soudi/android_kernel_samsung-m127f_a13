@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 v3 SUSFS Kconfig
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 v4 SUSFS Kconfig Env
 
 on:
   workflow_dispatch:
@@ -3112,7 +3112,7 @@ jobs:
 
 
 
-      - name: Trial 18 v3 enable SUSFS core
+      - name: Trial 18 v4 enable SUSFS core
         run: |
           set -euxo pipefail
 
@@ -3128,6 +3128,16 @@ jobs:
           ./scripts/config --enable KSU_SUSFS
 
           export PATH="$HOME/toolchain/bin:$PATH"
+          export PLATFORM_VERSION=13
+          export ANDROID_MAJOR_VERSION=t
+          export ARCH=arm64
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          echo "Trial 18 v4: reusing Samsung Kconfig environment for olddefconfig"
+          echo "PLATFORM_VERSION=$PLATFORM_VERSION ANDROID_MAJOR_VERSION=$ANDROID_MAJOR_VERSION"
+
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -3138,11 +3148,11 @@ jobs:
           grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config || true
 
           if ! grep -q '^CONFIG_KSU_SUSFS=y$' .config; then
-            echo "::error::Trial 18 v3: CONFIG_KSU_SUSFS=y was not retained by olddefconfig."
+            echo "::error::Trial 18 v4: CONFIG_KSU_SUSFS=y was not retained by olddefconfig."
             exit 1
           fi
 
-          echo "Trial 18 v3: SUSFS core retained in final kernel config."
+          echo "Trial 18 v4: SUSFS core retained in final kernel config."
 
       - name: Make boot-completed handler track-throne-only on Samsung 4.19
         run: |
@@ -3331,7 +3341,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-V3-SUSFS-KCONFIG-GLUE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-V4-SUSFS-KCONFIG-ENV-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3344,8 +3354,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-18-V3-SUSFS-KCONFIG-GLUE
-          path: M127F-KSUN-v3.3.0-TRIAL-18-V3-SUSFS-KCONFIG-GLUE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-18-V4-SUSFS-KCONFIG-ENV-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-18-V4-SUSFS-KCONFIG-ENV-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
