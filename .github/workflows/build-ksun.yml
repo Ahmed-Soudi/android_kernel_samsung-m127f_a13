@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 v2 SUSFS
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 v3 SUSFS Kconfig
 
 on:
   workflow_dispatch:
@@ -166,11 +166,39 @@ jobs:
           if ! grep -Rqs --include='Kconfig*' \
               -E 'config[[:space:]]+KSU_SUSFS([[:space:]]|$)' \
               . 2>/dev/null; then
-            echo "::error::Trial 18 v2: proven kernel patch imported, but CONFIG_KSU_SUSFS definition is still absent. Next fix should be only the KSUN/SUSFS Kconfig glue."
-            exit 1
+            echo "Trial 18 v3: kernel-side SUSFS imported; Kconfig glue is absent as expected and will be added next."
+          else
+            echo "Trial 18 v3: existing KSU_SUSFS Kconfig definition found."
           fi
 
-          echo "Trial 18 v2: proven Project-Xed SUSFS kernel integration imported."
+          echo "Trial 18 v3: proven Project-Xed SUSFS kernel integration imported."
+
+
+      - name: Trial 18 v3 add KSUN SUSFS Kconfig glue
+        run: |
+          set -euxo pipefail
+
+          KCFG="KernelSU-Next/kernel/Kconfig"
+          test -f "$KCFG"
+
+          if ! grep -qE '^config[[:space:]]+KSU_SUSFS([[:space:]]|$)' "$KCFG"; then
+            cat >> "$KCFG" <<'EOF'
+
+          config KSU_SUSFS
+              bool "KernelSU SUSFS support"
+              depends on KSU
+              default n
+              help
+                Enable SUSFS kernel integration for KernelSU.
+
+          EOF
+            echo "Trial 18 v3: added CONFIG_KSU_SUSFS to $KCFG"
+          else
+            echo "Trial 18 v3: CONFIG_KSU_SUSFS already exists in $KCFG"
+          fi
+
+          echo "=== Kconfig glue verification ==="
+          grep -nA8 -B2 -E '^config[[:space:]]+KSU_SUSFS([[:space:]]|$)' "$KCFG"
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3084,7 +3112,7 @@ jobs:
 
 
 
-      - name: Trial 18 v2 enable SUSFS core
+      - name: Trial 18 v3 enable SUSFS core
         run: |
           set -euxo pipefail
 
@@ -3110,11 +3138,11 @@ jobs:
           grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config || true
 
           if ! grep -q '^CONFIG_KSU_SUSFS=y$' .config; then
-            echo "::error::Trial 18 v2: CONFIG_KSU_SUSFS=y was not retained by olddefconfig."
+            echo "::error::Trial 18 v3: CONFIG_KSU_SUSFS=y was not retained by olddefconfig."
             exit 1
           fi
 
-          echo "Trial 18 v2: SUSFS core retained in final kernel config."
+          echo "Trial 18 v3: SUSFS core retained in final kernel config."
 
       - name: Make boot-completed handler track-throne-only on Samsung 4.19
         run: |
@@ -3303,7 +3331,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-V2-SUSFS-PROVEN-IMPORT.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-V3-SUSFS-KCONFIG-GLUE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3316,8 +3344,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-18-V2-SUSFS-PROVEN-IMPORT
-          path: M127F-KSUN-v3.3.0-TRIAL-18-V2-SUSFS-PROVEN-IMPORT.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-18-V3-SUSFS-KCONFIG-GLUE
+          path: M127F-KSUN-v3.3.0-TRIAL-18-V3-SUSFS-KCONFIG-GLUE.zip
           if-no-files-found: error
           compression-level: 0
 
