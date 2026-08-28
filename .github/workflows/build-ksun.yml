@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 SUSFS Core
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 18 v2 SUSFS
 
 on:
   workflow_dispatch:
@@ -105,6 +105,72 @@ jobs:
           test -f kernel/feature/selinux_hide.h
           git describe --tags --always
           cd ..
+
+
+      - name: Trial 18 v2 import proven Project-Xed SUSFS v1.5.5 + v1.5.7
+        run: |
+          set -euxo pipefail
+
+          SUSFS_155="dbd9d7cbd0229c2a35fd9909a36f4649dfc47a73"
+          SUSFS_157="6d2c2003ad0f5c0f2a1f5f303f00aef19a0b79f2"
+          XED_REPO="https://github.com/maazm7d/kernel_samsung_a12.git"
+
+          echo "=== Browser-only Trial 18 v2 ==="
+          echo "The GitHub Actions runner performs the SUSFS import automatically."
+          echo "Source: $XED_REPO"
+          echo "SUSFS base commit: $SUSFS_155"
+          echo "SUSFS v1.5.7 update: $SUSFS_157"
+
+          git remote remove xed-susfs 2>/dev/null || true
+          git remote add xed-susfs "$XED_REPO"
+          git fetch --no-tags --depth=2 xed-susfs "$SUSFS_155"
+          git fetch --no-tags --depth=2 xed-susfs "$SUSFS_157"
+
+          echo "=== Files changed by original SUSFS 1.5.5 import ==="
+          git diff-tree --no-commit-id --name-status -r "$SUSFS_155"
+
+          echo "=== Files changed by original SUSFS 1.5.7 update ==="
+          git diff-tree --no-commit-id --name-status -r "$SUSFS_157"
+
+          # Recreate the exact two Project-Xed SUSFS kernel commits as patches.
+          # This runs on the CI runner; the user does not need a terminal.
+          git show --format= --binary "$SUSFS_155" > /tmp/xed-susfs-1.5.5.patch
+          git show --format= --binary "$SUSFS_157" > /tmp/xed-susfs-1.5.7.patch
+
+          echo "=== Apply SUSFS v1.5.5 ==="
+          if ! git apply --3way --whitespace=nowarn /tmp/xed-susfs-1.5.5.patch; then
+            echo "::error::Trial 18 v2: SUSFS v1.5.5 did not apply cleanly."
+            git status --short
+            git diff --name-only --diff-filter=U || true
+            exit 1
+          fi
+
+          echo "=== Apply SUSFS v1.5.7 update ==="
+          if ! git apply --3way --whitespace=nowarn /tmp/xed-susfs-1.5.7.patch; then
+            echo "::error::Trial 18 v2: SUSFS v1.5.7 update did not apply cleanly."
+            git status --short
+            git diff --name-only --diff-filter=U || true
+            exit 1
+          fi
+
+          echo "=== Verify imported SUSFS tree ==="
+          test -f fs/susfs.c
+          test -f include/linux/susfs_def.h
+          grep -Rns --include='Kconfig*' \
+            -E 'config[[:space:]]+KSU_SUSFS|KSU_SUSFS_SUS_PATH|KSU_SUSFS_SUS_MOUNT' \
+            . 2>/dev/null | head -n 120 || true
+          grep -Rns \
+            -E 'SUSFS_VERSION|v1\.5\.7' \
+            fs include 2>/dev/null | head -n 80 || true
+
+          if ! grep -Rqs --include='Kconfig*' \
+              -E 'config[[:space:]]+KSU_SUSFS([[:space:]]|$)' \
+              . 2>/dev/null; then
+            echo "::error::Trial 18 v2: proven kernel patch imported, but CONFIG_KSU_SUSFS definition is still absent. Next fix should be only the KSUN/SUSFS Kconfig glue."
+            exit 1
+          fi
+
+          echo "Trial 18 v2: proven Project-Xed SUSFS kernel integration imported."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3018,50 +3084,37 @@ jobs:
 
 
 
-      - name: Trial 18 enable SUSFS core only
+      - name: Trial 18 v2 enable SUSFS core
         run: |
           set -euxo pipefail
 
-          echo "=== Trial 18: discover existing SUSFS integration ==="
-          grep -Rns --include='Kconfig*' \
-            -E 'config[[:space:]]+KSU_SUSFS|KSU_SUSFS' \
-            KernelSU-Next fs include kernel 2>/dev/null | head -n 120 || true
-
-          find KernelSU-Next fs include kernel \
-            -type f \
-            \( -iname '*susfs*' -o -iname '*sus_su*' \) \
-            -print 2>/dev/null | sort | head -n 200 || true
-
-          if ! grep -Rqs --include='Kconfig*' \
-              -E 'config[[:space:]]+KSU_SUSFS([[:space:]]|$)' \
-              KernelSU-Next fs include kernel 2>/dev/null; then
-            echo "::error::Trial 18: CONFIG_KSU_SUSFS is not present in this branch. Do not import a random SUSFS patchset on top of the proven Samsung 4.19 base."
-            exit 1
-          fi
-
           test -x scripts/config
 
-          # First SUSFS runtime trial is deliberately minimal:
-          # enable the SUSFS core only and leave optional hide/spoof features
-          # at their Kconfig defaults. This isolates boot compatibility from
-          # feature-specific behavior.
+          echo "=== SUSFS symbols available after proven import ==="
+          grep -Rns --include='Kconfig*' \
+            -E 'config[[:space:]]+KSU_SUSFS|KSU_SUSFS_' \
+            . 2>/dev/null | head -n 160 || true
+
+          # Start with the exact core only. Optional hide/spoof switches remain
+          # at their declared defaults for the first boot-safety validation.
           ./scripts/config --enable KSU_SUSFS
 
+          export PATH="$HOME/toolchain/bin:$PATH"
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          echo "=== Trial 18 final SUSFS config ==="
+          echo "=== Final Trial 18 v2 SUSFS configuration ==="
           grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config || true
 
           if ! grep -q '^CONFIG_KSU_SUSFS=y$' .config; then
-            echo "::error::Trial 18: olddefconfig did not retain CONFIG_KSU_SUSFS=y; inspect unmet Kconfig dependencies above."
+            echo "::error::Trial 18 v2: CONFIG_KSU_SUSFS=y was not retained by olddefconfig."
             exit 1
           fi
 
-          echo "Trial 18: SUSFS core enabled; optional SUSFS features intentionally left at defaults."
+          echo "Trial 18 v2: SUSFS core retained in final kernel config."
 
       - name: Make boot-completed handler track-throne-only on Samsung 4.19
         run: |
@@ -3250,7 +3303,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-SUSFS-CORE-BOOT-VALIDATION.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-18-V2-SUSFS-PROVEN-IMPORT.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3263,8 +3316,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-18-SUSFS-CORE-BOOT-VALIDATION
-          path: M127F-KSUN-v3.3.0-TRIAL-18-SUSFS-CORE-BOOT-VALIDATION.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-18-V2-SUSFS-PROVEN-IMPORT
+          path: M127F-KSUN-v3.3.0-TRIAL-18-V2-SUSFS-PROVEN-IMPORT.zip
           if-no-files-found: error
           compression-level: 0
 
