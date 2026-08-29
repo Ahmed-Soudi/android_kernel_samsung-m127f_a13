@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 20 v2 SUSFS Manager Reporting
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 20 v3 SUSFS Manager Reporting
 
 on:
   workflow_dispatch:
@@ -3146,7 +3146,7 @@ jobs:
           PY
 
 
-      - name: Trial 20 v2 initialize SUSFS and expose version to KSUN manager
+      - name: Trial 20 v3 initialize SUSFS and expose version to KSUN manager
         run: |
           set -euxo pipefail
 
@@ -3302,51 +3302,42 @@ jobs:
           '''
               s = s.replace(anchor, anchor + report, 1)
 
-          old = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
-          {
-          ksu_samsung419_install_driver_fd(regs);
+          # Insert the reporting interception immediately after each wrapper's
+          # opening brace. Do not depend on whitespace/body formatting from Trial15.
+          import re
 
-          if (likely(ksu_orig_reboot_syscall))
-          return ksu_orig_reboot_syscall(regs);
+          def inject_after_opening_brace(text, func_name, signature_regex):
+              if f"Trial20 SUSFS reporting in {func_name}" in text:
+                  return text
 
-          return -ENOSYS;
-          }
-          '''
-          new = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
-          {
-          if (ksu_samsung419_handle_susfs_report(regs))
-          return 0;
+              pat = re.compile(
+                  rf"({signature_regex}\s*\{{\s*\n)",
+                  re.M
+              )
+              m = pat.search(text)
+              if not m:
+                  raise SystemExit(f"Trial20 v3: wrapper function not found: {func_name}")
 
-          ksu_samsung419_install_driver_fd(regs);
+              injected = (
+                  m.group(1)
+                  + f"    /* Trial20 SUSFS reporting in {func_name} */\n"
+                  + "    if (ksu_samsung419_handle_susfs_report(regs))\n"
+                  + "        return 0;\n\n"
+              )
+              return text[:m.start()] + injected + text[m.end():]
 
-          if (likely(ksu_orig_reboot_syscall))
-          return ksu_orig_reboot_syscall(regs);
+          s = inject_after_opening_brace(
+              s,
+              "ksu_sys_reboot_install_fd",
+              r"long\s+__nocfi\s+ksu_sys_reboot_install_fd\s*\(\s*const\s+struct\s+pt_regs\s*\*\s*regs\s*\)"
+          )
 
-          return -ENOSYS;
-          }
-          '''
-          if old not in s:
-              raise SystemExit("Trial20: direct wrapper body anchor not found")
-          s = s.replace(old, new, 1)
+          s = inject_after_opening_brace(
+              s,
+              "ksu_hook_reboot_install_fd",
+              r"long\s+__nocfi\s+ksu_hook_reboot_install_fd\s*\(\s*int\s+orig_nr\s*,\s*const\s+struct\s+pt_regs\s*\*\s*regs\s*\)"
+          )
 
-          old = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
-          {
-          ksu_samsung419_install_driver_fd(regs);
-          return ksu_syscall_table[orig_nr](regs);
-          }
-          '''
-          new = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
-          {
-          if (ksu_samsung419_handle_susfs_report(regs))
-          return 0;
-
-          ksu_samsung419_install_driver_fd(regs);
-          return ksu_syscall_table[orig_nr](regs);
-          }
-          '''
-          if old not in s:
-              raise SystemExit("Trial20: dispatcher wrapper anchor not found")
-          s = s.replace(old, new, 1)
           p.write_text(s)
           PY
 
@@ -3383,7 +3374,14 @@ jobs:
               if needle not in combined:
                   raise SystemExit(f"Trial20 safety marker missing: {needle}")
 
-          print("Trial20 verification passed: SUSFS init + read-only manager reporting only")
+          for needle in [
+              "Trial20 SUSFS reporting in ksu_sys_reboot_install_fd",
+              "Trial20 SUSFS reporting in ksu_hook_reboot_install_fd",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial20 v3 wrapper injection missing: {needle}")
+
+          print("Trial20 v3 verification passed: SUSFS init + read-only manager reporting only")
           PY
 
       - name: Allow K02 and observe K03 event only on Samsung 4.19
@@ -3827,7 +3825,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-20-V2-SUSFS-MANAGER-REPORTING.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-20-V3-SUSFS-MANAGER-REPORTING.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3840,8 +3838,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-20-V2-SUSFS-MANAGER-REPORTING
-          path: M127F-KSUN-v3.3.0-TRIAL-20-V2-SUSFS-MANAGER-REPORTING.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-20-V3-SUSFS-MANAGER-REPORTING
+          path: M127F-KSUN-v3.3.0-TRIAL-20-V3-SUSFS-MANAGER-REPORTING.zip
           if-no-files-found: error
           compression-level: 0
 
