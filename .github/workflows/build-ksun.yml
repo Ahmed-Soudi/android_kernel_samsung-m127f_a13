@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 21 v2 SUSFS Uname ABI
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 21 v3 SUSFS Uname ABI
 
 on:
   workflow_dispatch:
@@ -3344,7 +3344,7 @@ jobs:
 
           echo "=== Trial 20 SUSFS manager reporting verification ==="
           grep -n -A12 -B5 'susfs_init();' KernelSU-Next/kernel/core/init.c
-          grep -n -A150 'ksu_samsung419_handle_susfs_report' KernelSU-Next/kernel/supercall/supercall.c | head -n 180
+          grep -n -A150 'ksu_samsung419_handle_susfs_report' KernelSU-Next/kernel/supercall/supercall.c || true
 
           python3 - <<'PY'
           from pathlib import Path
@@ -3385,7 +3385,7 @@ jobs:
           print("Trial20 v3 verification passed: SUSFS init + read-only manager reporting only")
           PY
 
-      - name: Trial 21 v2 enable only SUSFS v1.5.7 uname command ABI
+      - name: Trial 21 v3 enable only SUSFS v1.5.7 uname command ABI
         run: |
           set -euxo pipefail
 
@@ -3916,7 +3916,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-21-V2-SUSFS-UNAME-ABI.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-21-V3-SUSFS-UNAME-ABI.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3929,8 +3929,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-21-V2-SUSFS-UNAME-ABI
-          path: M127F-KSUN-v3.3.0-TRIAL-21-V2-SUSFS-UNAME-ABI.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-21-V3-SUSFS-UNAME-ABI
+          path: M127F-KSUN-v3.3.0-TRIAL-21-V3-SUSFS-UNAME-ABI.zip
           if-no-files-found: error
           compression-level: 0
 
