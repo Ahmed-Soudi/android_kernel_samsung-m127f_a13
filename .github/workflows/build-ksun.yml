@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v2 SUSFS v1.5.7 Features
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v3 SUSFS fdinfo 4.19
 
 on:
   workflow_dispatch:
@@ -252,6 +252,77 @@ jobs:
           echo "=== Final SUSFS Kconfig symbols ==="
           grep -nE '^config KSU_SUSFS($|_)' "$KCFG" || true
 
+
+
+      - name: Trial 19 v3 backport SUSFS inotify fdinfo to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/notify/fdinfo.c"
+          test -f "$FILE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/notify/fdinfo.c")
+          s = p.read_text()
+
+          # Project-Xed SUSFS was synced against a newer inotify fdinfo API
+          # which has inotify_mark_user_mask(). Samsung 4.19 instead computes
+          # the userspace-visible mask directly as mark->mask & IN_ALL_EVENTS.
+          # Also keep the declaration before SUSFS goto labels: a declaration
+          # immediately following a label is invalid for this kernel's C mode.
+          needle = """\tstruct inotify_inode_mark *inode_mark;
+          \tstruct inode *inode;
+          """
+          repl = """\tstruct inotify_inode_mark *inode_mark;
+          \tstruct inode *inode;
+          \tu32 mask;
+          """
+          if needle not in s:
+              raise SystemExit("Trial19 v3: inotify local-variable anchor not found")
+          s = s.replace(needle, repl, 1)
+
+          # Replace both SUSFS and normal fdinfo uses of the newer helper.
+          if "inotify_mark_user_mask(mark)" not in s:
+              raise SystemExit("Trial19 v3: expected inotify_mark_user_mask() calls not found")
+          s = s.replace("inotify_mark_user_mask(mark)", "mark->mask & IN_ALL_EVENTS")
+
+          # The original Samsung 4.19 block declares mask after the SUSFS
+          # out_seq_printf label once the Xed patch is applied. Remove that
+          # declaration and use the function-scope variable instead.
+          old = """\t\t/*
+          \t\t * IN_ALL_EVENTS represents all of the mask bits
+          \t\t * that we expose to userspace.  There is at
+          \t\t * least one bit (FS_EVENT_ON_CHILD) which is
+          \t\t * used only internally to the kernel.
+          \t\t */
+          \t\tu32 mask = mark->mask & IN_ALL_EVENTS;
+          """
+          if old in s:
+              s = s.replace(old, """\t\tmask = mark->mask & IN_ALL_EVENTS;
+          """, 1)
+          else:
+              # Xed's patch may have replaced the surrounding block. Ensure
+              # the fallback normal path still assigns the old-kernel mask.
+              label = "out_seq_printf:\n#endif\n"
+              if label not in s:
+                  raise SystemExit("Trial19 v3: out_seq_printf label anchor not found")
+              s = s.replace(label, label + "\t\tmask = mark->mask & IN_ALL_EVENTS;\n", 1)
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 19 v3 fdinfo compatibility verification ==="
+          if grep -n 'inotify_mark_user_mask' "$FILE"; then
+            echo "::error::newer inotify_mark_user_mask helper remains"
+            exit 1
+          fi
+          grep -n -A60 -B8 'static void inotify_fdinfo' "$FILE" | head -n 100
+          grep -q 'u32 mask;' "$FILE"
+          grep -q 'mark->mask & IN_ALL_EVENTS' "$FILE"
+
+          echo "Trial 19 v3: SUSFS inotify fdinfo adapted to Samsung 4.19 API."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3449,7 +3520,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-19-V2-SUSFS-AFTER-DEFCONFIG.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-19-V3-SUSFS-FDINFO419-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3462,8 +3533,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-19-V2-SUSFS-AFTER-DEFCONFIG
-          path: M127F-KSUN-v3.3.0-TRIAL-19-V2-SUSFS-AFTER-DEFCONFIG.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-19-V3-SUSFS-FDINFO419-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-19-V3-SUSFS-FDINFO419-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
