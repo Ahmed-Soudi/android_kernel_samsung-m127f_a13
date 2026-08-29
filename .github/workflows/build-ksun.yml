@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 SUSFS v1.5.7 Features
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v2 SUSFS v1.5.7 Features
 
 on:
   workflow_dispatch:
@@ -252,57 +252,6 @@ jobs:
           echo "=== Final SUSFS Kconfig symbols ==="
           grep -nE '^config KSU_SUSFS($|_)' "$KCFG" || true
 
-      - name: Trial 19 enable SUSFS v1.5.7 features
-        run: |
-          set -euxo pipefail
-
-          export PLATFORM_VERSION=13
-          export ANDROID_MAJOR_VERSION=t
-          export ARCH=arm64
-          export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export PATH="$HOME/toolchain/bin:$PATH"
-
-          ./scripts/config --enable KSU_SUSFS
-
-          for sym in \
-            KSU_SUSFS_SUS_PATH \
-            KSU_SUSFS_SUS_MOUNT \
-            KSU_SUSFS_SUS_KSTAT \
-            KSU_SUSFS_TRY_UMOUNT \
-            KSU_SUSFS_SPOOF_UNAME \
-            KSU_SUSFS_ENABLE_LOG \
-            KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
-            KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            KSU_SUSFS_OPEN_REDIRECT
-          do
-            if grep -qE "^config[[:space:]]+$sym([[:space:]]|$)" KernelSU-Next/kernel/Kconfig; then
-              ./scripts/config --enable "$sym"
-            fi
-          done
-
-          # Keep SUS_SU off: this Samsung 4.19 build already uses our proven
-          # non-kprobe KernelSU transport/hook path.
-          ./scripts/config --disable KSU_SUSFS_SUS_SU || true
-
-          make ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            olddefconfig
-
-          echo "=== Trial 19 final SUSFS config ==="
-          grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config | sort
-
-          grep -q '^CONFIG_KSU_SUSFS=y$' .config
-
-          if grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' .config; then
-            echo "::error::SUS_SU must remain disabled on this Samsung 4.19 non-kprobe build."
-            exit 1
-          fi
-
-          echo "Trial 19: SUSFS v1.5.7 feature wiring enabled; SUS_SU intentionally disabled."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3216,6 +3165,61 @@ jobs:
 
 
 
+      - name: Trial 19 v2 enable SUSFS v1.5.7 features after defconfig
+        run: |
+          set -euxo pipefail
+
+          export PLATFORM_VERSION=13
+          export ANDROID_MAJOR_VERSION=t
+          export ARCH=arm64
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export PATH="$HOME/toolchain/bin:$PATH"
+
+          test -f .config
+          echo "Trial 19 v2: .config exists after exynos850-m12nsxx_defconfig"
+
+          ./scripts/config --enable KSU_SUSFS
+
+          for sym in \
+            KSU_SUSFS_SUS_PATH \
+            KSU_SUSFS_SUS_MOUNT \
+            KSU_SUSFS_SUS_KSTAT \
+            KSU_SUSFS_TRY_UMOUNT \
+            KSU_SUSFS_SPOOF_UNAME \
+            KSU_SUSFS_ENABLE_LOG \
+            KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+            KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            KSU_SUSFS_OPEN_REDIRECT
+          do
+            if grep -qE "^config[[:space:]]+$sym([[:space:]]|$)" KernelSU-Next/kernel/Kconfig; then
+              ./scripts/config --enable "$sym"
+            fi
+          done
+
+          # Keep SUS_SU off: this Samsung 4.19 build already uses our proven
+          # non-kprobe KernelSU transport/hook path.
+          ./scripts/config --disable KSU_SUSFS_SUS_SU || true
+
+          make ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          echo "=== Trial 19 final SUSFS config ==="
+          grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config | sort
+
+          grep -q '^CONFIG_KSU_SUSFS=y$' .config
+
+          if grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' .config; then
+            echo "::error::SUS_SU must remain disabled on this Samsung 4.19 non-kprobe build."
+            exit 1
+          fi
+
+          echo "Trial 19 v2: SUSFS v1.5.7 features enabled after M127F defconfig; SUS_SU intentionally disabled."
+
       - name: Trial 18 v4 enable SUSFS core
         run: |
           set -euxo pipefail
@@ -3445,7 +3449,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-19-SUSFS-V157-FEATURE-WIRING.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-19-V2-SUSFS-AFTER-DEFCONFIG.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3458,8 +3462,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-19-SUSFS-V157-FEATURE-WIRING
-          path: M127F-KSUN-v3.3.0-TRIAL-19-SUSFS-V157-FEATURE-WIRING.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-19-V2-SUSFS-AFTER-DEFCONFIG
+          path: M127F-KSUN-v3.3.0-TRIAL-19-V2-SUSFS-AFTER-DEFCONFIG.zip
           if-no-files-found: error
           compression-level: 0
 
