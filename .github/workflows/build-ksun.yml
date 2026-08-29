@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 22 SUSFS Uname + Log ABI
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 24 SUSFS Add Sus Mount ABI
 
 on:
   workflow_dispatch:
@@ -3568,6 +3568,194 @@ jobs:
           echo '=== Trial 22 SUSFS ABI verification ==='
           grep -n -A45 -B8 'CMD_SUSFS_SET_UNAME' KernelSU-Next/kernel/supercall/supercall.c
 
+      - name: Trial 23 enable SUSFS v1.5.7 ADD_SUS_PATH ABI after proven log command
+        run: |
+          set -euxo pipefail
+
+          cat > /tmp/trial23.py <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          marker = "Trial23 SUSFS: CMD_SUSFS_ADD_SUS_PATH"
+          if marker not in s:
+              target = "case CMD_SUSFS_SHOW_ENABLED_FEATURES: {\n"
+              if target not in s:
+                  raise SystemExit("Trial23: exact proven SUSFS switch anchor not found")
+
+              case = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
+                  "case CMD_SUSFS_ADD_SUS_PATH:\n"
+                  "/* Trial23: first path-hiding mutation ABI command. */\n"
+                  "if (current_uid().val != 0) {\n"
+                  "  pr_warn(\"Trial23 SUSFS: ADD_SUS_PATH denied for uid=%u\\n\", current_uid().val);\n"
+                  "  return true;\n"
+                  "}\n"
+                  "if (!uarg) {\n"
+                  "  pr_err(\"Trial23 SUSFS: ADD_SUS_PATH received NULL arg\\n\");\n"
+                  "  return true;\n"
+                  "}\n"
+                  "{\n"
+                  "  int ret = susfs_add_sus_path((struct st_susfs_sus_path __user *)uarg);\n"
+                  "  pr_info(\"Trial23 SUSFS: CMD_SUSFS_ADD_SUS_PATH returned %d\\n\", ret);\n"
+                  "}\n"
+                  "return true;\n"
+                  "#endif\n\n"
+              )
+              s = s.replace(target, case + target, 1)
+
+          p.write_text(s)
+
+          sc = p.read_text()
+          hdr = Path("include/linux/susfs_def.h").read_text()
+          api = Path("include/linux/susfs.h").read_text()
+          impl = Path("fs/susfs.c").read_text()
+
+          # Preserve everything already proven through Trial22.
+          for needle in [
+              "CMD_SUSFS_SHOW_VERSION",
+              "CMD_SUSFS_SHOW_ENABLED_FEATURES",
+              "CMD_SUSFS_SHOW_VARIANT",
+              "ksu_samsung419_handle_susfs_report",
+              "case CMD_SUSFS_SET_UNAME:",
+              "case CMD_SUSFS_ENABLE_LOG:",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial23 regressed proven SUSFS surface: {needle}")
+
+          for needle in [
+              "case CMD_SUSFS_ADD_SUS_PATH:",
+              "susfs_add_sus_path((struct st_susfs_sus_path __user *)uarg)",
+              "Trial23 SUSFS: CMD_SUSFS_ADD_SUS_PATH returned",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial23 supercall verification missing: {needle}")
+
+          if "#define CMD_SUSFS_ADD_SUS_PATH 0x55550" not in hdr:
+              raise SystemExit("Trial23 SUSFS ADD_SUS_PATH command number mismatch")
+          if "struct st_susfs_sus_path" not in api:
+              raise SystemExit("Trial23 SUSFS sus_path ABI struct missing")
+          if "int susfs_add_sus_path(" not in api:
+              raise SystemExit("Trial23 susfs_add_sus_path prototype missing")
+          if "int susfs_add_sus_path(" not in impl:
+              raise SystemExit("Trial23 susfs_add_sus_path implementation missing")
+
+          # Keep all heavier mutation paths blocked for this trial.
+          for needle in [
+              "case CMD_SUSFS_ADD_SUS_MOUNT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT:",
+              "case CMD_SUSFS_UPDATE_SUS_KSTAT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:",
+              "case CMD_SUSFS_ADD_TRY_UMOUNT:",
+              "case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:",
+              "case CMD_SUSFS_ADD_OPEN_REDIRECT:",
+              "case CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS:",
+          ]:
+              if needle in sc:
+                  raise SystemExit(f"Trial23 unexpectedly enabled extra mutation command: {needle}")
+
+          print("Trial23 verification passed: reporting + SET_UNAME + ENABLE_LOG + ADD_SUS_PATH only")
+          PY
+
+          python3 /tmp/trial23.py
+          echo '=== Trial 23 SUSFS ABI verification ==='
+          grep -n -A70 -B8 'CMD_SUSFS_ADD_SUS_PATH' KernelSU-Next/kernel/supercall/supercall.c
+
+      - name: Trial 24 enable SUSFS v1.5.7 ADD_SUS_MOUNT ABI after proven SUS_PATH command
+        run: |
+          set -euxo pipefail
+
+          cat > /tmp/trial24.py <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          marker = "Trial24 SUSFS: CMD_SUSFS_ADD_SUS_MOUNT"
+          if marker not in s:
+              target = "case CMD_SUSFS_SHOW_ENABLED_FEATURES: {\n"
+              if target not in s:
+                  raise SystemExit("Trial24: exact proven SUSFS switch anchor not found")
+
+              case = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "case CMD_SUSFS_ADD_SUS_MOUNT:\n"
+                  "/* Trial24: expose SUSFS mount-hiding mutation ABI only. */\n"
+                  "if (current_uid().val != 0) {\n"
+                  "  pr_warn(\"Trial24 SUSFS: ADD_SUS_MOUNT denied for uid=%u\\n\", current_uid().val);\n"
+                  "  return true;\n"
+                  "}\n"
+                  "if (!uarg) {\n"
+                  "  pr_err(\"Trial24 SUSFS: ADD_SUS_MOUNT received NULL arg\\n\");\n"
+                  "  return true;\n"
+                  "}\n"
+                  "{\n"
+                  "  int ret = susfs_add_sus_mount((struct st_susfs_sus_mount __user *)uarg);\n"
+                  "  pr_info(\"Trial24 SUSFS: CMD_SUSFS_ADD_SUS_MOUNT returned %d\\n\", ret);\n"
+                  "}\n"
+                  "return true;\n"
+                  "#endif\n\n"
+              )
+              s = s.replace(target, case + target, 1)
+
+          p.write_text(s)
+
+          sc = p.read_text()
+          hdr = Path("include/linux/susfs_def.h").read_text()
+          api = Path("include/linux/susfs.h").read_text()
+          impl = Path("fs/susfs.c").read_text()
+
+          # Preserve everything already proven through Trial23.
+          for needle in [
+              "CMD_SUSFS_SHOW_VERSION",
+              "CMD_SUSFS_SHOW_ENABLED_FEATURES",
+              "CMD_SUSFS_SHOW_VARIANT",
+              "ksu_samsung419_handle_susfs_report",
+              "case CMD_SUSFS_SET_UNAME:",
+              "case CMD_SUSFS_ENABLE_LOG:",
+              "case CMD_SUSFS_ADD_SUS_PATH:",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial24 regressed proven SUSFS surface: {needle}")
+
+          for needle in [
+              "case CMD_SUSFS_ADD_SUS_MOUNT:",
+              "susfs_add_sus_mount((struct st_susfs_sus_mount __user *)uarg)",
+              "Trial24 SUSFS: CMD_SUSFS_ADD_SUS_MOUNT returned",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial24 supercall verification missing: {needle}")
+
+          if "#define CMD_SUSFS_ADD_SUS_MOUNT 0x55560" not in hdr:
+              raise SystemExit("Trial24 SUSFS ADD_SUS_MOUNT command number mismatch")
+          if "struct st_susfs_sus_mount" not in api:
+              raise SystemExit("Trial24 SUSFS sus_mount ABI struct missing")
+          if "int susfs_add_sus_mount(" not in api:
+              raise SystemExit("Trial24 susfs_add_sus_mount prototype missing")
+          if "int susfs_add_sus_mount(" not in impl:
+              raise SystemExit("Trial24 susfs_add_sus_mount implementation missing")
+
+          # Keep the more invasive paths blocked for this trial.
+          for needle in [
+              "case CMD_SUSFS_ADD_SUS_KSTAT:",
+              "case CMD_SUSFS_UPDATE_SUS_KSTAT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:",
+              "case CMD_SUSFS_ADD_TRY_UMOUNT:",
+              "case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:",
+              "case CMD_SUSFS_ADD_OPEN_REDIRECT:",
+              "case CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS:",
+          ]:
+              if needle in sc:
+                  raise SystemExit(f"Trial24 unexpectedly enabled extra mutation command: {needle}")
+
+          print("Trial24 verification passed: reporting + SET_UNAME + ENABLE_LOG + ADD_SUS_PATH + ADD_SUS_MOUNT only")
+          PY
+
+          python3 /tmp/trial24.py
+          echo '=== Trial 24 SUSFS ABI verification ==='
+          grep -n -A85 -B8 'CMD_SUSFS_ADD_SUS_MOUNT' KernelSU-Next/kernel/supercall/supercall.c
+
       - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
           set -euxo pipefail
@@ -4009,7 +4197,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-22-SUSFS-UNAME-LOG-ABI.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-24-SUSFS-ADD-SUS-MOUNT-ABI.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4022,8 +4210,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-22-SUSFS-UNAME-LOG-ABI
-          path: M127F-KSUN-v3.3.0-TRIAL-22-SUSFS-UNAME-LOG-ABI.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-24-SUSFS-ADD-SUS-MOUNT-ABI
+          path: M127F-KSUN-v3.3.0-TRIAL-24-SUSFS-ADD-SUS-MOUNT-ABI.zip
           if-no-files-found: error
           compression-level: 0
 
