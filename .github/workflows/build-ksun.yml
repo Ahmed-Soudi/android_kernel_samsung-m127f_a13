@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 20 SUSFS Manager Reporting
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 20 v2 SUSFS Manager Reporting
 
 on:
   workflow_dispatch:
@@ -390,245 +390,6 @@ jobs:
           grep -n 'susfs_try_umount(current_uid().val)' fs/namespace.c
           echo "Trial 19 v5: SUSFS/KSUN bridge installed."
 
-      - name: Trial 20 initialize SUSFS and expose version to KSUN manager
-        run: |
-          set -euxo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          # Initialize SUSFS core internal state. No hide rules are added here.
-          p = Path("KernelSU-Next/kernel/core/init.c")
-          s = p.read_text()
-          inc_anchor = '#include "infra/symbol_resolver.h"\n'
-          inc = '#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif\n'
-          if inc not in s:
-              if inc_anchor not in s:
-                  raise SystemExit("Trial20: init include anchor not found")
-              s = s.replace(inc_anchor, inc_anchor + inc, 1)
-
-          if "susfs_init();" not in s:
-              anchor = "\tksu_feature_init();\n"
-              if anchor not in s:
-                  raise SystemExit("Trial20: ksu_feature_init anchor not found")
-              replacement = (
-                  "\tksu_feature_init();\n\n"
-                  "#ifdef CONFIG_KSU_SUSFS\n"
-                  "\t/* Trial20: initialize imported SUSFS v1.5.7 internal state only. */\n"
-                  "\tsusfs_init();\n"
-                  "\tpr_info(\"Samsung 4.19 Trial20: SUSFS core initialized: %s (%s)\\n\",\n"
-                  "\t        SUSFS_VERSION, SUSFS_VARIANT);\n"
-                  "#endif\n"
-              )
-              s = s.replace(anchor, replacement, 1)
-          p.write_text(s)
-
-          # Expose the three read-only SUSFS reporting commands used by the
-          # pinned KSUN 3.3.0 manager via ksud's SYS_reboot SUSFS interface.
-          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
-          s = p.read_text()
-          inc_anchor = '#include <linux/utsname.h> // utsname() and uts_sem\n'
-          inc = '#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#include <linux/susfs_def.h>\n#endif\n'
-          if inc not in s:
-              if inc_anchor not in s:
-                  raise SystemExit("Trial20: supercall include anchor not found")
-              s = s.replace(inc_anchor, inc_anchor + inc, 1)
-
-          anchor = "syscall_fn_t ksu_orig_reboot_syscall;\n"
-          if anchor not in s:
-              raise SystemExit("Trial20: Trial15 direct reboot anchor not found")
-
-          if "ksu_samsung419_handle_susfs_report" not in s:
-              report = '''
-          #ifdef CONFIG_KSU_SUSFS
-          #define KSU_SAMSUNG419_SUSFS_MAGIC 0xFAFAFAFAUL
-          #define KSU_SAMSUNG419_SUSFS_FEATURE_BUFSIZE 8192
-          #define KSU_SAMSUNG419_SUSFS_VERSION_BUFSIZE 16
-          #define KSU_SAMSUNG419_SUSFS_VARIANT_BUFSIZE 16
-
-          static bool ksu_samsung419_handle_susfs_report(const struct pt_regs *regs)
-          {
-          unsigned long magic1 = (unsigned long)PT_REGS_PARM1(regs);
-          unsigned long magic2 = (unsigned long)PT_REGS_PARM2(regs);
-          unsigned int cmd = (unsigned int)PT_REGS_PARM3(regs);
-          char __user *uarg = (char __user *)PT_REGS_SYSCALL_PARM4(regs);
-          int zero = 0;
-
-          if (magic1 != (unsigned long)KSU_INSTALL_MAGIC1 ||
-          magic2 != KSU_SAMSUNG419_SUSFS_MAGIC)
-          return false;
-
-          switch (cmd) {
-          case CMD_SUSFS_SHOW_VERSION:
-          if (!uarg)
-            return true;
-          if (copy_to_user(uarg, SUSFS_VERSION,
-                         min_t(size_t, strlen(SUSFS_VERSION) + 1,
-                               KSU_SAMSUNG419_SUSFS_VERSION_BUFSIZE)))
-            pr_err("Trial20 SUSFS: version copy_to_user failed\\n");
-          if (copy_to_user(uarg + KSU_SAMSUNG419_SUSFS_VERSION_BUFSIZE,
-                         &zero, sizeof(zero)))
-            pr_err("Trial20 SUSFS: version err copy_to_user failed\\n");
-          pr_info("Samsung 4.19 Trial20: SUSFS version query -> %s\\n", SUSFS_VERSION);
-          return true;
-
-          case CMD_SUSFS_SHOW_VARIANT:
-          if (!uarg)
-            return true;
-          if (copy_to_user(uarg, SUSFS_VARIANT,
-                         min_t(size_t, strlen(SUSFS_VARIANT) + 1,
-                               KSU_SAMSUNG419_SUSFS_VARIANT_BUFSIZE)))
-            pr_err("Trial20 SUSFS: variant copy_to_user failed\\n");
-          if (copy_to_user(uarg + KSU_SAMSUNG419_SUSFS_VARIANT_BUFSIZE,
-                         &zero, sizeof(zero)))
-            pr_err("Trial20 SUSFS: variant err copy_to_user failed\\n");
-          pr_info("Samsung 4.19 Trial20: SUSFS variant query -> %s\\n", SUSFS_VARIANT);
-          return true;
-
-          case CMD_SUSFS_SHOW_ENABLED_FEATURES: {
-          static const char features[] =
-          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-            "CONFIG_KSU_SUSFS_SUS_PATH=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-            "CONFIG_KSU_SUSFS_SUS_MOUNT=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-            "CONFIG_KSU_SUSFS_SUS_KSTAT=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-            "CONFIG_KSU_SUSFS_TRY_UMOUNT=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
-            "CONFIG_KSU_SUSFS_SPOOF_UNAME=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
-            "CONFIG_KSU_SUSFS_ENABLE_LOG=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
-            "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-            "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\\n"
-          #endif
-          #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-            "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y\\n"
-          #endif
-            "";
-
-          if (!uarg)
-            return true;
-          if (sizeof(features) > KSU_SAMSUNG419_SUSFS_FEATURE_BUFSIZE) {
-            pr_err("Trial20 SUSFS: feature string too large\\n");
-            return true;
-          }
-          if (copy_to_user(uarg, features, sizeof(features)))
-            pr_err("Trial20 SUSFS: features copy_to_user failed\\n");
-          if (copy_to_user(uarg + KSU_SAMSUNG419_SUSFS_FEATURE_BUFSIZE,
-                         &zero, sizeof(zero)))
-            pr_err("Trial20 SUSFS: features err copy_to_user failed\\n");
-          pr_info("Samsung 4.19 Trial20: SUSFS feature query answered\\n");
-          return true;
-          }
-
-          default:
-          /* All SUSFS mutation commands remain intentionally undispatched. */
-          return false;
-          }
-          }
-          #else
-          static bool ksu_samsung419_handle_susfs_report(const struct pt_regs *regs)
-          {
-          return false;
-          }
-          #endif
-
-          '''
-              s = s.replace(anchor, anchor + report, 1)
-
-          old = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
-          {
-          ksu_samsung419_install_driver_fd(regs);
-
-          if (likely(ksu_orig_reboot_syscall))
-          return ksu_orig_reboot_syscall(regs);
-
-          return -ENOSYS;
-          }
-          '''
-          new = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
-          {
-          if (ksu_samsung419_handle_susfs_report(regs))
-          return 0;
-
-          ksu_samsung419_install_driver_fd(regs);
-
-          if (likely(ksu_orig_reboot_syscall))
-          return ksu_orig_reboot_syscall(regs);
-
-          return -ENOSYS;
-          }
-          '''
-          if old not in s:
-              raise SystemExit("Trial20: direct wrapper body anchor not found")
-          s = s.replace(old, new, 1)
-
-          old = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
-          {
-          ksu_samsung419_install_driver_fd(regs);
-          return ksu_syscall_table[orig_nr](regs);
-          }
-          '''
-          new = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
-          {
-          if (ksu_samsung419_handle_susfs_report(regs))
-          return 0;
-
-          ksu_samsung419_install_driver_fd(regs);
-          return ksu_syscall_table[orig_nr](regs);
-          }
-          '''
-          if old not in s:
-              raise SystemExit("Trial20: dispatcher wrapper anchor not found")
-          s = s.replace(old, new, 1)
-          p.write_text(s)
-          PY
-
-          echo "=== Trial 20 SUSFS manager reporting verification ==="
-          grep -n -A12 -B5 'susfs_init();' KernelSU-Next/kernel/core/init.c
-          grep -n -A150 'ksu_samsung419_handle_susfs_report' KernelSU-Next/kernel/supercall/supercall.c | head -n 180
-
-          python3 - <<'PY'
-          from pathlib import Path
-          init = Path("KernelSU-Next/kernel/core/init.c").read_text()
-          sc = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
-          ksud = Path("KernelSU-Next/userspace/ksud/src/susfsd.rs").read_text()
-          home = Path("KernelSU-Next/manager/app/src/main/java/com/rifsxd/ksunext/ui/screen/Home.kt").read_text()
-          cli = Path("KernelSU-Next/manager/app/src/main/java/com/rifsxd/ksunext/ui/util/KsuCli.kt").read_text()
-
-          for needle in ["susfs_init();", "ksu_samsung419_handle_susfs_report", "CMD_SUSFS_SHOW_VERSION", "CMD_SUSFS_SHOW_ENABLED_FEATURES", "CMD_SUSFS_SHOW_VARIANT", "SUSFS_VERSION", "SUSFS_VARIANT", "if (ksu_samsung419_handle_susfs_report(regs))"]:
-              if needle not in init + sc:
-                  raise SystemExit(f"Trial20 verification missing: {needle}")
-
-          for needle in ["CMD_SUSFS_SHOW_VERSION", "CMD_SUSFS_SHOW_ENABLED_FEATURES", "CMD_SUSFS_SHOW_VARIANT"]:
-              if needle not in ksud:
-                  raise SystemExit(f"Trial20 ksud contract missing: {needle}")
-
-          for needle in ["getSuSFS()", "getSuSFSVersion()", "getSuSFSVariant()"]:
-              if needle not in home:
-                  raise SystemExit(f"Trial20 manager Home contract missing: {needle}")
-
-          for needle in ["susfs support", "susfs version", "susfs variant", "susfs features"]:
-              if needle not in cli:
-                  raise SystemExit(f"Trial20 manager CLI contract missing: {needle}")
-
-          combined = sc + Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c").read_text() + Path("KernelSU-Next/kernel/runtime/ksud_integration.c").read_text()
-          for needle in ["reboot kprobe disabled for compatibility", "input_event kprobe skipped", "Trial15 direct reboot FD bootstrap installed"]:
-              if needle not in combined:
-                  raise SystemExit(f"Trial20 safety marker missing: {needle}")
-
-          print("Trial20 verification passed: SUSFS init + read-only manager reporting only")
-          PY
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3385,6 +3146,246 @@ jobs:
           PY
 
 
+      - name: Trial 20 v2 initialize SUSFS and expose version to KSUN manager
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Initialize SUSFS core internal state. No hide rules are added here.
+          p = Path("KernelSU-Next/kernel/core/init.c")
+          s = p.read_text()
+          inc_anchor = '#include "infra/symbol_resolver.h"\n'
+          inc = '#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#endif\n'
+          if inc not in s:
+              if inc_anchor not in s:
+                  raise SystemExit("Trial20: init include anchor not found")
+              s = s.replace(inc_anchor, inc_anchor + inc, 1)
+
+          if "susfs_init();" not in s:
+              anchor = "\tksu_feature_init();\n"
+              if anchor not in s:
+                  raise SystemExit("Trial20: ksu_feature_init anchor not found")
+              replacement = (
+                  "\tksu_feature_init();\n\n"
+                  "#ifdef CONFIG_KSU_SUSFS\n"
+                  "\t/* Trial20: initialize imported SUSFS v1.5.7 internal state only. */\n"
+                  "\tsusfs_init();\n"
+                  "\tpr_info(\"Samsung 4.19 Trial20: SUSFS core initialized: %s (%s)\\n\",\n"
+                  "\t        SUSFS_VERSION, SUSFS_VARIANT);\n"
+                  "#endif\n"
+              )
+              s = s.replace(anchor, replacement, 1)
+          p.write_text(s)
+
+          # Expose the three read-only SUSFS reporting commands used by the
+          # pinned KSUN 3.3.0 manager via ksud's SYS_reboot SUSFS interface.
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+          inc_anchor = '#include <linux/utsname.h> // utsname() and uts_sem\n'
+          inc = '#ifdef CONFIG_KSU_SUSFS\n#include <linux/susfs.h>\n#include <linux/susfs_def.h>\n#endif\n'
+          if inc not in s:
+              if inc_anchor not in s:
+                  raise SystemExit("Trial20: supercall include anchor not found")
+              s = s.replace(inc_anchor, inc_anchor + inc, 1)
+
+          anchor = "syscall_fn_t ksu_orig_reboot_syscall;\n"
+          if anchor not in s:
+              raise SystemExit("Trial20: Trial15 direct reboot anchor not found")
+
+          if "ksu_samsung419_handle_susfs_report" not in s:
+              report = '''
+          #ifdef CONFIG_KSU_SUSFS
+          #define KSU_SAMSUNG419_SUSFS_MAGIC 0xFAFAFAFAUL
+          #define KSU_SAMSUNG419_SUSFS_FEATURE_BUFSIZE 8192
+          #define KSU_SAMSUNG419_SUSFS_VERSION_BUFSIZE 16
+          #define KSU_SAMSUNG419_SUSFS_VARIANT_BUFSIZE 16
+
+          static bool ksu_samsung419_handle_susfs_report(const struct pt_regs *regs)
+          {
+          unsigned long magic1 = (unsigned long)PT_REGS_PARM1(regs);
+          unsigned long magic2 = (unsigned long)PT_REGS_PARM2(regs);
+          unsigned int cmd = (unsigned int)PT_REGS_PARM3(regs);
+          char __user *uarg = (char __user *)PT_REGS_SYSCALL_PARM4(regs);
+          int zero = 0;
+
+          if (magic1 != (unsigned long)KSU_INSTALL_MAGIC1 ||
+          magic2 != KSU_SAMSUNG419_SUSFS_MAGIC)
+          return false;
+
+          switch (cmd) {
+          case CMD_SUSFS_SHOW_VERSION:
+          if (!uarg)
+            return true;
+          if (copy_to_user(uarg, SUSFS_VERSION,
+                         min_t(size_t, strlen(SUSFS_VERSION) + 1,
+                               KSU_SAMSUNG419_SUSFS_VERSION_BUFSIZE)))
+            pr_err("Trial20 SUSFS: version copy_to_user failed\\n");
+          if (copy_to_user(uarg + KSU_SAMSUNG419_SUSFS_VERSION_BUFSIZE,
+                         &zero, sizeof(zero)))
+            pr_err("Trial20 SUSFS: version err copy_to_user failed\\n");
+          pr_info("Samsung 4.19 Trial20: SUSFS version query -> %s\\n", SUSFS_VERSION);
+          return true;
+
+          case CMD_SUSFS_SHOW_VARIANT:
+          if (!uarg)
+            return true;
+          if (copy_to_user(uarg, SUSFS_VARIANT,
+                         min_t(size_t, strlen(SUSFS_VARIANT) + 1,
+                               KSU_SAMSUNG419_SUSFS_VARIANT_BUFSIZE)))
+            pr_err("Trial20 SUSFS: variant copy_to_user failed\\n");
+          if (copy_to_user(uarg + KSU_SAMSUNG419_SUSFS_VARIANT_BUFSIZE,
+                         &zero, sizeof(zero)))
+            pr_err("Trial20 SUSFS: variant err copy_to_user failed\\n");
+          pr_info("Samsung 4.19 Trial20: SUSFS variant query -> %s\\n", SUSFS_VARIANT);
+          return true;
+
+          case CMD_SUSFS_SHOW_ENABLED_FEATURES: {
+          static const char features[] =
+          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+            "CONFIG_KSU_SUSFS_SUS_PATH=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+            "CONFIG_KSU_SUSFS_SUS_MOUNT=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+            "CONFIG_KSU_SUSFS_SUS_KSTAT=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+            "CONFIG_KSU_SUSFS_TRY_UMOUNT=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+            "CONFIG_KSU_SUSFS_SPOOF_UNAME=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+            "CONFIG_KSU_SUSFS_ENABLE_LOG=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+            "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+            "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y\\n"
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+            "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y\\n"
+          #endif
+            "";
+
+          if (!uarg)
+            return true;
+          if (sizeof(features) > KSU_SAMSUNG419_SUSFS_FEATURE_BUFSIZE) {
+            pr_err("Trial20 SUSFS: feature string too large\\n");
+            return true;
+          }
+          if (copy_to_user(uarg, features, sizeof(features)))
+            pr_err("Trial20 SUSFS: features copy_to_user failed\\n");
+          if (copy_to_user(uarg + KSU_SAMSUNG419_SUSFS_FEATURE_BUFSIZE,
+                         &zero, sizeof(zero)))
+            pr_err("Trial20 SUSFS: features err copy_to_user failed\\n");
+          pr_info("Samsung 4.19 Trial20: SUSFS feature query answered\\n");
+          return true;
+          }
+
+          default:
+          /* All SUSFS mutation commands remain intentionally undispatched. */
+          return false;
+          }
+          }
+          #else
+          static bool ksu_samsung419_handle_susfs_report(const struct pt_regs *regs)
+          {
+          return false;
+          }
+          #endif
+
+          '''
+              s = s.replace(anchor, anchor + report, 1)
+
+          old = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          {
+          ksu_samsung419_install_driver_fd(regs);
+
+          if (likely(ksu_orig_reboot_syscall))
+          return ksu_orig_reboot_syscall(regs);
+
+          return -ENOSYS;
+          }
+          '''
+          new = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          {
+          if (ksu_samsung419_handle_susfs_report(regs))
+          return 0;
+
+          ksu_samsung419_install_driver_fd(regs);
+
+          if (likely(ksu_orig_reboot_syscall))
+          return ksu_orig_reboot_syscall(regs);
+
+          return -ENOSYS;
+          }
+          '''
+          if old not in s:
+              raise SystemExit("Trial20: direct wrapper body anchor not found")
+          s = s.replace(old, new, 1)
+
+          old = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
+          {
+          ksu_samsung419_install_driver_fd(regs);
+          return ksu_syscall_table[orig_nr](regs);
+          }
+          '''
+          new = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
+          {
+          if (ksu_samsung419_handle_susfs_report(regs))
+          return 0;
+
+          ksu_samsung419_install_driver_fd(regs);
+          return ksu_syscall_table[orig_nr](regs);
+          }
+          '''
+          if old not in s:
+              raise SystemExit("Trial20: dispatcher wrapper anchor not found")
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 20 SUSFS manager reporting verification ==="
+          grep -n -A12 -B5 'susfs_init();' KernelSU-Next/kernel/core/init.c
+          grep -n -A150 'ksu_samsung419_handle_susfs_report' KernelSU-Next/kernel/supercall/supercall.c | head -n 180
+
+          python3 - <<'PY'
+          from pathlib import Path
+          init = Path("KernelSU-Next/kernel/core/init.c").read_text()
+          sc = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
+          ksud = Path("KernelSU-Next/userspace/ksud/src/susfsd.rs").read_text()
+          home = Path("KernelSU-Next/manager/app/src/main/java/com/rifsxd/ksunext/ui/screen/Home.kt").read_text()
+          cli = Path("KernelSU-Next/manager/app/src/main/java/com/rifsxd/ksunext/ui/util/KsuCli.kt").read_text()
+
+          for needle in ["susfs_init();", "ksu_samsung419_handle_susfs_report", "CMD_SUSFS_SHOW_VERSION", "CMD_SUSFS_SHOW_ENABLED_FEATURES", "CMD_SUSFS_SHOW_VARIANT", "SUSFS_VERSION", "SUSFS_VARIANT", "if (ksu_samsung419_handle_susfs_report(regs))"]:
+              if needle not in init + sc:
+                  raise SystemExit(f"Trial20 verification missing: {needle}")
+
+          for needle in ["CMD_SUSFS_SHOW_VERSION", "CMD_SUSFS_SHOW_ENABLED_FEATURES", "CMD_SUSFS_SHOW_VARIANT"]:
+              if needle not in ksud:
+                  raise SystemExit(f"Trial20 ksud contract missing: {needle}")
+
+          for needle in ["getSuSFS()", "getSuSFSVersion()", "getSuSFSVariant()"]:
+              if needle not in home:
+                  raise SystemExit(f"Trial20 manager Home contract missing: {needle}")
+
+          for needle in ["susfs support", "susfs version", "susfs variant", "susfs features"]:
+              if needle not in cli:
+                  raise SystemExit(f"Trial20 manager CLI contract missing: {needle}")
+
+          combined = sc + Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c").read_text() + Path("KernelSU-Next/kernel/runtime/ksud_integration.c").read_text()
+          for needle in ["reboot kprobe disabled for compatibility", "input_event kprobe skipped", "Trial15 direct reboot FD bootstrap installed"]:
+              if needle not in combined:
+                  raise SystemExit(f"Trial20 safety marker missing: {needle}")
+
+          print("Trial20 verification passed: SUSFS init + read-only manager reporting only")
+          PY
+
       - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
           set -euxo pipefail
@@ -3826,7 +3827,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-20-SUSFS-MANAGER-REPORTING.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-20-V2-SUSFS-MANAGER-REPORTING.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3839,8 +3840,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-20-SUSFS-MANAGER-REPORTING
-          path: M127F-KSUN-v3.3.0-TRIAL-20-SUSFS-MANAGER-REPORTING.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-20-V2-SUSFS-MANAGER-REPORTING
+          path: M127F-KSUN-v3.3.0-TRIAL-20-V2-SUSFS-MANAGER-REPORTING.zip
           if-no-files-found: error
           compression-level: 0
 
