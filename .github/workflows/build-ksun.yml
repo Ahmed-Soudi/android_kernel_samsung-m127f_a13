@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v4 SUSFS KSUN Bridge
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v4.1 SUSFS KSUN Bridge
 
 on:
   workflow_dispatch:
