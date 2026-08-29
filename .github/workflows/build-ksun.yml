@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v4.1 SUSFS KSUN Bridge
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 19 v5 SUSFS KSUN Bridge Anchor
 
 on:
   workflow_dispatch:
@@ -325,7 +325,7 @@ jobs:
           echo "Trial 19 v3: SUSFS inotify fdinfo adapted to Samsung 4.19 API."
 
 
-      - name: Trial 19 v4 bridge SUSFS v1.5.7 to pinned KSUN 3.3.0
+      - name: Trial 19 v5 bridge SUSFS v1.5.7 to pinned KSUN 3.3.0
         run: |
           set -euxo pipefail
 
@@ -354,14 +354,12 @@ jobs:
           s = ku.read_text()
           marker = "void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)"
           if marker not in s:
-              start = s.find("static void try_umount(const char *mnt, int flags)")
-              if start < 0:
-                  raise SystemExit("Trial19 v4: KSUN try_umount helper not found")
-              end_marker = "\\tksu_umount_mnt(mnt, &path, flags);\\n}"
-              end = s.find(end_marker, start)
-              if end < 0:
-                  raise SystemExit("Trial19 v4: KSUN try_umount helper end not found")
-              end += len(end_marker)
+              if "static void try_umount(const char *mnt, int flags)" not in s:
+                  raise SystemExit("Trial19 v5: KSUN try_umount helper not found")
+              insert_anchor = "struct umount_tw {"
+              pos = s.find(insert_anchor)
+              if pos < 0:
+                  raise SystemExit("Trial19 v5: struct umount_tw anchor not found")
               add = """
           #ifdef CONFIG_KSU_SUSFS
           void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)
@@ -371,8 +369,9 @@ jobs:
               try_umount(mnt, flags);
           }
           #endif
+
           """
-              s = s[:end] + add + s[end:]
+              s = s[:pos] + add + s[pos:]
               ku.write_text(s)
 
           ns = Path("fs/namespace.c")
@@ -383,13 +382,13 @@ jobs:
 
           python3 /tmp/trial19_bridge.py
 
-          echo "=== Trial 19 v4 bridge verification ==="
+          echo "=== Trial 19 v5 bridge verification ==="
           grep -n 'bool susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c
           grep -n 'bool susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c
           grep -n 'void ksu_try_umount' KernelSU-Next/kernel/feature/kernel_umount.c
           ! grep -n 'susfs_try_umount_all' fs/namespace.c
           grep -n 'susfs_try_umount(current_uid().val)' fs/namespace.c
-          echo "Trial 19 v4: SUSFS/KSUN bridge installed."
+          echo "Trial 19 v5: SUSFS/KSUN bridge installed."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3587,7 +3586,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-19-V4-SUSFS-KSUN-BRIDGE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-19-V5-SUSFS-KSUN-BRIDGE-ANCHOR.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3600,8 +3599,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-19-V4-SUSFS-KSUN-BRIDGE
-          path: M127F-KSUN-v3.3.0-TRIAL-19-V4-SUSFS-KSUN-BRIDGE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-19-V5-SUSFS-KSUN-BRIDGE-ANCHOR
+          path: M127F-KSUN-v3.3.0-TRIAL-19-V5-SUSFS-KSUN-BRIDGE-ANCHOR.zip
           if-no-files-found: error
           compression-level: 0
 
