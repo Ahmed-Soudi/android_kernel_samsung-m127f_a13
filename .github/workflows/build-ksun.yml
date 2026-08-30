@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 26 SUSFS Update Sus Kstat ABI
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 27 SUSFS Add Static Sus Kstat ABI
 
 on:
   workflow_dispatch:
@@ -3943,6 +3943,105 @@ jobs:
           python3 /tmp/trial26.py
           echo '=== Trial 26 SUSFS ABI verification ==='
           grep -n -A120 -B8 'CMD_SUSFS_UPDATE_SUS_KSTAT' KernelSU-Next/kernel/supercall/supercall.c
+
+      - name: Trial 27 enable SUSFS v1.5.7 ADD_SUS_KSTAT_STATICALLY ABI after proven update command
+        run: |
+          set -euxo pipefail
+
+          cat > /tmp/trial27.py <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          marker = "Trial27 SUSFS: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY"
+          if marker not in s:
+              target = "case CMD_SUSFS_SHOW_ENABLED_FEATURES: {\n"
+              if target not in s:
+                  raise SystemExit("Trial27: exact proven SUSFS switch anchor not found")
+
+              case = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+                  "case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:\n"
+                  "/* Trial27: expose static SUS_KSTAT after dynamic add/update proved boot-safe. */\n"
+                  "if (current_uid().val != 0) {\n"
+                  "  pr_warn(\"Trial27 SUSFS: ADD_SUS_KSTAT_STATICALLY denied for uid=%u\\n\", current_uid().val);\n"
+                  "  return true;\n"
+                  "}\n"
+                  "if (!uarg) {\n"
+                  "  pr_err(\"Trial27 SUSFS: ADD_SUS_KSTAT_STATICALLY received NULL arg\\n\");\n"
+                  "  return true;\n"
+                  "}\n"
+                  "{\n"
+                  "  int ret = susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)uarg);\n"
+                  "  pr_info(\"Trial27 SUSFS: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY returned %d\\n\", ret);\n"
+                  "}\n"
+                  "return true;\n"
+                  "#endif\n\n"
+              )
+              s = s.replace(target, case + target, 1)
+
+          p.write_text(s)
+
+          sc = p.read_text()
+          hdr = Path("include/linux/susfs_def.h").read_text()
+          api = Path("include/linux/susfs.h").read_text()
+          impl = Path("fs/susfs.c").read_text()
+
+          # Preserve everything proven through Trial26.
+          for needle in [
+              "CMD_SUSFS_SHOW_VERSION",
+              "CMD_SUSFS_SHOW_ENABLED_FEATURES",
+              "CMD_SUSFS_SHOW_VARIANT",
+              "ksu_samsung419_handle_susfs_report",
+              "case CMD_SUSFS_SET_UNAME:",
+              "case CMD_SUSFS_ENABLE_LOG:",
+              "case CMD_SUSFS_ADD_SUS_PATH:",
+              "case CMD_SUSFS_ADD_SUS_MOUNT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT:",
+              "case CMD_SUSFS_UPDATE_SUS_KSTAT:",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial27 regressed proven SUSFS surface: {needle}")
+
+          for needle in [
+              "case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:",
+              "susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)uarg)",
+              "Trial27 SUSFS: CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY returned",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial27 supercall verification missing: {needle}")
+
+          if "#define CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY 0x55572" not in hdr:
+              raise SystemExit("Trial27 SUSFS ADD_SUS_KSTAT_STATICALLY command number mismatch")
+          if "struct st_susfs_sus_kstat" not in api:
+              raise SystemExit("Trial27 SUSFS sus_kstat ABI struct missing")
+          if "int susfs_add_sus_kstat(" not in api:
+              raise SystemExit("Trial27 susfs_add_sus_kstat prototype missing")
+          if "int susfs_add_sus_kstat(" not in impl:
+              raise SystemExit("Trial27 susfs_add_sus_kstat implementation missing")
+
+          # In v1.5.7 the static command intentionally uses the same kernel
+          # handler as ADD_SUS_KSTAT; userspace marks the struct as static.
+          if "int                     is_statically;" not in api:
+              raise SystemExit("Trial27 SUSFS is_statically ABI field missing")
+
+          # Keep mount/unmount-heavy and redirect/spoof operations blocked.
+          for needle in [
+              "case CMD_SUSFS_ADD_TRY_UMOUNT:",
+              "case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:",
+              "case CMD_SUSFS_ADD_OPEN_REDIRECT:",
+              "case CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS:",
+          ]:
+              if needle in sc:
+                  raise SystemExit(f"Trial27 unexpectedly enabled extra mutation command: {needle}")
+
+          print("Trial27 verification passed: reporting + SET_UNAME + ENABLE_LOG + ADD_SUS_PATH + ADD_SUS_MOUNT + full v1.5.7 SUS_KSTAT trio only")
+          PY
+
+          python3 /tmp/trial27.py
+          echo '=== Trial 27 SUSFS ABI verification ==='
+          grep -n -A135 -B8 'CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY' KernelSU-Next/kernel/supercall/supercall.c
 
       - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
