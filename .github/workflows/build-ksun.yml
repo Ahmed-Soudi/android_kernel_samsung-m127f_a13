@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 27 SUSFS Add Static Sus Kstat ABI
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 28 SUSFS Add Try Umount ABI
 
 on:
   workflow_dispatch:
@@ -4043,6 +4043,103 @@ jobs:
           echo '=== Trial 27 SUSFS ABI verification ==='
           grep -n -A135 -B8 'CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY' KernelSU-Next/kernel/supercall/supercall.c
 
+
+      - name: Trial 28 enable SUSFS v1.5.7 ADD_TRY_UMOUNT ABI after proven full SUS_KSTAT trio
+        run: |
+          set -euxo pipefail
+
+          cat > /tmp/trial28.py <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          marker = "Trial28 SUSFS: CMD_SUSFS_ADD_TRY_UMOUNT"
+          if marker not in s:
+              target = "case CMD_SUSFS_SHOW_ENABLED_FEATURES: {\n"
+              if target not in s:
+                  raise SystemExit("Trial28: exact proven SUSFS switch anchor not found")
+
+              case = (
+                  "#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT\n"
+                  "case CMD_SUSFS_ADD_TRY_UMOUNT:\n"
+                  "/* Trial28: expose try-umount registration only after full SUS_KSTAT proved boot-safe. */\n"
+                  "if (current_uid().val != 0) {\n"
+                  "  pr_warn(\"Trial28 SUSFS: ADD_TRY_UMOUNT denied for uid=%u\\n\", current_uid().val);\n"
+                  "  return true;\n"
+                  "}\n"
+                  "if (!uarg) {\n"
+                  "  pr_err(\"Trial28 SUSFS: ADD_TRY_UMOUNT received NULL arg\\n\");\n"
+                  "  return true;\n"
+                  "}\n"
+                  "{\n"
+                  "  int ret = susfs_add_try_umount((struct st_susfs_try_umount __user *)uarg);\n"
+                  "  pr_info(\"Trial28 SUSFS: CMD_SUSFS_ADD_TRY_UMOUNT returned %d\\n\", ret);\n"
+                  "}\n"
+                  "return true;\n"
+                  "#endif\n\n"
+              )
+              s = s.replace(target, case + target, 1)
+
+          p.write_text(s)
+
+          sc = p.read_text()
+          hdr = Path("include/linux/susfs_def.h").read_text()
+          api = Path("include/linux/susfs.h").read_text()
+          impl = Path("fs/susfs.c").read_text()
+
+          # Preserve everything proven through Trial27.
+          for needle in [
+              "CMD_SUSFS_SHOW_VERSION",
+              "CMD_SUSFS_SHOW_ENABLED_FEATURES",
+              "CMD_SUSFS_SHOW_VARIANT",
+              "ksu_samsung419_handle_susfs_report",
+              "case CMD_SUSFS_SET_UNAME:",
+              "case CMD_SUSFS_ENABLE_LOG:",
+              "case CMD_SUSFS_ADD_SUS_PATH:",
+              "case CMD_SUSFS_ADD_SUS_MOUNT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT:",
+              "case CMD_SUSFS_UPDATE_SUS_KSTAT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial28 regressed proven SUSFS surface: {needle}")
+
+          for needle in [
+              "case CMD_SUSFS_ADD_TRY_UMOUNT:",
+              "susfs_add_try_umount((struct st_susfs_try_umount __user *)uarg)",
+              "Trial28 SUSFS: CMD_SUSFS_ADD_TRY_UMOUNT returned",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial28 supercall verification missing: {needle}")
+
+          if "#define CMD_SUSFS_ADD_TRY_UMOUNT 0x55580" not in hdr:
+              raise SystemExit("Trial28 SUSFS ADD_TRY_UMOUNT command number mismatch")
+          if "struct st_susfs_try_umount" not in api:
+              raise SystemExit("Trial28 SUSFS try_umount ABI struct missing")
+          if "int susfs_add_try_umount(" not in api:
+              raise SystemExit("Trial28 susfs_add_try_umount prototype missing")
+          if "int susfs_add_try_umount(" not in impl:
+              raise SystemExit("Trial28 susfs_add_try_umount implementation missing")
+          if "TRY_UMOUNT_DEFAULT 0" not in hdr or "TRY_UMOUNT_DETACH 1" not in hdr:
+              raise SystemExit("Trial28 try_umount mode ABI constants missing")
+
+          # Keep the still-unproven spoof/redirect/namespace-unmount commands blocked.
+          for needle in [
+              "case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:",
+              "case CMD_SUSFS_ADD_OPEN_REDIRECT:",
+              "case CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS:",
+          ]:
+              if needle in sc:
+                  raise SystemExit(f"Trial28 unexpectedly enabled extra mutation command: {needle}")
+
+          print("Trial28 verification passed: reporting + uname/log + path/mount + full SUS_KSTAT trio + ADD_TRY_UMOUNT only")
+          PY
+
+          python3 /tmp/trial28.py
+          echo '=== Trial 28 SUSFS ABI verification ==='
+          grep -n -A150 -B8 'CMD_SUSFS_ADD_TRY_UMOUNT' KernelSU-Next/kernel/supercall/supercall.c
+
       - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
           set -euxo pipefail
@@ -4484,7 +4581,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-26-SUSFS-UPDATE-SUS-KSTAT-ABI.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-28-SUSFS-ADD-TRY-UMOUNT-ABI.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4497,8 +4594,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-26-SUSFS-UPDATE-SUS-KSTAT-ABI
-          path: M127F-KSUN-v3.3.0-TRIAL-26-SUSFS-UPDATE-SUS-KSTAT-ABI.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-28-SUSFS-ADD-TRY-UMOUNT-ABI
+          path: M127F-KSUN-v3.3.0-TRIAL-28-SUSFS-ADD-TRY-UMOUNT-ABI.zip
           if-no-files-found: error
           compression-level: 0
 
