@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 29 SUSFS Cmdline Bootconfig ABI
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 30 SUSFS Open Redirect ABI
 
 on:
   workflow_dispatch:
@@ -4232,6 +4232,90 @@ jobs:
           echo '=== Trial 29 SUSFS ABI verification ==='
           grep -n -A160 -B8 'CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG' KernelSU-Next/kernel/supercall/supercall.c
 
+
+      - name: Trial 30 enable SUSFS v1.5.7 ADD_OPEN_REDIRECT ABI after proven cmdline bootconfig
+        run: |
+          set -euxo pipefail
+
+          cat > /tmp/trial30.py <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          if "Trial30 SUSFS: CMD_SUSFS_ADD_OPEN_REDIRECT" not in s:
+              target = "case CMD_SUSFS_SHOW_ENABLED_FEATURES: {\n"
+              if target not in s:
+                  raise SystemExit("Trial30: exact proven SUSFS switch anchor not found")
+
+              case = (
+                  "#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n"
+                  "case CMD_SUSFS_ADD_OPEN_REDIRECT:\n"
+                  "if (current_uid().val != 0) {\n"
+                  "  pr_warn(\"Trial30 SUSFS: ADD_OPEN_REDIRECT denied for uid=%u\\n\", current_uid().val);\n"
+                  "  return true;\n"
+                  "}\n"
+                  "if (!uarg) {\n"
+                  "  pr_err(\"Trial30 SUSFS: ADD_OPEN_REDIRECT received NULL arg\\n\");\n"
+                  "  return true;\n"
+                  "}\n"
+                  "{\n"
+                  "  int ret = susfs_add_open_redirect((struct st_susfs_open_redirect __user *)uarg);\n"
+                  "  pr_info(\"Trial30 SUSFS: CMD_SUSFS_ADD_OPEN_REDIRECT returned %d\\n\", ret);\n"
+                  "}\n"
+                  "return true;\n"
+                  "#endif\n\n"
+              )
+              s = s.replace(target, case + target, 1)
+
+          p.write_text(s)
+
+          sc = p.read_text()
+          hdr = Path("include/linux/susfs_def.h").read_text()
+          api = Path("include/linux/susfs.h").read_text()
+          impl = Path("fs/susfs.c").read_text()
+
+          for needle in [
+              "case CMD_SUSFS_SET_UNAME:",
+              "case CMD_SUSFS_ENABLE_LOG:",
+              "case CMD_SUSFS_ADD_SUS_PATH:",
+              "case CMD_SUSFS_ADD_SUS_MOUNT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT:",
+              "case CMD_SUSFS_UPDATE_SUS_KSTAT:",
+              "case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:",
+              "case CMD_SUSFS_ADD_TRY_UMOUNT:",
+              "case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial30 regressed proven SUSFS surface: {needle}")
+
+          for needle in [
+              "case CMD_SUSFS_ADD_OPEN_REDIRECT:",
+              "susfs_add_open_redirect((struct st_susfs_open_redirect __user *)uarg)",
+              "Trial30 SUSFS: CMD_SUSFS_ADD_OPEN_REDIRECT returned",
+          ]:
+              if needle not in sc:
+                  raise SystemExit(f"Trial30 supercall verification missing: {needle}")
+
+          if "#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x555c0" not in hdr:
+              raise SystemExit("Trial30 command number mismatch")
+          if "struct st_susfs_open_redirect" not in api:
+              raise SystemExit("Trial30 ABI struct missing")
+          if "int susfs_add_open_redirect(struct st_susfs_open_redirect* __user user_info);" not in api:
+              raise SystemExit("Trial30 prototype mismatch")
+          if "int susfs_add_open_redirect(" not in impl:
+              raise SystemExit("Trial30 implementation missing")
+
+          if "case CMD_SUSFS_RUN_UMOUNT_FOR_CURRENT_MNT_NS:" in sc:
+              raise SystemExit("Trial30 unexpectedly enabled namespace-unmount")
+
+          print("Trial30 verification passed")
+          PY
+
+          python3 /tmp/trial30.py
+          echo '=== Trial 30 SUSFS ABI verification ==='
+          grep -n -A180 -B8 'CMD_SUSFS_ADD_OPEN_REDIRECT' KernelSU-Next/kernel/supercall/supercall.c
+
       - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
           set -euxo pipefail
@@ -4673,7 +4757,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-29-SUSFS-CMDLINE-BOOTCONFIG-ABI.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-30-SUSFS-OPEN-REDIRECT-ABI.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4686,8 +4770,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-29-SUSFS-CMDLINE-BOOTCONFIG-ABI
-          path: M127F-KSUN-v3.3.0-TRIAL-29-SUSFS-CMDLINE-BOOTCONFIG-ABI.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-30-SUSFS-OPEN-REDIRECT-ABI
+          path: M127F-KSUN-v3.3.0-TRIAL-30-SUSFS-OPEN-REDIRECT-ABI.zip
           if-no-files-found: error
           compression-level: 0
 
