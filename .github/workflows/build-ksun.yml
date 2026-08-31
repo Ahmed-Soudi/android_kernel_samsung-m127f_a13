@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 33 SUSFS v2.2.0 Full SHA Pin
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 34 SUSFS v2.2.0 Transplant Order Fix
 
 on:
   workflow_dispatch:
@@ -40,95 +40,6 @@ jobs:
           df -h
 
 
-      - name: Trial 33 pin exact SUSFS v2.2.0 full SHA and transplant core
-        run: |
-          set -euxo pipefail
-
-          # First v2.x migration gate.
-          #
-          # IMPORTANT:
-          # - We deliberately DO NOT apply the upstream 5.15 kernel patch wholesale.
-          # - We deliberately DO NOT replace our proven Samsung 4.19 KSUN/SELinux/Exynos fixes.
-          # - We transplant only the v2.2.0 SUSFS core implementation + public ABI headers.
-          # - Compile errors from old 4.19 call sites are expected to identify the exact
-          #   compatibility work needed for the next porting trial.
-          #
-          # Trial32 successfully resolved the exact v2.2.0 commit but then
-          # exited 141 because `set -o pipefail` treated awk's early exit as
-          # SIGPIPE from `git log`. Pin the resolved full SHA directly.
-          SUSFS_V220_BRANCH="gki-android14-5.15"
-          SUSFS_V220_COMMIT="dbd8552d63ba7fcbc259aef2324867076b62fce5"
-
-          rm -rf /tmp/susfs-v220
-          git clone --filter=blob:none --single-branch --branch "${SUSFS_V220_BRANCH}" \
-            --depth=250 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs-v220
-
-          # Verify the pinned commit is present in the fetched branch history.
-          git -C /tmp/susfs-v220 cat-file -e "${SUSFS_V220_COMMIT}^{commit}" || {
-            echo "Trial33: pinned SUSFS v2.2.0 commit is not present in fetched history"
-            exit 1
-          }
-
-          git -C /tmp/susfs-v220 checkout --detach "${SUSFS_V220_COMMIT}"
-
-          echo "=== Pinned SUSFS v2.2.0 source ==="
-          git -C /tmp/susfs-v220 log -1 --format='%H %s'
-          test "$(git -C /tmp/susfs-v220 rev-parse HEAD)" = "${SUSFS_V220_COMMIT}"
-          test "$(git -C /tmp/susfs-v220 log -1 --format='%s')" = "Bump version to v2.2.0"
-          grep -n 'SUSFS_VERSION' \
-            /tmp/susfs-v220/kernel_patches/include/linux/susfs.h
-          grep -nE \
-            'SUSFS_MAGIC|CMD_SUSFS_ADD_SUS_PATH_LOOP|CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS|CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING|CMD_SUSFS_ADD_SUS_MAP' \
-            /tmp/susfs-v220/kernel_patches/include/linux/susfs_def.h
-
-          grep -q '#define SUSFS_VERSION "v2.2.0"' \
-            /tmp/susfs-v220/kernel_patches/include/linux/susfs.h || {
-              echo "Trial33: pinned source is not SUSFS v2.2.0"
-              exit 1
-            }
-
-          # Preserve the complete known-good v1.5.7 core for comparison in CI logs.
-          mkdir -p /tmp/susfs-v157-known-good
-          cp -f include/linux/susfs.h /tmp/susfs-v157-known-good/
-          cp -f include/linux/susfs_def.h /tmp/susfs-v157-known-good/
-          cp -f fs/susfs.c /tmp/susfs-v157-known-good/
-
-          # Core transplant only. Do NOT import the GKI 5.15 kernel patch or upstream
-          # KernelSU patch; our Samsung 4.19 integration must be ported deliberately.
-          cp -f /tmp/susfs-v220/kernel_patches/include/linux/susfs.h \
-            include/linux/susfs.h
-          cp -f /tmp/susfs-v220/kernel_patches/include/linux/susfs_def.h \
-            include/linux/susfs_def.h
-          cp -f /tmp/susfs-v220/kernel_patches/fs/susfs.c \
-            fs/susfs.c
-
-          echo "=== v1.5.7 -> v2.2.0 ABI delta summary ==="
-          diff -u /tmp/susfs-v157-known-good/susfs_def.h include/linux/susfs_def.h \
-            | sed -n '1,260p' || true
-          diff -u /tmp/susfs-v157-known-good/susfs.h include/linux/susfs.h \
-            | sed -n '1,320p' || true
-
-          echo "=== Trial31 invariants ==="
-          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
-          grep -q '#define SUSFS_MAGIC 0xFAFAFAFA' include/linux/susfs_def.h
-          grep -q 'CMD_SUSFS_ADD_SUS_PATH_LOOP' include/linux/susfs_def.h
-          grep -q 'CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS' include/linux/susfs_def.h
-          grep -q 'CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING' include/linux/susfs_def.h
-          grep -q 'CMD_SUSFS_ADD_SUS_MAP' include/linux/susfs_def.h
-
-          # v2.x changes the ABI materially. Ensure we do not accidentally leave the
-          # old Trial20-30 synthetic dispatcher in supercall.c.
-          if grep -q 'Trial30 SUSFS:' KernelSU-Next/kernel/supercall/supercall.c; then
-            echo "Trial33: stale Trial30 SUSFS dispatcher still present"
-            exit 1
-          fi
-
-          # Keep the Samsung-dangerous probe suppressions untouched.
-          grep -R -n \
-            'Samsung 4.19.*reboot\|Samsung 4.19.*input_event\|slow_avc_audit\|syscall_regfunc' \
-            KernelSU-Next/kernel | head -120 || true
-
-          echo "Trial33: v2.2.0 core transplant complete; continuing to compile gate."
 
       - name: Install build dependencies
         env:
@@ -482,6 +393,105 @@ jobs:
           echo "Trial 19 v5: SUSFS/KSUN bridge installed."
 
 
+
+      - name: Trial 34 transplant SUSFS v2.2.0 after proven v1.5.7 import/bridge
+        run: |
+          set -euxo pipefail
+
+          # Trial34 ordering guard: the known-good Project-Xed v1.5.7 import and
+          # KSUN bridge MUST already have run before we snapshot/replace the core.
+          test -f include/linux/susfs.h
+          test -f include/linux/susfs_def.h
+          test -f fs/susfs.c
+          grep -q '#define SUSFS_VERSION "v1.5.7"' include/linux/susfs.h
+          grep -q 'Trial19v5' KernelSU-Next/kernel/supercall/supercall.c || true
+          echo "Trial34: confirmed v1.5.7 core exists before v2.2.0 transplant"
+
+          # First v2.x migration gate.
+          #
+          # IMPORTANT:
+          # - We deliberately DO NOT apply the upstream 5.15 kernel patch wholesale.
+          # - We deliberately DO NOT replace our proven Samsung 4.19 KSUN/SELinux/Exynos fixes.
+          # - We transplant only the v2.2.0 SUSFS core implementation + public ABI headers.
+          # - Compile errors from old 4.19 call sites are expected to identify the exact
+          #   compatibility work needed for the next porting trial.
+          #
+          # Trial32 successfully resolved the exact v2.2.0 commit but then
+          # exited 141 because `set -o pipefail` treated awk's early exit as
+          # SIGPIPE from `git log`. Pin the resolved full SHA directly.
+          SUSFS_V220_BRANCH="gki-android14-5.15"
+          SUSFS_V220_COMMIT="dbd8552d63ba7fcbc259aef2324867076b62fce5"
+
+          rm -rf /tmp/susfs-v220
+          git clone --filter=blob:none --single-branch --branch "${SUSFS_V220_BRANCH}" \
+            --depth=250 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs-v220
+
+          # Verify the pinned commit is present in the fetched branch history.
+          git -C /tmp/susfs-v220 cat-file -e "${SUSFS_V220_COMMIT}^{commit}" || {
+            echo "Trial34: pinned SUSFS v2.2.0 commit is not present in fetched history"
+            exit 1
+          }
+
+          git -C /tmp/susfs-v220 checkout --detach "${SUSFS_V220_COMMIT}"
+
+          echo "=== Pinned SUSFS v2.2.0 source ==="
+          git -C /tmp/susfs-v220 log -1 --format='%H %s'
+          test "$(git -C /tmp/susfs-v220 rev-parse HEAD)" = "${SUSFS_V220_COMMIT}"
+          test "$(git -C /tmp/susfs-v220 log -1 --format='%s')" = "Bump version to v2.2.0"
+          grep -n 'SUSFS_VERSION' \
+            /tmp/susfs-v220/kernel_patches/include/linux/susfs.h
+          grep -nE \
+            'SUSFS_MAGIC|CMD_SUSFS_ADD_SUS_PATH_LOOP|CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS|CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING|CMD_SUSFS_ADD_SUS_MAP' \
+            /tmp/susfs-v220/kernel_patches/include/linux/susfs_def.h
+
+          grep -q '#define SUSFS_VERSION "v2.2.0"' \
+            /tmp/susfs-v220/kernel_patches/include/linux/susfs.h || {
+              echo "Trial34: pinned source is not SUSFS v2.2.0"
+              exit 1
+            }
+
+          # Preserve the complete known-good v1.5.7 core for comparison in CI logs.
+          mkdir -p /tmp/susfs-v157-known-good
+          cp -f include/linux/susfs.h /tmp/susfs-v157-known-good/
+          cp -f include/linux/susfs_def.h /tmp/susfs-v157-known-good/
+          cp -f fs/susfs.c /tmp/susfs-v157-known-good/
+
+          # Core transplant only. Do NOT import the GKI 5.15 kernel patch or upstream
+          # KernelSU patch; our Samsung 4.19 integration must be ported deliberately.
+          cp -f /tmp/susfs-v220/kernel_patches/include/linux/susfs.h \
+            include/linux/susfs.h
+          cp -f /tmp/susfs-v220/kernel_patches/include/linux/susfs_def.h \
+            include/linux/susfs_def.h
+          cp -f /tmp/susfs-v220/kernel_patches/fs/susfs.c \
+            fs/susfs.c
+
+          echo "=== v1.5.7 -> v2.2.0 ABI delta summary ==="
+          diff -u /tmp/susfs-v157-known-good/susfs_def.h include/linux/susfs_def.h \
+            | sed -n '1,260p' || true
+          diff -u /tmp/susfs-v157-known-good/susfs.h include/linux/susfs.h \
+            | sed -n '1,320p' || true
+
+          echo "=== Trial34 invariants ==="
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q '#define SUSFS_MAGIC 0xFAFAFAFA' include/linux/susfs_def.h
+          grep -q 'CMD_SUSFS_ADD_SUS_PATH_LOOP' include/linux/susfs_def.h
+          grep -q 'CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS' include/linux/susfs_def.h
+          grep -q 'CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING' include/linux/susfs_def.h
+          grep -q 'CMD_SUSFS_ADD_SUS_MAP' include/linux/susfs_def.h
+
+          # v2.x changes the ABI materially. Ensure we do not accidentally leave the
+          # old Trial20-30 synthetic dispatcher in supercall.c.
+          if grep -q 'Trial30 SUSFS:' KernelSU-Next/kernel/supercall/supercall.c; then
+            echo "Trial34: stale Trial30 SUSFS dispatcher still present"
+            exit 1
+          fi
+
+          # Keep the Samsung-dangerous probe suppressions untouched.
+          grep -R -n \
+            'Samsung 4.19.*reboot\|Samsung 4.19.*input_event\|slow_avc_audit\|syscall_regfunc' \
+            KernelSU-Next/kernel | head -120 || true
+
+          echo "Trial34: v2.2.0 core transplant complete; continuing to compile gate."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3679,7 +3689,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-33-SUSFS-V220-FULL-SHA-PIN.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-34-SUSFS-V220-TRANSPLANT-ORDER-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3692,8 +3702,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-33-SUSFS-V220-FULL-SHA-PIN
-          path: M127F-KSUN-v3.3.0-TRIAL-33-SUSFS-V220-FULL-SHA-PIN.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-34-SUSFS-V220-TRANSPLANT-ORDER-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-34-SUSFS-V220-TRANSPLANT-ORDER-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
