@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 31 SUSFS v2.2.0 Core Transplant Compile Gate
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 32 SUSFS v2.2.0 Fetch Anchor Fix
 
 on:
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
           df -h
 
 
-      - name: Trial 31 transplant pinned SUSFS v2.2.0 core onto proven Samsung 4.19 base
+      - name: Trial 32 resolve exact SUSFS v2.2.0 anchor and transplant core
         run: |
           set -euxo pipefail
 
@@ -53,19 +53,31 @@ jobs:
           # - Compile errors from old 4.19 call sites are expected to identify the exact
           #   compatibility work needed for the next porting trial.
           #
-          # Upstream commit containing "Bump version to v2.2.0":
-          SUSFS_V220_COMMIT="dbd8552d"
+          # Trial31 failed before compile because GitLab rejected fetching the
+          # short SHA dbd8552d directly. Resolve the exact stable bump commit
+          # from branch history, then detach at its full SHA.
           SUSFS_V220_BRANCH="gki-android14-5.15"
 
           rm -rf /tmp/susfs-v220
-          git clone --filter=blob:none --no-checkout \
-            https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs-v220
-          git -C /tmp/susfs-v220 fetch --no-tags --depth=1 origin \
-            "${SUSFS_V220_COMMIT}"
-          git -C /tmp/susfs-v220 checkout --detach FETCH_HEAD
+          git clone --filter=blob:none --single-branch --branch "${SUSFS_V220_BRANCH}" \
+            --depth=250 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs-v220
+
+          SUSFS_V220_COMMIT="$(
+            git -C /tmp/susfs-v220 log --format='%H%x09%s' \
+              | awk -F '\t' '$2 == "Bump version to v2.2.0" { print $1; exit }'
+          )"
+
+          if [ -z "${SUSFS_V220_COMMIT}" ]; then
+            echo "Trial32: could not resolve exact 'Bump version to v2.2.0' commit"
+            git -C /tmp/susfs-v220 log --oneline -80
+            exit 1
+          fi
+
+          git -C /tmp/susfs-v220 checkout --detach "${SUSFS_V220_COMMIT}"
 
           echo "=== Pinned SUSFS v2.2.0 source ==="
-          git -C /tmp/susfs-v220 log -1 --oneline
+          echo "Resolved full commit: ${SUSFS_V220_COMMIT}"
+          git -C /tmp/susfs-v220 log -1 --format='%H %s'
           grep -n 'SUSFS_VERSION' \
             /tmp/susfs-v220/kernel_patches/include/linux/susfs.h
           grep -nE \
@@ -74,7 +86,7 @@ jobs:
 
           grep -q '#define SUSFS_VERSION "v2.2.0"' \
             /tmp/susfs-v220/kernel_patches/include/linux/susfs.h || {
-              echo "Trial31: pinned source is not SUSFS v2.2.0"
+              echo "Trial32: pinned source is not SUSFS v2.2.0"
               exit 1
             }
 
@@ -110,7 +122,7 @@ jobs:
           # v2.x changes the ABI materially. Ensure we do not accidentally leave the
           # old Trial20-30 synthetic dispatcher in supercall.c.
           if grep -q 'Trial30 SUSFS:' KernelSU-Next/kernel/supercall/supercall.c; then
-            echo "Trial31: stale Trial30 SUSFS dispatcher still present"
+            echo "Trial32: stale Trial30 SUSFS dispatcher still present"
             exit 1
           fi
 
@@ -119,7 +131,7 @@ jobs:
             'Samsung 4.19.*reboot\|Samsung 4.19.*input_event\|slow_avc_audit\|syscall_regfunc' \
             KernelSU-Next/kernel | head -120 || true
 
-          echo "Trial31: v2.2.0 core transplant complete; continuing to compile gate."
+          echo "Trial32: v2.2.0 core transplant complete; continuing to compile gate."
 
       - name: Install build dependencies
         env:
@@ -3670,7 +3682,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-31-SUSFS-V220-CORE-TRANSPLANT.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-32-SUSFS-V220-FETCH-ANCHOR-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3683,8 +3695,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-31-SUSFS-V220-CORE-TRANSPLANT
-          path: M127F-KSUN-v3.3.0-TRIAL-31-SUSFS-V220-CORE-TRANSPLANT.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-32-SUSFS-V220-FETCH-ANCHOR-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-32-SUSFS-V220-FETCH-ANCHOR-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
