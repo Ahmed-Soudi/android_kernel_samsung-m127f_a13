@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 34 SUSFS v2.2.0 Transplant Order Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 35 SUSFS v2.2.0 fdinfo State Model Port
 
 on:
   workflow_dispatch:
@@ -39,20 +39,18 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
           df -h
 
-
-
       - name: Install build dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euxo pipefail
-
+          
           sudo apt-get \
             -o Acquire::Retries=5 \
             -o Acquire::http::Timeout=30 \
             -o Acquire::https::Timeout=30 \
             update
-
+          
           sudo apt-get \
             -o Acquire::Retries=5 \
             -o Acquire::http::Timeout=30 \
@@ -88,10 +86,10 @@ jobs:
         run: |
           set -euxo pipefail
           test -x "$HOME/toolchain/bin/clang"
-
+          
           CLANG_VERSION="$("$HOME/toolchain/bin/clang" --version)"
           printf '%s\n' "$CLANG_VERSION"
-
+          
           # r383902 is Android clang 11.0.1. If a damaged/wrong cache is ever
           # restored, fail here instead of compiling with an unknown toolchain.
           printf '%s\n' "$CLANG_VERSION" | grep -q "clang version 11.0.1"
@@ -108,37 +106,36 @@ jobs:
           git describe --tags --always
           cd ..
 
-
       - name: Trial 18 v2 import proven Project-Xed SUSFS v1.5.5 + v1.5.7
         run: |
           set -euxo pipefail
-
+          
           SUSFS_155="dbd9d7cbd0229c2a35fd9909a36f4649dfc47a73"
           SUSFS_157="6d2c2003ad0f5c0f2a1f5f303f00aef19a0b79f2"
           XED_REPO="https://github.com/maazm7d/kernel_samsung_a12.git"
-
+          
           echo "=== Browser-only Trial 18 v2 ==="
           echo "The GitHub Actions runner performs the SUSFS import automatically."
           echo "Source: $XED_REPO"
           echo "SUSFS base commit: $SUSFS_155"
           echo "SUSFS v1.5.7 update: $SUSFS_157"
-
+          
           git remote remove xed-susfs 2>/dev/null || true
           git remote add xed-susfs "$XED_REPO"
           git fetch --no-tags --depth=2 xed-susfs "$SUSFS_155"
           git fetch --no-tags --depth=2 xed-susfs "$SUSFS_157"
-
+          
           echo "=== Files changed by original SUSFS 1.5.5 import ==="
           git diff-tree --no-commit-id --name-status -r "$SUSFS_155"
-
+          
           echo "=== Files changed by original SUSFS 1.5.7 update ==="
           git diff-tree --no-commit-id --name-status -r "$SUSFS_157"
-
+          
           # Recreate the exact two Project-Xed SUSFS kernel commits as patches.
           # This runs on the CI runner; the user does not need a terminal.
           git show --format= --binary "$SUSFS_155" > /tmp/xed-susfs-1.5.5.patch
           git show --format= --binary "$SUSFS_157" > /tmp/xed-susfs-1.5.7.patch
-
+          
           echo "=== Apply SUSFS v1.5.5 ==="
           if ! git apply --3way --whitespace=nowarn /tmp/xed-susfs-1.5.5.patch; then
             echo "::error::Trial 18 v2: SUSFS v1.5.5 did not apply cleanly."
@@ -146,7 +143,7 @@ jobs:
             git diff --name-only --diff-filter=U || true
             exit 1
           fi
-
+          
           echo "=== Apply SUSFS v1.5.7 update ==="
           if ! git apply --3way --whitespace=nowarn /tmp/xed-susfs-1.5.7.patch; then
             echo "::error::Trial 18 v2: SUSFS v1.5.7 update did not apply cleanly."
@@ -154,7 +151,7 @@ jobs:
             git diff --name-only --diff-filter=U || true
             exit 1
           fi
-
+          
           echo "=== Verify imported SUSFS tree ==="
           test -f fs/susfs.c
           test -f include/linux/susfs_def.h
@@ -164,7 +161,7 @@ jobs:
           grep -Rns \
             -E 'SUSFS_VERSION|v1\.5\.7' \
             fs include 2>/dev/null | head -n 80 || true
-
+          
           if ! grep -Rqs --include='Kconfig*' \
               -E 'config[[:space:]]+KSU_SUSFS([[:space:]]|$)' \
               . 2>/dev/null; then
@@ -172,75 +169,73 @@ jobs:
           else
             echo "Trial 18 v3: existing KSU_SUSFS Kconfig definition found."
           fi
-
+          
           echo "Trial 18 v3: proven Project-Xed SUSFS kernel integration imported."
-
 
       - name: Trial 18 v3 add KSUN SUSFS Kconfig glue
         run: |
           set -euxo pipefail
-
+          
           KCFG="KernelSU-Next/kernel/Kconfig"
           test -f "$KCFG"
-
+          
           if ! grep -qE '^config[[:space:]]+KSU_SUSFS([[:space:]]|$)' "$KCFG"; then
             cat >> "$KCFG" <<'EOF'
-
+          
           config KSU_SUSFS
               bool "KernelSU SUSFS support"
               depends on KSU
               default n
               help
                 Enable SUSFS kernel integration for KernelSU.
-
+          
           EOF
             echo "Trial 18 v3: added CONFIG_KSU_SUSFS to $KCFG"
           else
             echo "Trial 18 v3: CONFIG_KSU_SUSFS already exists in $KCFG"
           fi
-
+          
           echo "=== Kconfig glue verification ==="
           grep -nA8 -B2 -E '^config[[:space:]]+KSU_SUSFS([[:space:]]|$)' "$KCFG"
-
 
       - name: Trial 19 wire SUSFS v1.5.7 feature Kconfig
         run: |
           set -euxo pipefail
-
+          
           KCFG="KernelSU-Next/kernel/Kconfig"
           test -f "$KCFG"
           test -f fs/susfs.c
           test -f include/linux/susfs.h
-
+          
           echo "=== SUSFS feature macros referenced by imported Project-Xed tree ==="
           grep -RhoE 'CONFIG_KSU_SUSFS_[A-Z0-9_]+' \
             fs include KernelSU-Next/kernel 2>/dev/null \
             | sort -u | tee /tmp/susfs_feature_macros.txt || true
-
+          
           add_cfg () {
             sym="$1"
             prompt="$2"
             macro="CONFIG_${sym}"
-
+          
             if ! grep -qx "$macro" /tmp/susfs_feature_macros.txt; then
               echo "skip $sym: imported v1.5.7 tree does not reference it"
               return 0
             fi
-
+          
             if grep -qE "^config[[:space:]]+$sym([[:space:]]|$)" "$KCFG"; then
               echo "skip $sym: already defined"
               return 0
             fi
-
+          
             cat >> "$KCFG" <<EOF
-
+          
           config $sym
               bool "$prompt"
               depends on KSU_SUSFS
               default y
           EOF
           }
-
+          
           add_cfg KSU_SUSFS_SUS_PATH "Hide suspicious paths"
           add_cfg KSU_SUSFS_SUS_MOUNT "Hide suspicious mounts"
           add_cfg KSU_SUSFS_SUS_KSTAT "Spoof suspicious kstat"
@@ -250,25 +245,23 @@ jobs:
           add_cfg KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS "Hide KSU/SUSFS kallsyms"
           add_cfg KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG "Spoof cmdline/bootconfig"
           add_cfg KSU_SUSFS_OPEN_REDIRECT "Enable open redirect"
-
+          
           echo "=== Final SUSFS Kconfig symbols ==="
           grep -nE '^config KSU_SUSFS($|_)' "$KCFG" || true
-
-
 
       - name: Trial 19 v3 backport SUSFS inotify fdinfo to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           FILE="fs/notify/fdinfo.c"
           test -f "$FILE"
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("fs/notify/fdinfo.c")
           s = p.read_text()
-
+          
           # Project-Xed SUSFS was synced against a newer inotify fdinfo API
           # which has inotify_mark_user_mask(). Samsung 4.19 instead computes
           # the userspace-visible mask directly as mark->mask & IN_ALL_EVENTS.
@@ -284,12 +277,12 @@ jobs:
           if needle not in s:
               raise SystemExit("Trial19 v3: inotify local-variable anchor not found")
           s = s.replace(needle, repl, 1)
-
+          
           # Replace both SUSFS and normal fdinfo uses of the newer helper.
           if "inotify_mark_user_mask(mark)" not in s:
               raise SystemExit("Trial19 v3: expected inotify_mark_user_mask() calls not found")
           s = s.replace("inotify_mark_user_mask(mark)", "mark->mask & IN_ALL_EVENTS")
-
+          
           # The original Samsung 4.19 block declares mask after the SUSFS
           # out_seq_printf label once the Xed patch is applied. Remove that
           # declaration and use the function-scope variable instead.
@@ -311,10 +304,10 @@ jobs:
               if label not in s:
                   raise SystemExit("Trial19 v3: out_seq_printf label anchor not found")
               s = s.replace(label, label + "\t\tmask = mark->mask & IN_ALL_EVENTS;\n", 1)
-
+          
           p.write_text(s)
           PY
-
+          
           echo "=== Trial 19 v3 fdinfo compatibility verification ==="
           if grep -n 'inotify_mark_user_mask' "$FILE"; then
             echo "::error::newer inotify_mark_user_mask helper remains"
@@ -323,17 +316,16 @@ jobs:
           grep -n -A60 -B8 'static void inotify_fdinfo' "$FILE" | head -n 100
           grep -q 'u32 mask;' "$FILE"
           grep -q 'mark->mask & IN_ALL_EVENTS' "$FILE"
-
+          
           echo "Trial 19 v3: SUSFS inotify fdinfo adapted to Samsung 4.19 API."
-
 
       - name: Trial 19 v5 bridge SUSFS v1.5.7 to pinned KSUN 3.3.0
         run: |
           set -euxo pipefail
-
+          
           cat > /tmp/trial19_bridge.py <<'PY'
           from pathlib import Path
-
+          
           sel = Path("KernelSU-Next/kernel/selinux/selinux.c")
           s = sel.read_text()
           if "bool susfs_is_current_ksu_domain(void)" not in s:
@@ -343,7 +335,7 @@ jobs:
           {
               return is_ksu_domain();
           }
-
+          
           bool susfs_is_current_zygote_domain(void)
           {
               return is_zygote(current_cred());
@@ -351,7 +343,7 @@ jobs:
           #endif
           """
               sel.write_text(s)
-
+          
           ku = Path("KernelSU-Next/kernel/feature/kernel_umount.c")
           s = ku.read_text()
           marker = "void ksu_try_umount(const char *mnt, bool check_mnt, int flags, uid_t uid)"
@@ -371,19 +363,19 @@ jobs:
               try_umount(mnt, flags);
           }
           #endif
-
+          
           """
               s = s[:pos] + add + s[pos:]
               ku.write_text(s)
-
+          
           ns = Path("fs/namespace.c")
           s = ns.read_text()
           s = s.replace("susfs_try_umount_all", "susfs_try_umount")
           ns.write_text(s)
           PY
-
+          
           python3 /tmp/trial19_bridge.py
-
+          
           echo "=== Trial 19 v5 bridge verification ==="
           grep -n 'bool susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c
           grep -n 'bool susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c
@@ -392,12 +384,10 @@ jobs:
           grep -n 'susfs_try_umount(current_uid().val)' fs/namespace.c
           echo "Trial 19 v5: SUSFS/KSUN bridge installed."
 
-
-
       - name: Trial 34 transplant SUSFS v2.2.0 after proven v1.5.7 import/bridge
         run: |
           set -euxo pipefail
-
+          
           # Trial34 ordering guard: the known-good Project-Xed v1.5.7 import and
           # KSUN bridge MUST already have run before we snapshot/replace the core.
           test -f include/linux/susfs.h
@@ -406,7 +396,7 @@ jobs:
           grep -q '#define SUSFS_VERSION "v1.5.7"' include/linux/susfs.h
           grep -q 'Trial19v5' KernelSU-Next/kernel/supercall/supercall.c || true
           echo "Trial34: confirmed v1.5.7 core exists before v2.2.0 transplant"
-
+          
           # First v2.x migration gate.
           #
           # IMPORTANT:
@@ -421,19 +411,19 @@ jobs:
           # SIGPIPE from `git log`. Pin the resolved full SHA directly.
           SUSFS_V220_BRANCH="gki-android14-5.15"
           SUSFS_V220_COMMIT="dbd8552d63ba7fcbc259aef2324867076b62fce5"
-
+          
           rm -rf /tmp/susfs-v220
           git clone --filter=blob:none --single-branch --branch "${SUSFS_V220_BRANCH}" \
             --depth=250 https://gitlab.com/simonpunk/susfs4ksu.git /tmp/susfs-v220
-
+          
           # Verify the pinned commit is present in the fetched branch history.
           git -C /tmp/susfs-v220 cat-file -e "${SUSFS_V220_COMMIT}^{commit}" || {
             echo "Trial34: pinned SUSFS v2.2.0 commit is not present in fetched history"
             exit 1
           }
-
+          
           git -C /tmp/susfs-v220 checkout --detach "${SUSFS_V220_COMMIT}"
-
+          
           echo "=== Pinned SUSFS v2.2.0 source ==="
           git -C /tmp/susfs-v220 log -1 --format='%H %s'
           test "$(git -C /tmp/susfs-v220 rev-parse HEAD)" = "${SUSFS_V220_COMMIT}"
@@ -443,19 +433,19 @@ jobs:
           grep -nE \
             'SUSFS_MAGIC|CMD_SUSFS_ADD_SUS_PATH_LOOP|CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS|CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING|CMD_SUSFS_ADD_SUS_MAP' \
             /tmp/susfs-v220/kernel_patches/include/linux/susfs_def.h
-
+          
           grep -q '#define SUSFS_VERSION "v2.2.0"' \
             /tmp/susfs-v220/kernel_patches/include/linux/susfs.h || {
               echo "Trial34: pinned source is not SUSFS v2.2.0"
               exit 1
             }
-
+          
           # Preserve the complete known-good v1.5.7 core for comparison in CI logs.
           mkdir -p /tmp/susfs-v157-known-good
           cp -f include/linux/susfs.h /tmp/susfs-v157-known-good/
           cp -f include/linux/susfs_def.h /tmp/susfs-v157-known-good/
           cp -f fs/susfs.c /tmp/susfs-v157-known-good/
-
+          
           # Core transplant only. Do NOT import the GKI 5.15 kernel patch or upstream
           # KernelSU patch; our Samsung 4.19 integration must be ported deliberately.
           cp -f /tmp/susfs-v220/kernel_patches/include/linux/susfs.h \
@@ -464,13 +454,13 @@ jobs:
             include/linux/susfs_def.h
           cp -f /tmp/susfs-v220/kernel_patches/fs/susfs.c \
             fs/susfs.c
-
+          
           echo "=== v1.5.7 -> v2.2.0 ABI delta summary ==="
           diff -u /tmp/susfs-v157-known-good/susfs_def.h include/linux/susfs_def.h \
             | sed -n '1,260p' || true
           diff -u /tmp/susfs-v157-known-good/susfs.h include/linux/susfs.h \
             | sed -n '1,320p' || true
-
+          
           echo "=== Trial34 invariants ==="
           grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
           grep -q '#define SUSFS_MAGIC 0xFAFAFAFA' include/linux/susfs_def.h
@@ -478,30 +468,77 @@ jobs:
           grep -q 'CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS' include/linux/susfs_def.h
           grep -q 'CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING' include/linux/susfs_def.h
           grep -q 'CMD_SUSFS_ADD_SUS_MAP' include/linux/susfs_def.h
-
+          
           # v2.x changes the ABI materially. Ensure we do not accidentally leave the
           # old Trial20-30 synthetic dispatcher in supercall.c.
           if grep -q 'Trial30 SUSFS:' KernelSU-Next/kernel/supercall/supercall.c; then
             echo "Trial34: stale Trial30 SUSFS dispatcher still present"
             exit 1
           fi
-
+          
           # Keep the Samsung-dangerous probe suppressions untouched.
           grep -R -n \
             'Samsung 4.19.*reboot\|Samsung 4.19.*input_event\|slow_avc_audit\|syscall_regfunc' \
             KernelSU-Next/kernel | head -120 || true
-
+          
           echo "Trial34: v2.2.0 core transplant complete; continuing to compile gate."
+
+      - name: Trial 35 port SUSFS fdinfo to v2.2.0 state model
+        run: |
+          set -euxo pipefail
+          
+          FILE="fs/notify/fdinfo.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'AS_FLAGS_SUS_KSTAT' include/linux/susfs_def.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+          
+          python3 - <<'PY'
+          from pathlib import Path
+          
+          p = Path("fs/notify/fdinfo.c")
+          s = p.read_text()
+          
+          old = """\t\tif (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
+          \t\t\t\tunlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
+          """
+          new = """\t\tif (likely(test_thread_flag(TIF_PROC_UMOUNTED)) &&
+          \t\t\t\tunlikely(test_bit(AS_FLAGS_SUS_KSTAT,
+          \t\t\t\t\t\t  &inode->i_mapping->flags))) {
+          """
+          
+          if old not in s:
+              raise SystemExit("Trial35: v1.5.7 fdinfo task/inode state check not found")
+          
+          s = s.replace(old, new, 1)
+          
+          for stale in (
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC",
+              "INODE_STATE_SUS_KSTAT",
+          ):
+              if stale in s:
+                  raise SystemExit(f"Trial35: stale v1.5.7 fdinfo symbol remains: {stale}")
+          
+          p.write_text(s)
+          PY
+          
+          echo "=== Trial 35 fdinfo v2.2.0 state-model verification ==="
+          grep -n -A10 -B6 'TIF_PROC_UMOUNTED' "$FILE"
+          grep -q 'test_bit(AS_FLAGS_SUS_KSTAT' "$FILE"
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          ! grep -q 'INODE_STATE_SUS_KSTAT' "$FILE"
+          
+          echo "Trial35: fdinfo migrated from v1.5.7 task/inode flags to SUSFS v2.2.0 thread/address-space flags."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/infra/file_wrapper.c")
           s = p.read_text()
-
+          
           def once(old, new, label):
               global s
               n = s.count(old)
@@ -509,7 +546,7 @@ jobs:
                   raise SystemExit(f"{label}: expected 1 match, got {n}")
               s = s.replace(old, new, 1)
               print("patched:", label)
-
+          
           old = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
           static int ksu_wrapper_iopoll(struct kiocb *kiocb, struct io_comp_batch *icb,
                                         unsigned int v)
@@ -551,7 +588,7 @@ jobs:
           #endif
           '''
           once(old, new, "iopoll implementation")
-
+          
           start = s.index("// no REMAP_FILE_DEDUP: use file_in")
           end_marker = "\n}\n\nstatic int ksu_wrapper_fadvise"
           end = s.index(end_marker, start) + 3
@@ -562,7 +599,7 @@ jobs:
               "#endif\n"
           ) + s[end:]
           print("patched: remap_file_range implementation")
-
+          
           old = "    p->ops.iopoll = fp->f_op->iopoll ? ksu_wrapper_iopoll : NULL;\n"
           new = (
               "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)\n"
@@ -570,7 +607,7 @@ jobs:
               "#endif\n"
           )
           once(old, new, "iopoll assignment")
-
+          
           old = '''    p->ops.remap_file_range =
                   fp->f_op->remap_file_range ? ksu_wrapper_remap_file_range : NULL;
           '''
@@ -580,7 +617,7 @@ jobs:
           #endif
           '''
           once(old, new, "remap_file_range assignment")
-
+          
           old = '''    const struct qstr qname = QSTR_INIT(name, strlen(name));
               int error;
           '''
@@ -590,7 +627,7 @@ jobs:
           #endif
           '''
           once(old, new, "anon inode declarations")
-
+          
           old = '''    inode->i_flags &= ~S_PRIVATE;
               error = security_inode_init_security_anon(inode, &qname, context_inode);
               if (error) {
@@ -613,7 +650,7 @@ jobs:
               return inode;
           '''
           once(old, new, "anon inode security")
-
+          
           old = "    struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);\n"
           new = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
               struct inode_security_struct *wrapper_sec = selinux_inode(wrapper_inode);
@@ -623,7 +660,7 @@ jobs:
           #endif
           '''
           once(old, new, "inode security access")
-
+          
           p.write_text(s)
           PY
 
@@ -633,7 +670,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           from textwrap import dedent
-
+          
           p = Path("KernelSU-Next/kernel/manager/pkg_observer.c")
           p.write_text(dedent(r'''
           // SPDX-License-Identifier: GPL-2.0
@@ -645,9 +682,9 @@ jobs:
           #include <linux/string.h>
           #include "klog.h"
           #include "manager/throne_tracker.h"
-
+          
           #define MASK_SYSTEM (FS_CREATE | FS_MOVE | FS_EVENT_ON_CHILD)
-
+          
           struct watch_dir {
               const char *path;
               u32 mask;
@@ -655,14 +692,14 @@ jobs:
               struct inode *inode;
               struct fsnotify_mark *mark;
           };
-
+          
           static struct fsnotify_group *g;
-
+          
           static void ksu_free_mark(struct fsnotify_mark *mark)
           {
               kfree(mark);
           }
-
+          
           static int ksu_handle_event(struct fsnotify_group *group,
                                       struct inode *inode,
                                       u32 mask,
@@ -678,35 +715,35 @@ jobs:
               (void)data_type;
               (void)cookie;
               (void)iter_info;
-
+          
               if (!file_name || (mask & FS_ISDIR))
                   return 0;
-
+          
               if (!strcmp((const char *)file_name, "packages.list"))
                   track_throne(false);
-
+          
               return 0;
           }
-
+          
           static const struct fsnotify_ops ksu_ops = {
               .handle_event = ksu_handle_event,
               .free_mark = ksu_free_mark,
           };
-
+          
           static int add_mark_on_inode(struct inode *inode,
                                        u32 mask,
                                        struct fsnotify_mark **out)
           {
               struct fsnotify_mark *m;
               int ret;
-
+          
               m = kzalloc(sizeof(*m), GFP_KERNEL);
               if (!m)
                   return -ENOMEM;
-
+          
               fsnotify_init_mark(m, g);
               m->mask = mask;
-
+          
               ret = fsnotify_add_mark(m,
                                       &inode->i_fsnotify_marks,
                                       FSNOTIFY_OBJ_TYPE_INODE,
@@ -715,44 +752,44 @@ jobs:
                   fsnotify_put_mark(m);
                   return ret;
               }
-
+          
               *out = m;
               return 0;
           }
-
+          
           static struct watch_dir g_watch = {
               .path = "/data/system",
               .mask = MASK_SYSTEM,
           };
-
+          
           int ksu_observer_init(void)
           {
               int ret;
-
+          
               g = fsnotify_alloc_group(&ksu_ops);
               if (IS_ERR(g))
                   return PTR_ERR(g);
-
+          
               ret = kern_path(g_watch.path, LOOKUP_FOLLOW, &g_watch.kpath);
               if (ret)
                   goto err_group;
-
+          
               g_watch.inode = d_inode(g_watch.kpath.dentry);
               if (!g_watch.inode) {
                   ret = -ENOENT;
                   goto err_path;
               }
-
+          
               ihold(g_watch.inode);
-
+          
               ret = add_mark_on_inode(g_watch.inode,
                                       g_watch.mask,
                                       &g_watch.mark);
               if (ret)
                   goto err_inode;
-
+          
               return 0;
-
+          
           err_inode:
               iput(g_watch.inode);
               g_watch.inode = NULL;
@@ -764,34 +801,34 @@ jobs:
               g = NULL;
               return ret;
           }
-
+          
           void __exit ksu_observer_exit(void)
           {
               if (!g)
                   return;
-
+          
               if (g_watch.mark) {
                   fsnotify_destroy_mark(g_watch.mark, g);
                   fsnotify_put_mark(g_watch.mark);
                   g_watch.mark = NULL;
               }
-
+          
               if (g_watch.inode) {
                   iput(g_watch.inode);
                   g_watch.inode = NULL;
               }
-
+          
               if (g_watch.kpath.dentry) {
                   path_put(&g_watch.kpath);
                   memset(&g_watch.kpath, 0, sizeof(g_watch.kpath));
               }
-
+          
               fsnotify_put_group(g);
               g = NULL;
           }
           ''').lstrip())
           PY
-
+          
           grep -nE '^[[:space:]]*\.handle_event[[:space:]]*=' \
             KernelSU-Next/kernel/manager/pkg_observer.c
           grep -nE '^[[:space:]]*\.free_mark[[:space:]]*=' \
@@ -800,16 +837,16 @@ jobs:
       - name: Backport KSUN seccomp cache syscall limits to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/infra/seccomp_cache.c")
           s = p.read_text()
-
+          
           needle = '#include <linux/seccomp.h>\n'
           compat = r'''#include <asm/unistd.h>
-
+          
           /*
            * Samsung 4.19 predates SECCOMP_ARCH_*_NR.
            * arm64 already exposes the equivalent syscall counts.
@@ -817,35 +854,35 @@ jobs:
           #ifndef SECCOMP_ARCH_NATIVE_NR
           #define SECCOMP_ARCH_NATIVE_NR NR_syscalls
           #endif
-
+          
           #if defined(CONFIG_COMPAT) && !defined(SECCOMP_ARCH_COMPAT)
           #define SECCOMP_ARCH_COMPAT
           #endif
-
+          
           #if defined(SECCOMP_ARCH_COMPAT) && !defined(SECCOMP_ARCH_COMPAT_NR)
           #define SECCOMP_ARCH_COMPAT_NR __NR_compat_syscalls
           #endif
           '''
-
+          
           if needle not in s:
               raise SystemExit("linux/seccomp.h include not found")
-
+          
           if "#define SECCOMP_ARCH_NATIVE_NR NR_syscalls" not in s:
               s = s.replace(needle, needle + compat, 1)
-
+          
           p.write_text(s)
           PY
-
+          
           echo "=== Patched seccomp_cache.c ==="
           sed -n '1,100p' KernelSU-Next/kernel/infra/seccomp_cache.c
-
+          
           grep -q '#define SECCOMP_ARCH_NATIVE_NR NR_syscalls' \
             KernelSU-Next/kernel/infra/seccomp_cache.c
 
       - name: Verify existing strncpy_from_user_nofault backport
         run: |
           set -euxo pipefail
-
+          
           # This Samsung 4.19 tree already carries the compatibility helper
           # in include/linux/pgtable.h. Do not redefine it in KSUN sucompat.c.
           grep -n "ksu_strncpy_from_user_nofault" include/linux/pgtable.h
@@ -854,23 +891,23 @@ jobs:
       - name: Backport KSUN mount namespace code to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/infra/su_mount_ns.c")
           s = p.read_text()
-
+          
           old_include = '#include <uapi/linux/mount.h>\n'
           new_include = (
               '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\n'
               '#include <uapi/linux/mount.h>\n'
               '#endif\n'
           )
-
+          
           if old_include in s and '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\n#include <uapi/linux/mount.h>' not in s:
               s = s.replace(old_include, new_include, 1)
-
+          
           old_extern = (
               'extern int path_mount(const char *dev_name, struct path *path,\n'
               '                      const char *type_page, unsigned long flags,\n'
@@ -883,21 +920,21 @@ jobs:
               '                      void *data_page);\n'
               '#endif\n'
           )
-
+          
           if old_extern in s and '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)\nextern int path_mount' not in s:
               s = s.replace(old_extern, new_extern, 1)
-
+          
           fn_start = s.find("static void ksu_mnt_ns_individual(void)\n{")
           if fn_start == -1:
               raise SystemExit("ksu_mnt_ns_individual() not found")
-
+          
           fn_end_marker = "\n}\n\nvoid setup_mount_ns"
           fn_end = s.find(fn_end_marker, fn_start)
           if fn_end == -1:
               raise SystemExit("end of ksu_mnt_ns_individual() not found")
-
+          
           old_fn = s[fn_start:fn_end + 2]
-
+          
           if "Samsung 4.19: individual mount namespace mode is unavailable" not in old_fn:
               prefix = "static void ksu_mnt_ns_individual(void)\n{"
               body = old_fn[len(prefix):-2]
@@ -918,26 +955,26 @@ jobs:
                   "}"
               )
               s = s[:fn_start] + new_fn + s[fn_end + 2:]
-
+          
           p.write_text(s)
           PY
-
+          
           echo "=== Patched su_mount_ns.c ==="
           sed -n '1,220p' KernelSU-Next/kernel/infra/su_mount_ns.c
-
+          
           grep -q 'Samsung 4.19: individual mount namespace mode is unavailable' \
             KernelSU-Next/kernel/infra/su_mount_ns.c
 
       - name: Backport KSUN allowlist helpers to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/policy/allowlist.c")
           s = p.read_text()
-
+          
           # put_task_struct() is declared in sched/task.h on Linux 4.19.
           if "#include <linux/sched/task.h>" not in s:
               marker = "#include <linux/task_work.h>\n"
@@ -948,14 +985,14 @@ jobs:
                   marker + "#include <linux/sched/task.h>\n#include <linux/string.h>\n",
                   1,
               )
-
+          
           # Linux 4.19 task_work_add() takes a bool notify argument.
           # true is the old-kernel equivalent needed for this persistent
           # allowlist task-work callback.
           old = "task_work_add(tsk, cb, TWA_RESUME)"
           if old in s:
               s = s.replace(old, "task_work_add(tsk, cb, true)", 1)
-
+          
           # strscpy_pad() is newer than this Samsung 4.19 tree.
           # Preserve its zero-padding behavior using memset + strscpy(),
           # both available in Linux 4.19.
@@ -966,7 +1003,7 @@ jobs:
           )
           if old in s:
               s = s.replace(old, new, 1)
-
+          
           # The fallthrough macro is unavailable in this old tree/compiler
           # combination. The recognized comment keeps the intended switch
           # fall-through without relying on the newer macro.
@@ -976,7 +1013,7 @@ jobs:
                   "        /* fall through */\n",
                   1,
               )
-
+          
           # Fail loudly if any known incompatible construct remains.
           leftovers = [
               "TWA_RESUME",
@@ -986,14 +1023,14 @@ jobs:
           bad = [x for x in leftovers if x in s]
           if bad:
               raise SystemExit(f"allowlist compatibility patch incomplete: {bad}")
-
+          
           p.write_text(s)
           PY
-
+          
           echo "=== Patched allowlist.c compatibility area ==="
           sed -n '1,35p' KernelSU-Next/kernel/policy/allowlist.c
           sed -n '460,520p' KernelSU-Next/kernel/policy/allowlist.c
-
+          
           grep -q '#include <linux/sched/task.h>' KernelSU-Next/kernel/policy/allowlist.c
           grep -q 'task_work_add(tsk, cb, true)' KernelSU-Next/kernel/policy/allowlist.c
           grep -q 'strscpy(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len)' KernelSU-Next/kernel/policy/allowlist.c
@@ -1001,13 +1038,13 @@ jobs:
       - name: Backport KSUN app profile seccomp handling to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/policy/app_profile.c")
           s = p.read_text()
-
+          
           # Linux 4.19 struct seccomp only contains mode + filter.
           # KSUN v3.3.0 also clears the newer filter_count field, which does
           # not exist on this Samsung tree. Keep the assignment for newer
@@ -1018,32 +1055,32 @@ jobs:
               "    atomic_set(&current->seccomp.filter_count, 0);\n"
               "#endif\n"
           )
-
+          
           if old in s and "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\n    atomic_set(&current->seccomp.filter_count, 0);" not in s:
               s = s.replace(old, new, 1)
-
+          
           if "atomic_set(&current->seccomp.filter_count, 0);" not in s:
               raise SystemExit("filter_count statement not found after patch")
-
+          
           p.write_text(s)
           PY
-
+          
           echo "=== Patched app_profile.c seccomp area ==="
           sed -n '68,105p' KernelSU-Next/kernel/policy/app_profile.c
-
+          
           grep -q '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)' \
             KernelSU-Next/kernel/policy/app_profile.c
 
       - name: Backport KSUN ksud nofault uaccess helpers to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/runtime/ksud_integration.c")
           s = p.read_text()
-
+          
           # Samsung 4.19 does not expose the newer *_user_nofault helpers
           # used by KSUN v3.3.0. This code executes in normal process
           # context while inspecting/updating the current task's userspace,
@@ -1056,13 +1093,13 @@ jobs:
               "copy_to_user_nofault(st_size_ptr, &new_size, sizeof(long))":
                   "copy_to_user(st_size_ptr, &new_size, sizeof(long))",
           }
-
+          
           changed = 0
           for old, new in replacements.items():
               if old in s:
                   s = s.replace(old, new)
                   changed += 1
-
+          
           if changed != 3:
               missing = [old for old in replacements if old in s]
               # If an expression was already patched, don't fail just for that.
@@ -1076,13 +1113,13 @@ jobs:
                   raise SystemExit(
                       f"ksud uaccess patch incomplete; remaining helpers: {leftovers}"
                   )
-
+          
           p.write_text(s)
           PY
-
+          
           echo "=== Patched ksud_integration.c uaccess calls ==="
           grep -nE 'strncpy_from_user\(|copy_(from|to)_user\('             KernelSU-Next/kernel/runtime/ksud_integration.c | head -30
-
+          
           if grep -qE 'strncpy_from_user_nofault|copy_from_user_nofault|copy_to_user_nofault'             KernelSU-Next/kernel/runtime/ksud_integration.c; then
             echo "ERROR: unsupported nofault helper remains"
             exit 1
@@ -1091,12 +1128,12 @@ jobs:
       - name: Backport KSUN SELinux core to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           KVER_GUARD = "KERNEL_VERSION(5, 10, 0)"
-
+          
           # ------------------------------------------------------------
           # 1) selinux.c: selinux_cred() does not exist on old SELinux.
           #    Linux 4.19 stores task_security_struct directly in
@@ -1104,7 +1141,7 @@ jobs:
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/selinux/selinux.c")
           s = p.read_text()
-
+          
           compat = '''
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
           static inline struct task_security_struct *ksu_selinux_cred_compat(const struct cred *cred)
@@ -1113,7 +1150,7 @@ jobs:
           }
           #define selinux_cred(cred) ksu_selinux_cred_compat(cred)
           #endif
-
+          
           '''
           marker = '#include "ksu.h"\n'
           if "ksu_selinux_cred_compat" not in s:
@@ -1121,7 +1158,7 @@ jobs:
                   raise SystemExit("selinux.c include anchor not found")
               s = s.replace(marker, marker + compat, 1)
           p.write_text(s)
-
+          
           # ------------------------------------------------------------
           # 2) sepolicy.h: kernels before the policy-pointer SELinux
           #    conversion do not define struct selinux_policy. Provide
@@ -1129,15 +1166,15 @@ jobs:
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/selinux/sepolicy.h")
           s = p.read_text()
-
+          
           if '#include <linux/version.h>' not in s:
               s = s.replace('#include <linux/types.h>\n',
                             '#include <linux/types.h>\n#include <linux/version.h>\n', 1)
-
+          
           if '#include "ss/services.h"' not in s:
               s = s.replace('#include "ss/policydb.h"\n',
                             '#include "ss/policydb.h"\n#include "ss/services.h"\n', 1)
-
+          
           compat_struct = '''
           /*
            * Linux 4.19 keeps the active policy inside struct selinux_ss
@@ -1153,13 +1190,13 @@ jobs:
               u32 latest_granting;
           };
           #endif
-
+          
           '''
           anchor2 = '#include "ss/services.h"\n'
           if "Linux 4.19 keeps the active policy" not in s:
               s = s.replace(anchor2, anchor2 + compat_struct, 1)
           p.write_text(s)
-
+          
           # ------------------------------------------------------------
           # 3) sepolicy.c: newer Android policydb compatibility flags are
           #    not fields of the old 4.19 policydb. They are not needed
@@ -1167,7 +1204,7 @@ jobs:
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/selinux/sepolicy.c")
           s = p.read_text()
-
+          
           old_cfg = '''        if (old_pol->policydb.android_netlink_route) {
               pr_info("adding POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE\\n");
               *config_ptr |= POLICYDB_CONFIG_ANDROID_NETLINK_ROUTE;
@@ -1183,7 +1220,7 @@ jobs:
           '''
               s = s.replace(old_cfg, new_cfg, 1)
           p.write_text(s)
-
+          
           # ------------------------------------------------------------
           # 4) rules.c:
           #    5.10+ -> keep KSUN v3.3.0's copy/swap policy mechanism.
@@ -1193,49 +1230,49 @@ jobs:
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/selinux/rules.c")
           s = p.read_text()
-
+          
           if "ksu_rules_419" not in s:
               fn_start = s.find("void apply_kernelsu_rules()\n{")
               if fn_start < 0:
                   raise SystemExit("apply_kernelsu_rules() not found")
-
+          
               fn_end_marker = "\n}\n\n#define KSU_SEPOLICY_MAX_BATCH_SIZE"
               fn_end = s.find(fn_end_marker, fn_start)
               if fn_end < 0:
                   raise SystemExit("end of apply_kernelsu_rules() not found")
-
+          
               original_fn = s[fn_start:fn_end + 2]
-
+          
               rule_start = original_fn.find("    db = &pol->policydb;\n")
               rule_end = original_fn.find("    rcu_assign_pointer(selinux_state.policy, pol);")
               if rule_start < 0 or rule_end < 0:
                   raise SystemExit("could not isolate KSUN rule block")
-
+          
               rule_block = original_fn[
                   rule_start + len("    db = &pol->policydb;\n"):rule_end
               ]
-
+          
               old_fn = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
           static DEFINE_MUTEX(ksu_rules_419);
-
+          
           void apply_kernelsu_rules()
           {
               struct selinux_ss *ss;
               struct selinux_policy old_wrap;
               struct policydb *db;
-
+          
               if (!getenforce()) {
                   pr_info("SELinux permissive or disabled, apply rules!\\n");
               }
-
+          
               mutex_lock(&ksu_rules_419);
-
+          
               ss = rcu_dereference(selinux_state.ss);
               if (!ss) {
                   pr_err("SELinux 4.19 state has no security server\\n");
                   goto out_unlock_419;
               }
-
+          
               /*
                * Serialize the pristine policy into a detached
                * struct selinux_policy before KSUN changes the live db.
@@ -1247,7 +1284,7 @@ jobs:
               old_wrap.policydb = ss->policydb;
               old_wrap.map = ss->map;
               old_wrap.latest_granting = ss->latest_granting;
-
+          
               backup_sepolicy = ksu_dup_sepolicy(&old_wrap);
               if (IS_ERR(backup_sepolicy)) {
                   pr_err("failed to create 4.19 backup sepolicy: %ld\\n",
@@ -1274,22 +1311,22 @@ jobs:
                       }
                   }
               }
-
+          
               db = &ss->policydb;
           ''' + rule_block + '''
               reset_avc_cache();
-
+          
           out_unlock_419:
               mutex_unlock(&ksu_rules_419);
           }
           #else
           ''' + original_fn + '''
           #endif'''
-
+          
               s = s[:fn_start] + old_fn + s[fn_end + 2:]
-
+          
           p.write_text(s)
-
+          
           # ------------------------------------------------------------
           # 5) selinux_hide.c:
           #    Old selinux_state has ->ss instead of ->policy, and the
@@ -1297,7 +1334,7 @@ jobs:
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
           s = p.read_text()
-
+          
           status_compat = '''
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
           #define KSU_SELINUX_STATUS_LOCK (selinux_state.ss->status_lock)
@@ -1307,18 +1344,18 @@ jobs:
           #define KSU_SELINUX_STATUS_LOCK (selinux_state.status_lock)
           #define KSU_SELINUX_STATUS_PAGE (selinux_state.status_page)
           #endif
-
+          
           '''
           hide_anchor = "static DEFINE_MUTEX(selinux_hide_mutex);\n"
           if "KSU_SELINUX_STATUS_LOCK" not in s:
               if hide_anchor not in s:
                   raise SystemExit("selinux_hide.c anchor not found")
               s = s.replace(hide_anchor, status_compat + hide_anchor, 1)
-
+          
           # Use the version-neutral status aliases everywhere.
           s = s.replace("selinux_state.status_lock", "KSU_SELINUX_STATUS_LOCK")
           s = s.replace("selinux_state.status_page", "KSU_SELINUX_STATUS_PAGE")
-
+          
           old_fake = '''#else
               fake_state.initialized = true;
               fake_state.policy = backup_sepolicy;
@@ -1345,13 +1382,13 @@ jobs:
           #endif
           #endif'''
               s = s.replace(old_fake, new_fake, 1)
-
+          
           if "fake_state.policy = backup_sepolicy;" in s and \
              "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)" not in s:
               raise SystemExit("SELinux Hide fake_state compatibility patch failed")
-
+          
           p.write_text(s)
-
+          
           # ------------------------------------------------------------
           # Verification
           # ------------------------------------------------------------
@@ -1365,15 +1402,15 @@ jobs:
               "KernelSU-Next/kernel/feature/selinux_hide.c":
                   "ksu_fake_ss_419",
           }
-
+          
           for name, needle in grep_targets.items():
               data = Path(name).read_text()
               if needle not in data:
                   raise SystemExit(f"verification failed: {needle} missing from {name}")
-
+          
           print("Samsung 4.19 SELinux compatibility cluster patched successfully")
           PY
-
+          
           echo "=== SELinux 4.19 compatibility verification ==="
           grep -n 'ksu_selinux_cred_compat' KernelSU-Next/kernel/selinux/selinux.c
           grep -n 'ksu_rules_419' KernelSU-Next/kernel/selinux/rules.c
@@ -1383,22 +1420,22 @@ jobs:
       - name: Fix Samsung 4.19 SELinux pointer layout and runtime policy handler
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           # ------------------------------------------------------------
           # A) rules.c: this Samsung 4.19 tree stores selinux_ss.sidtab
           #    as a pointer, unlike vanilla 4.19's embedded struct.
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/selinux/rules.c")
           s = p.read_text()
-
+          
           s = s.replace(
               "old_wrap.sidtab = &ss->sidtab;",
               "old_wrap.sidtab = ss->sidtab;",
           )
-
+          
           # ------------------------------------------------------------
           # B) handle_sepolicy(): KSUN v3.3.0's runtime policy handler
           #    separately uses the newer selinux_state.policy +
@@ -1409,19 +1446,19 @@ jobs:
           start = s.find("int handle_sepolicy(void __user *user_data, u64 data_len)\n{")
           if start < 0:
               raise SystemExit("handle_sepolicy() not found")
-
+          
           # Find the function's final closing brace from its known tail.
           tail = "\n    return ret;\n}"
           end = s.find(tail, start)
           if end < 0:
               raise SystemExit("handle_sepolicy() end not found")
           end += len(tail)
-
+          
           original = s[start:end]
-
+          
           if "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)" not in original:
               old_lock_block = '''    mutex_lock(&selinux_state.policy_mutex);
-
+          
               old_pol = selinux_state.policy;
               pol = ksu_dup_sepolicy(rcu_dereference_protected(
                   old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
@@ -1432,7 +1469,7 @@ jobs:
               }
               db = &pol->policydb;
           '''
-
+          
               new_lock_block = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               mutex_lock(&ksu_rules_419);
               if (!selinux_state.ss) {
@@ -1443,7 +1480,7 @@ jobs:
               db = &selinux_state.ss->policydb;
           #else
               mutex_lock(&selinux_state.policy_mutex);
-
+          
               old_pol = selinux_state.policy;
               pol = ksu_dup_sepolicy(rcu_dereference_protected(
                   old_pol, lockdep_is_held(&selinux_state.policy_mutex)));
@@ -1455,35 +1492,35 @@ jobs:
               db = &pol->policydb;
           #endif
           '''
-
+          
               if old_lock_block not in original:
                   raise SystemExit("handle_sepolicy lock block not found")
               original = original.replace(old_lock_block, new_lock_block, 1)
-
+          
               old_commit = '''    rcu_assign_pointer(selinux_state.policy, pol);
               synchronize_rcu();
               ksu_destroy_sepolicy(old_pol);
-
+          
               reset_avc_cache();
               ret = success_cmd_count;
               goto out_unlock;
-
+          
           out_drop_new_policy:
               ksu_destroy_sepolicy(pol);
           out_unlock:
               mutex_unlock(&selinux_state.policy_mutex);
           '''
-
+          
               new_commit = '''#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
               rcu_assign_pointer(selinux_state.policy, pol);
               synchronize_rcu();
               ksu_destroy_sepolicy(old_pol);
           #endif
-
+          
               reset_avc_cache();
               ret = success_cmd_count;
               goto out_unlock;
-
+          
           out_drop_new_policy:
           #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
               ksu_destroy_sepolicy(pol);
@@ -1495,15 +1532,15 @@ jobs:
               mutex_unlock(&selinux_state.policy_mutex);
           #endif
           '''
-
+          
               if old_commit not in original:
                   raise SystemExit("handle_sepolicy commit block not found")
               original = original.replace(old_commit, new_commit, 1)
-
+          
               s = s[:start] + original + s[end:]
-
+          
           p.write_text(s)
-
+          
           # ------------------------------------------------------------
           # C) selinux_hide.c: fix Samsung's sidtab pointer layout and a
           #    macro replacement bug from the previous compatibility step.
@@ -1511,7 +1548,7 @@ jobs:
           # ------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
           h = p.read_text()
-
+          
           h = h.replace(
               "#define KSU_SELINUX_STATUS_LOCK (KSU_SELINUX_STATUS_LOCK)",
               "#define KSU_SELINUX_STATUS_LOCK (selinux_state.status_lock)",
@@ -1520,21 +1557,21 @@ jobs:
               "#define KSU_SELINUX_STATUS_PAGE (KSU_SELINUX_STATUS_PAGE)",
               "#define KSU_SELINUX_STATUS_PAGE (selinux_state.status_page)",
           )
-
+          
           h = h.replace(
               "ksu_fake_ss_419.sidtab = *backup_sepolicy->sidtab;",
               "ksu_fake_ss_419.sidtab = backup_sepolicy->sidtab;",
           )
-
+          
           p.write_text(h)
-
+          
           # ------------------------------------------------------------
           # Verification: make sure no unguarded new-policy API remains
           # in the 4.19 runtime path and SELinux Hide is still present.
           # ------------------------------------------------------------
           r = Path("KernelSU-Next/kernel/selinux/rules.c").read_text()
           h = Path("KernelSU-Next/kernel/feature/selinux_hide.c").read_text()
-
+          
           if "old_wrap.sidtab = &ss->sidtab;" in r:
               raise SystemExit("wrong Samsung sidtab address-of remains")
           if "old_wrap.sidtab = ss->sidtab;" not in r:
@@ -1547,10 +1584,10 @@ jobs:
               raise SystemExit("SELinux Hide 4.19 sidtab pointer fix missing")
           if "KSU_FEATURE_SELINUX_HIDE" not in h:
               raise SystemExit("SELinux Hide feature unexpectedly missing")
-
+          
           print("Samsung 4.19 SELinux v2 compatibility fixes applied")
           PY
-
+          
           echo "=== Verification ==="
           grep -n 'old_wrap.sidtab' KernelSU-Next/kernel/selinux/rules.c
           grep -n 'mutex_lock(&ksu_rules_419)' KernelSU-Next/kernel/selinux/rules.c
@@ -1560,20 +1597,20 @@ jobs:
       - name: Backport KSUN sepolicy internals to Samsung 4.19 flex-array policydb
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/selinux/sepolicy.c")
           s = p.read_text()
-
+          
           # Samsung 4.19 uses the old flex_array based SELinux policydb.
           if "#include <linux/flex_array.h>" not in s:
               inc = "#include <linux/vmalloc.h>\n"
               if inc not in s:
                   raise SystemExit("sepolicy include anchor missing")
               s = s.replace(inc, inc + "#include <linux/flex_array.h>\n", 1)
-
+          
           def find_definition(text, signature, start_at=0):
               """
               Find a real C function definition, never a forward declaration.
@@ -1586,21 +1623,21 @@ jobs:
                   pos = text.find(signature, pos)
                   if pos < 0:
                       raise SystemExit(f"function definition not found: {signature}")
-
+          
                   semi = text.find(";", pos)
                   brace = text.find("{", pos)
-
+          
                   # A declaration terminates with ';' before any opening body.
                   if brace >= 0 and (semi < 0 or brace < semi):
                       return pos
-
+          
                   pos += len(signature)
-
+          
           def replace_function(text, signature, next_signature, replacement):
               start = find_definition(text, signature)
               end = find_definition(text, next_signature, start + len(signature))
               return text[:start] + replacement.rstrip() + "\n\n" + text[end:]
-
+          
           # ----------------------------------------------------------
           # 1) New v3.3.0 avtab pruning assumes htable is a C pointer
           #    array. 4.19 uses struct flex_array *. Older KernelSU did
@@ -1625,7 +1662,7 @@ jobs:
               return node->datum.u.data == 0U;
           #endif
           }
-
+          
           static bool remove_avtab_node(struct policydb *db, struct avtab_node *node)
           {
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
@@ -1642,25 +1679,25 @@ jobs:
               struct avtab removed = {};
               struct avtab_node *n;
               struct avtab_node *prev;
-
+          
               ret = avtab_alloc(&removed, 1);
               if (ret < 0)
                   return false;
-
+          
               for (i = 0; i < db->te_avtab.nslot; i++) {
                   prev = NULL;
                   for (n = db->te_avtab.htable[i]; n; prev = n, n = n->next) {
                       if (n != node)
                           continue;
-
+          
                       if (prev)
                           prev->next = n->next;
                       else
                           db->te_avtab.htable[i] = n->next;
-
+          
                       if (db->te_avtab.nel > 0)
                           db->te_avtab.nel--;
-
+          
                       if ((n->key.specified & AVTAB_XPERMS) &&
                           n->datum.u.xperms) {
                           shrink_size += sizeof(u8) + sizeof(u8) +
@@ -1676,7 +1713,7 @@ jobs:
                       return true;
                   }
               }
-
+          
               avtab_destroy(&removed);
               return false;
           #endif
@@ -1688,7 +1725,7 @@ jobs:
               "static bool add_rule(struct policydb *db,",
               remove_419,
           )
-
+          
           # ----------------------------------------------------------
           # 2) Filename transitions. v3.3.0 only carries the modern
           #    filename_trans_key representation. Restore the proven
@@ -1701,7 +1738,7 @@ jobs:
           {
               struct type_datum *src, *tgt, *def;
               struct class_datum *cls;
-
+          
               src = symtab_search(&db->p_types, s);
               if (!src) {
                   pr_warn("source type %s does not exist\n", s);
@@ -1722,33 +1759,33 @@ jobs:
                   pr_warn("default type %s does not exist\n", d);
                   return false;
               }
-
+          
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 7, 0)
               {
                   struct filename_trans key;
                   struct filename_trans_datum *trans;
-
+          
                   key.ttype = tgt->value;
                   key.tclass = cls->value;
                   key.name = (char *)o;
-
+          
                   trans = hashtab_search(db->filename_trans, &key);
                   if (!trans) {
                       struct filename_trans *new_key;
-
+          
                       trans = kzalloc(sizeof(*trans), GFP_ATOMIC);
                       if (!trans) {
                           pr_err("add_filename_trans: datum alloc failed\n");
                           return false;
                       }
-
+          
                       new_key = kmalloc(sizeof(*new_key), GFP_ATOMIC);
                       if (!new_key) {
                           kfree(trans);
                           pr_err("add_filename_trans: key alloc failed\n");
                           return false;
                       }
-
+          
                       *new_key = key;
                       new_key->name = kstrdup(key.name, GFP_ATOMIC);
                       if (!new_key->name) {
@@ -1756,7 +1793,7 @@ jobs:
                           kfree(trans);
                           return false;
                       }
-
+          
                       trans->otype = def->value;
                       if (hashtab_insert(db->filename_trans, new_key, trans)) {
                           kfree(new_key->name);
@@ -1767,7 +1804,7 @@ jobs:
                   } else {
                       trans->otype = def->value;
                   }
-
+          
                   return ebitmap_set_bit(&db->filename_trans_ttypes,
                                          src->value - 1, 1) == 0;
               }
@@ -1776,11 +1813,11 @@ jobs:
                   struct filename_trans_key key;
                   struct filename_trans_datum *last = NULL;
                   struct filename_trans_datum *trans;
-
+          
                   key.ttype = tgt->value;
                   key.tclass = cls->value;
                   key.name = (char *)o;
-
+          
           #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
                   trans = policydb_filenametr_search(db, &key);
           #else
@@ -1796,10 +1833,10 @@ jobs:
                       last = trans;
                       trans = trans->next;
                   }
-
+          
                   if (!trans) {
                       struct filename_trans_key *new_key;
-
+          
                       trans = kzalloc(sizeof(*trans), GFP_ATOMIC);
                       if (!trans)
                           return false;
@@ -1820,7 +1857,7 @@ jobs:
                       hashtab_insert(&db->filename_trans, new_key, trans,
                                      filenametr_key_params);
                   }
-
+          
                   db->compat_filename_trans_count++;
                   return ebitmap_set_bit(&trans->stypes,
                                          src->value - 1, 1) == 0;
@@ -1834,7 +1871,7 @@ jobs:
               "static bool add_genfscon(struct policydb *db,",
               filename_compat,
           )
-
+          
           # ----------------------------------------------------------
           # 3) add_type(). <5.1 stores type_attr_map_array,
           #    type_val_to_struct_array, and sym_val_to_name in
@@ -1847,28 +1884,28 @@ jobs:
               struct type_datum *type = symtab_search(&db->p_types, type_name);
               u32 value;
               char *key;
-
+          
               if (type) {
                   pr_warn("Type %s already exists\n", type_name);
                   return true;
               }
-
+          
               value = ++db->p_types.nprim;
               type = kzalloc(sizeof(*type), GFP_ATOMIC);
               if (!type)
                   return false;
-
+          
               type->primary = 1;
               type->value = value;
               type->attribute = attr;
-
+          
               key = kstrdup(type_name, GFP_ATOMIC);
               if (!key)
                   return false;
-
+          
               if (symtab_insert(&db->p_types, key, type))
                   return false;
-
+          
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
               {
                   struct flex_array *new_attr;
@@ -1877,7 +1914,7 @@ jobs:
                   struct flex_array *old_fa;
                   int j, i;
                   void *old_elem;
-
+          
                   new_attr = flex_array_alloc(sizeof(struct ebitmap),
                                               db->p_types.nprim,
                                               GFP_ATOMIC | __GFP_ZERO);
@@ -1889,7 +1926,7 @@ jobs:
                                                GFP_ATOMIC | __GFP_ZERO);
                   if (!new_attr || !new_types || !new_names)
                       return false;
-
+          
                   if (flex_array_prealloc(new_attr, 0, db->p_types.nprim,
                                           GFP_ATOMIC | __GFP_ZERO) ||
                       flex_array_prealloc(new_types, 0, db->p_types.nprim,
@@ -1898,7 +1935,7 @@ jobs:
                                           db->symtab[SYM_TYPES].nprim,
                                           GFP_ATOMIC | __GFP_ZERO))
                       return false;
-
+          
                   if (db->type_attr_map_array) {
                       for (j = 0;
                            j < db->type_attr_map_array->total_nr_elements;
@@ -1909,7 +1946,7 @@ jobs:
                                              GFP_ATOMIC | __GFP_ZERO);
                       }
                   }
-
+          
                   if (db->type_val_to_struct_array) {
                       for (j = 0;
                            j < db->type_val_to_struct_array->total_nr_elements;
@@ -1921,7 +1958,7 @@ jobs:
                                                  GFP_ATOMIC | __GFP_ZERO);
                       }
                   }
-
+          
                   if (db->sym_val_to_name[SYM_TYPES]) {
                       for (j = 0; j < value - 1; j++) {
                           old_elem =
@@ -1932,43 +1969,43 @@ jobs:
                                                  GFP_ATOMIC | __GFP_ZERO);
                       }
                   }
-
+          
                   old_fa = db->type_attr_map_array;
                   db->type_attr_map_array = new_attr;
                   if (old_fa)
                       flex_array_free(old_fa);
-
+          
                   ebitmap_init(flex_array_get(db->type_attr_map_array,
                                               value - 1));
                   if (ebitmap_set_bit(
                           flex_array_get(db->type_attr_map_array, value - 1),
                           value - 1, 1))
                       return false;
-
+          
                   old_fa = db->type_val_to_struct_array;
                   db->type_val_to_struct_array = new_types;
                   if (old_fa)
                       flex_array_free(old_fa);
-
+          
                   if (flex_array_put_ptr(db->type_val_to_struct_array,
                                          value - 1, type,
                                          GFP_ATOMIC | __GFP_ZERO))
                       return false;
-
+          
                   old_fa = db->sym_val_to_name[SYM_TYPES];
                   db->sym_val_to_name[SYM_TYPES] = new_names;
                   if (old_fa)
                       flex_array_free(old_fa);
-
+          
                   if (flex_array_put_ptr(db->sym_val_to_name[SYM_TYPES],
                                          value - 1, key,
                                          GFP_ATOMIC | __GFP_ZERO))
                       return false;
-
+          
                   for (i = 0; i < db->p_roles.nprim; i++)
                       ebitmap_set_bit(&db->role_val_to_struct[i]->types,
                                       value - 1, 1);
-
+          
                   return true;
               }
           #else
@@ -1977,14 +2014,14 @@ jobs:
                   struct type_datum **new_type_val_to_struct;
                   char **new_val_to_name_types;
                   int i;
-
+          
                   new_type_attr_map_array =
                       ksu_kvrealloc(db->type_attr_map_array,
                                     value * sizeof(struct ebitmap),
                                     (value - 1) * sizeof(struct ebitmap));
                   if (!new_type_attr_map_array)
                       return false;
-
+          
                   new_type_val_to_struct =
                       ksu_kvrealloc(db->type_val_to_struct,
                                     sizeof(*db->type_val_to_struct) * value,
@@ -1992,29 +2029,29 @@ jobs:
                                         (value - 1));
                   if (!new_type_val_to_struct)
                       return false;
-
+          
                   new_val_to_name_types =
                       ksu_kvrealloc(db->sym_val_to_name[SYM_TYPES],
                                     sizeof(char *) * value,
                                     sizeof(char *) * (value - 1));
                   if (!new_val_to_name_types)
                       return false;
-
+          
                   db->type_attr_map_array = new_type_attr_map_array;
                   ebitmap_init(&db->type_attr_map_array[value - 1]);
                   ebitmap_set_bit(&db->type_attr_map_array[value - 1],
                                   value - 1, 1);
-
+          
                   db->type_val_to_struct = new_type_val_to_struct;
                   db->type_val_to_struct[value - 1] = type;
-
+          
                   db->sym_val_to_name[SYM_TYPES] = new_val_to_name_types;
                   db->sym_val_to_name[SYM_TYPES][value - 1] = key;
-
+          
                   for (i = 0; i < db->p_roles.nprim; ++i)
                       ebitmap_set_bit(&db->role_val_to_struct[i]->types,
                                       value - 1, 1);
-
+          
                   return true;
               }
           #endif
@@ -2026,7 +2063,7 @@ jobs:
               "static bool set_type_state(struct policydb *db,",
               add_type_compat,
           )
-
+          
           # ----------------------------------------------------------
           # 4) typeattribute map lookup also differs on flex-array
           #    policydb kernels.
@@ -2040,7 +2077,7 @@ jobs:
               struct hashtab_node *node;
               struct constraint_node *n;
               struct constraint_expr *e;
-
+          
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 1, 0)
               sattr = flex_array_get(db->type_attr_map_array,
                                      type->value - 1);
@@ -2049,9 +2086,9 @@ jobs:
           #endif
               if (!sattr)
                   return;
-
+          
               ebitmap_set_bit(sattr, attr->value - 1, 1);
-
+          
               ksu_hashtab_for_each(db->p_classes.table, node)
               {
                   struct class_datum *cls =
@@ -2074,7 +2111,7 @@ jobs:
               "static bool add_typeattribute(struct policydb *db,",
               typeattr_compat,
           )
-
+          
           # Validation of the compatibility paths.
           checks = [
               "struct filename_trans key;",
@@ -2085,7 +2122,7 @@ jobs:
           for needle in checks:
               if needle not in s:
                   raise SystemExit(f"missing expected compatibility code: {needle}")
-
+          
           # Guard against accidentally replacing top-of-file prototypes again.
           # Use the same declaration-aware definition finder as the patcher;
           # do not depend on C formatting or multiline signatures.
@@ -2096,26 +2133,26 @@ jobs:
               ("is_redundant_avtab_node", "static bool is_redundant_avtab_node("),
               ("remove_avtab_node", "static bool remove_avtab_node("),
           ]
-
+          
           for fn, sig in function_signatures:
               first = find_definition(s, sig)
-
+          
               # A second real definition would mean the workflow duplicated
               # the function instead of replacing its original body.
               try:
                   second = find_definition(s, sig, first + len(sig))
               except SystemExit:
                   second = -1
-
+          
               if second >= 0:
                   raise SystemExit(
                       f"{fn}: duplicate real function definition remains"
                   )
-
+          
           # These compatibility macros must appear before the patched functions.
           filename_def = find_definition(s, "static bool add_filename_trans(")
           typeattr_def = find_definition(s, "static bool add_typeattribute(")
-
+          
           if s.find("#define symtab_search") > filename_def:
               raise SystemExit(
                   "patched definitions appeared before symtab compatibility macros"
@@ -2124,11 +2161,11 @@ jobs:
               raise SystemExit(
                   "patched definitions appeared before hashtab compatibility macros"
               )
-
+          
           p.write_text(s)
           print("Samsung 4.19 flex-array SELinux policydb compatibility applied")
           PY
-
+          
           echo "=== sepolicy 4.19 compatibility verification ==="
           grep -n 'struct filename_trans key' KernelSU-Next/kernel/selinux/sepolicy.c
           grep -n 'type_val_to_struct_array' KernelSU-Next/kernel/selinux/sepolicy.c | head -10
@@ -2138,13 +2175,13 @@ jobs:
       - name: Backport KSUN SULog helpers to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/sulog/event.c")
           s = p.read_text()
-
+          
           # linux/minmax.h is newer than this Samsung 4.19 tree.
           # min()/min_t() are provided by linux/kernel.h on 4.19.
           s = s.replace(
@@ -2152,7 +2189,7 @@ jobs:
               "#include <linux/kernel.h>\n",
               1,
           )
-
+          
           # This Samsung 4.19 tree does not expose the newer nofault
           # user-string helper. SULog captures argv/filename in normal
           # process context, so the 4.19 strncpy_from_user() helper is
@@ -2165,7 +2202,7 @@ jobs:
               "(const void __user *)untagged_addr((unsigned long)filename_user), "
               "dst_len)",
           )
-
+          
           s = s.replace(
               "strncpy_from_user_nofault(arg, "
               "(const void __user *)untagged_addr((unsigned long)arg_user), "
@@ -2174,7 +2211,7 @@ jobs:
               "(const void __user *)untagged_addr((unsigned long)arg_user), "
               "sizeof(arg))",
           )
-
+          
           # Older 4.19 vendor trees may not provide the generic
           # untagged_addr() helper. Identity is correct for this old
           # arm64 userspace-access path and keeps the source portable.
@@ -2182,14 +2219,14 @@ jobs:
           #ifndef untagged_addr
           #define untagged_addr(addr) (addr)
           #endif
-
+          
           '''
           marker = '#include "sulog/event.h"\n'
           if "#ifndef untagged_addr" not in s:
               if marker not in s:
                   raise SystemExit("SULog include anchor not found")
               s = s.replace(marker, marker + compat, 1)
-
+          
           # Fail before compilation if the known 4.19-incompatible
           # constructs still remain in this file.
           if "#include <linux/minmax.h>" in s:
@@ -2198,11 +2235,11 @@ jobs:
               raise SystemExit("SULog nofault user-string helper still present")
           if "#include <linux/kernel.h>" not in s:
               raise SystemExit("linux/kernel.h compatibility include missing")
-
+          
           p.write_text(s)
           print("Samsung 4.19 SULog compatibility applied")
           PY
-
+          
           echo "=== SULog 4.19 verification ==="
           grep -n '#include <linux/kernel.h>' KernelSU-Next/kernel/sulog/event.c
           grep -n 'untagged_addr' KernelSU-Next/kernel/sulog/event.c | head -10
@@ -2211,13 +2248,13 @@ jobs:
       - name: Backport KSUN supercall task helpers to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/supercall/dispatch.c")
           s = p.read_text()
-
+          
           # Linux 4.19 exposes tasklist_lock and init_task through
           # sched/task.h, while task_pgrp()/task_session() are in
           # sched/signal.h. sched/signal.h includes sched/task.h, so
@@ -2231,7 +2268,7 @@ jobs:
                   marker + "#include <linux/sched/signal.h>\n",
                   1,
               )
-
+          
           # Verify the function that failed is still intact; this patch
           # only exposes the correct 4.19 declarations and does not
           # alter process-group/session semantics.
@@ -2247,11 +2284,11 @@ jobs:
                   raise SystemExit(
                       f"do_set_init_pgrp unexpectedly changed: {needle}"
                   )
-
+          
           p.write_text(s)
           print("Samsung 4.19 supercall task helper declarations enabled")
           PY
-
+          
           echo "=== supercall 4.19 verification ==="
           grep -n '#include <linux/sched/signal.h>' \
             KernelSU-Next/kernel/supercall/dispatch.c
@@ -2260,30 +2297,30 @@ jobs:
       - name: Backport KSUN supercall task_work API to Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
-
+          
           old = "task_work_add(current, &tw->cb, TWA_RESUME)"
           new = "task_work_add(current, &tw->cb, true)"
-
+          
           if old not in s:
               raise SystemExit("expected TWA_RESUME task_work_add call not found")
-
+          
           s = s.replace(old, new, 1)
-
+          
           if "TWA_RESUME" in s:
               raise SystemExit("unexpected remaining TWA_RESUME in supercall.c")
           if new not in s:
               raise SystemExit("4.19 task_work_add compatibility call missing")
-
+          
           p.write_text(s)
           print("Samsung 4.19 task_work API compatibility applied")
           PY
-
+          
           echo "=== supercall task_work 4.19 verification ==="
           grep -n 'task_work_add(current, &tw->cb, true)' \
             KernelSU-Next/kernel/supercall/supercall.c
@@ -2291,25 +2328,25 @@ jobs:
       - name: Backport 4.19 path_umount and seccomp release APIs
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           # ---- fs/namespace.c: backport path_umount() exactly around
           # the existing 4.19 do_umount() implementation.
           ns = Path("fs/namespace.c")
           s = ns.read_text()
-
+          
           if "int path_umount(struct path *path, int flags)" not in s:
               marker = "int ksys_umount(char __user *name, int flags)\n"
               if marker not in s:
                   raise SystemExit("ksys_umount anchor not found in fs/namespace.c")
-
+          
               compat = r'''
           static int ksu_can_umount_419(const struct path *path, int flags)
           {
               struct mount *mnt = real_mount(path->mnt);
-
+          
               if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
                   return -EINVAL;
               if (!may_mount())
@@ -2324,16 +2361,16 @@ jobs:
                   return -EPERM;
               return 0;
           }
-
+          
           int path_umount(struct path *path, int flags)
           {
               struct mount *mnt = real_mount(path->mnt);
               int ret;
-
+          
               ret = ksu_can_umount_419(path, flags);
               if (!ret)
                   ret = do_umount(mnt, flags);
-
+          
               /*
                * Match the later upstream path_umount() ownership model:
                * consume the path references without path_put(), because
@@ -2343,10 +2380,10 @@ jobs:
               mntput_no_expire(mnt);
               return ret;
           }
-
+          
           '''
               s = s.replace(marker, compat + marker, 1)
-
+          
           required_ns = [
               "static int ksu_can_umount_419(const struct path *path, int flags)",
               "int path_umount(struct path *path, int flags)",
@@ -2356,14 +2393,14 @@ jobs:
           for needle in required_ns:
               if needle not in s:
                   raise SystemExit(f"path_umount backport missing: {needle}")
-
+          
           ns.write_text(s)
-
+          
           # ---- KernelSU app_profile.c: Linux 4.19 exposes
           # put_seccomp_filter(), not seccomp_filter_release().
           ap = Path("KernelSU-Next/kernel/policy/app_profile.c")
           a = ap.read_text()
-
+          
           old = "    seccomp_filter_release(fake);\n"
           new = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)
               put_seccomp_filter(fake);
@@ -2371,22 +2408,22 @@ jobs:
               seccomp_filter_release(fake);
           #endif
           '''
-
+          
           if old not in a:
               raise SystemExit("seccomp_filter_release anchor not found")
           a = a.replace(old, new, 1)
-
+          
           if "put_seccomp_filter(fake);" not in a:
               raise SystemExit("4.19 seccomp release compatibility missing")
-
+          
           ap.write_text(a)
           print("Samsung 4.19 link-time API compatibility applied")
           PY
-
+          
           echo "=== path_umount verification ==="
           grep -n 'int path_umount(struct path' fs/namespace.c
           grep -n 'ksu_can_umount_419' fs/namespace.c
-
+          
           echo "=== seccomp release verification ==="
           grep -n -A6 -B2 'put_seccomp_filter(fake)' \
             KernelSU-Next/kernel/policy/app_profile.c
@@ -2394,19 +2431,19 @@ jobs:
       - name: Disable only KSUN reboot kprobe on Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
-
+          
           old = r'''void __init ksu_supercalls_init(void)
           {
               int rc;
-
+          
               ksu_supercall_dump_commands();
-
+          
               rc = register_kprobe(&reboot_kp);
               if (rc) {
                   pr_err("reboot kprobe failed: %d\n", rc);
@@ -2415,11 +2452,11 @@ jobs:
               }
           }
           '''
-
+          
           new = r'''void __init ksu_supercalls_init(void)
           {
               ksu_supercall_dump_commands();
-
+          
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
                * Samsung 4.19 / Exynos compatibility:
@@ -2448,14 +2485,14 @@ jobs:
           #endif
           }
           '''
-
+          
           if old not in s:
               raise SystemExit(
                   "exact upstream ksu_supercalls_init() not found; refusing unsafe edit"
               )
-
+          
           s = s.replace(old, new, 1)
-
+          
           required = [
               "ksu_supercall_dump_commands();",
               "register_kprobe(&reboot_kp)",
@@ -2464,11 +2501,11 @@ jobs:
           for needle in required:
               if needle not in s:
                   raise SystemExit(f"missing expected supercall code after patch: {needle}")
-
+          
           p.write_text(s)
           print("Samsung 4.19 reboot-kprobe compatibility patch applied")
           PY
-
+          
           echo "=== Supercall compatibility verification ==="
           grep -n -A36 'void __init ksu_supercalls_init' \
             KernelSU-Next/kernel/supercall/supercall.c
@@ -2476,50 +2513,50 @@ jobs:
       - name: Verify SELinux Hide remains fully enabled
         run: |
           set -euxo pipefail
-
+          
           HIDE="KernelSU-Next/kernel/feature/selinux_hide.c"
           INIT="KernelSU-Next/kernel/core/init.c"
           RULES="KernelSU-Next/kernel/selinux/rules.c"
-
+          
           echo "=== SELinux Hide verification ==="
-
+          
           grep -n 'ksu_register_feature_handler(&selinux_hide_handler)' "$HIDE"
           grep -n 'hook_selinux_status_open();' "$HIDE"
           grep -n 'ksu_patch_text(context_write' "$HIDE"
           grep -n 'ksu_patch_text(access_write' "$HIDE"
           grep -n 'ksu_lsm_hook(&selinux_setprocattr_hook)' "$HIDE"
-
+          
           echo "=== KernelSU init path verification ==="
           grep -n 'ksu_selinux_hide_init();' "$INIT"
           grep -n 'ksu_supercalls_init();' "$INIT"
           grep -n 'ksu_syscall_hook_manager_init();' "$INIT"
           grep -n 'ksu_ksud_init();' "$INIT"
           grep -n 'ksu_file_wrapper_init();' "$INIT"
-
+          
           echo "=== SELinux policy path verification ==="
           grep -n 'void apply_kernelsu_rules' "$RULES"
           grep -n 'backup_sepolicy' "$RULES" | head -n 10
-
+          
           if grep -q 'runtime init disabled' "$HIDE"; then
             echo "ERROR: SELinux Hide diagnostic-disable marker found"
             exit 1
           fi
-
+          
           if grep -q 'runtime enable blocked' "$HIDE"; then
             echo "ERROR: SELinux Hide runtime-enable block found"
             exit 1
           fi
-
+          
           if grep -q 'initial sepolicy rules skipped' "$RULES"; then
             echo "ERROR: initial sepolicy diagnostic skip found"
             exit 1
           fi
-
+          
           if grep -q 'all runtime initialization skipped' "$INIT"; then
             echo "ERROR: runtime-inert diagnostic marker found"
             exit 1
           fi
-
+          
           echo "SELinux Hide and full KSUN runtime remain enabled."
 
       - name: Restore SELinux Hide on full probe-safe KSUN runtime on Samsung 4.19
@@ -2527,17 +2564,17 @@ jobs:
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/core/init.c")
           s = p.read_text()
-
+          
           sig = "int __init kernelsu_init(void)\n{"
           pos = s.find(sig)
           if pos < 0:
               raise SystemExit("kernelsu_init() not found")
-
+          
           insert_at = pos + len(sig)
-
+          
           marker = r'''
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
@@ -2563,63 +2600,63 @@ jobs:
                * Stop before file wrapper.
                */
               ksu_late_loaded = false;
-
+          
               ksu_cred = prepare_creds();
               if (!ksu_cred) {
                   pr_err("KernelSU: diagnostic prepare_creds failed\n");
                   return -ENOSYS;
               }
-
+          
               pr_warn("KernelSU: Samsung 4.19 diagnostic: SELinux-Hide-restored begin\n");
-
+          
               ksu_init_symbol_resolver();
               pr_warn("KernelSU: diagnostic passed symbol_resolver\n");
-
+          
               ksu_syscall_hook_init();
               pr_warn("KernelSU: diagnostic passed syscall_hook\n");
-
+          
               ksu_feature_init();
               pr_warn("KernelSU: diagnostic passed feature_init\n");
-
+          
               ksu_sulog_init();
               pr_warn("KernelSU: diagnostic passed sulog_init\n");
-
+          
               ksu_adb_root_init();
               pr_warn("KernelSU: diagnostic passed adb_root_init\n");
-
+          
               ksu_lsm_hook_init();
               pr_warn("KernelSU: diagnostic passed lsm_hook_init\n");
-
+          
               ksu_selinux_hide_init();
               pr_warn("KernelSU: diagnostic passed selinux_hide_init\n");
-
+          
               ksu_supercalls_init();
               pr_warn("KernelSU: diagnostic passed supercalls_init (reboot kprobe disabled)\n");
-
+          
               ksu_syscall_hook_manager_init();
               pr_warn("KernelSU: diagnostic passed syscall_hook_manager_init (kretprobes disabled)\n");
-
+          
               ksu_allowlist_init();
               pr_warn("KernelSU: diagnostic passed allowlist_init\n");
-
+          
               ksu_throne_tracker_init();
               pr_warn("KernelSU: diagnostic passed throne_tracker_init\n");
-
+          
               ksu_ksud_init();
               pr_warn("KernelSU: diagnostic passed ksud_init (input_event kprobe disabled)\n");
-
+          
               ksu_file_wrapper_init();
               pr_warn("KernelSU: diagnostic passed file_wrapper_init\n");
-
+          
               pr_warn("KernelSU: Samsung 4.19 diagnostic: full probe-safe runtime including SELinux Hide passed init\n");
               return 0;
           #endif
           '''
-
+          
           s = s[:insert_at] + marker + s[insert_at:]
           p.write_text(s)
           PY
-
+          
           echo "=== SELinux Hide restored diagnostic verification ==="
           grep -n -A125 'int __init kernelsu_init' KernelSU-Next/kernel/core/init.c
           grep -n 'diagnostic passed\|SELinux-Hide-restored' KernelSU-Next/kernel/core/init.c
@@ -2631,13 +2668,13 @@ jobs:
           from pathlib import Path
           p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
           s = p.read_text()
-
+          
           old = '''#ifdef CONFIG_KRETPROBES
               syscall_regfunc_rp = init_kretprobe("syscall_regfunc", syscall_regfunc_handler);
               syscall_unregfunc_rp = init_kretprobe("syscall_unregfunc", syscall_unregfunc_handler);
           #endif
           '''
-
+          
           new = '''#ifdef CONFIG_KRETPROBES
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               pr_warn("hook_manager: Samsung 4.19 diagnostic: kretprobes skipped\\n");
@@ -2647,11 +2684,11 @@ jobs:
           #endif
           #endif
           '''
-
+          
           if old not in s:
               raise SystemExit("exact kretprobe init block not found")
           s = s.replace(old, new, 1)
-
+          
           for needle in [
               'register_trace_sys_enter(ksu_sys_enter_handler, NULL)',
               'ksu_setuid_hook_init();',
@@ -2661,42 +2698,42 @@ jobs:
           ]:
               if needle not in s:
                   raise SystemExit(f"required code missing: {needle}")
-
+          
           p.write_text(s)
           PY
-
+          
           grep -n -A70 'void __init ksu_syscall_hook_manager_init' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
 
       - name: Disable only KSUD input_event kprobe on Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/runtime/ksud_integration.c")
           s = p.read_text()
-
+          
           old = r'''void __init ksu_ksud_init()
           {
               int ret;
-
+          
               ksu_syscall_table_hook(__NR_read, ksu_sys_read, &orig_sys_read);
               ksu_syscall_table_hook(__NR_fstat, ksu_sys_fstat, &orig_sys_fstat);
-
+          
               ret = register_kprobe(&input_event_kp);
               pr_info("ksud: input_event_kp: %d\n", ret);
-
+          
               INIT_WORK(&stop_input_hook_work, do_stop_input_hook);
           }
           '''
-
+          
           new = r'''void __init ksu_ksud_init()
           {
               ksu_syscall_table_hook(__NR_read, ksu_sys_read, &orig_sys_read);
               ksu_syscall_table_hook(__NR_fstat, ksu_sys_fstat, &orig_sys_fstat);
-
+          
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
                * Samsung 4.19 / Exynos diagnostic:
@@ -2712,16 +2749,16 @@ jobs:
                   pr_info("ksud: input_event_kp: %d\n", ret);
               }
           #endif
-
+          
               INIT_WORK(&stop_input_hook_work, do_stop_input_hook);
           }
           '''
-
+          
           if old not in s:
               raise SystemExit("exact ksu_ksud_init() body not found; refusing unsafe edit")
-
+          
           s = s.replace(old, new, 1)
-
+          
           required = [
               "ksu_syscall_table_hook(__NR_read",
               "ksu_syscall_table_hook(__NR_fstat",
@@ -2732,11 +2769,11 @@ jobs:
           for needle in required:
               if needle not in s:
                   raise SystemExit(f"required KSUD code missing: {needle}")
-
+          
           p.write_text(s)
           print("KSUD input_event kprobe isolated successfully")
           PY
-
+          
           echo "=== KSUD input_event kprobe isolation verification ==="
           grep -n -A36 'void __init ksu_ksud_init' \
             KernelSU-Next/kernel/runtime/ksud_integration.c
@@ -2744,71 +2781,71 @@ jobs:
       - name: Verify full probe-safe runtime includes SELinux Hide
         run: |
           set -euxo pipefail
-
+          
           INIT="KernelSU-Next/kernel/core/init.c"
           HIDE="KernelSU-Next/kernel/feature/selinux_hide.c"
           KSUD="KernelSU-Next/kernel/runtime/ksud_integration.c"
-
+          
           grep -n 'ksu_selinux_hide_init();' "$INIT"
           grep -n 'ksu_file_wrapper_init();' "$INIT"
           grep -n 'ksu_ksud_init();' "$INIT"
           grep -n 'ksu_allowlist_init();' "$INIT"
           grep -n 'ksu_throne_tracker_init();' "$INIT"
-
+          
           grep -n 'ksu_register_feature_handler(&selinux_hide_handler)' "$HIDE"
           grep -n 'ksu_selinux_hide_handle_second_stage();' "$KSUD"
           grep -n 'apply_kernelsu_rules();' "$KSUD"
-
+          
           if grep -q 'SELinux Hide intentionally skipped' "$INIT"; then
             echo "ERROR: SELinux Hide skip marker still present"
             exit 1
           fi
-
+          
           echo "Full probe-safe runtime with SELinux Hide verified."
 
       - name: Test copy_to_user after fd_install on Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           # ---------------------------------------------------------------
           # supercall.h: expose the Samsung-safe reboot syscall handler.
           # ---------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/supercall/supercall.h")
           s = p.read_text()
-
+          
           old = '''// Install KSU fd to current process
           int ksu_install_fd(void);
-
+          
           void ksu_supercalls_init(void);
           '''
-
+          
           new = '''// Install KSU fd to current process
           int ksu_install_fd(void);
-
+          
           /*
            * Samsung 4.19 compatibility:
            * install the KSU control FD through the existing syscall dispatcher
            * instead of the unsafe reboot kprobe.
            */
           long ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs);
-
+          
           void ksu_supercalls_init(void);
           '''
-
+          
           if old not in s:
               raise SystemExit("supercall.h insertion anchor not found")
-
+          
           s = s.replace(old, new, 1)
-
+          
           if '#include <linux/ptrace.h>' not in s:
               s = s.replace('#include <linux/types.h>\n',
                             '#include <linux/types.h>\n#include <linux/ptrace.h>\n', 1)
-
+          
           p.write_text(s)
-
+          
           # ---------------------------------------------------------------
           # supercall.c:
           # Add a dispatcher hook that handles ONLY KSU_INSTALL_MAGIC1/2.
@@ -2819,22 +2856,22 @@ jobs:
           # ---------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
-
+          
           include_anchor = '#include "manager/manager_identity.h"\n'
           if include_anchor not in s:
               raise SystemExit("supercall.c include anchor not found")
-
+          
           if '#include "hook/syscall_hook.h"' not in s:
               s = s.replace(
                   include_anchor,
                   include_anchor + '#include "hook/syscall_hook.h"\n',
                   1
               )
-
+          
           func_anchor = '''static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)
           {
           '''
-
+          
           safe_func = r'''/*
            * Samsung 4.19 / Exynos compatibility transport.
            *
@@ -2847,17 +2884,17 @@ jobs:
               int magic1 = (int)PT_REGS_PARM1(regs);
               int magic2 = (int)PT_REGS_PARM2(regs);
               unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
-
+          
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
                   struct file *filp;
                   int fd = get_unused_fd_flags(O_CLOEXEC);
-
+          
                   pr_info("Samsung 4.19 diagnostic: get_unused_fd_flags -> %d\\n", fd);
-
+          
                   if (fd >= 0) {
                       filp = anon_inode_getfile("[ksu_driver]", &anon_ksu_fops,
                                                 NULL, O_RDWR | O_CLOEXEC);
-
+          
                       if (IS_ERR(filp)) {
                           pr_err("Samsung 4.19 diagnostic: anon_inode_getfile failed: %ld\\n",
                                  PTR_ERR(filp));
@@ -2866,7 +2903,7 @@ jobs:
                           pr_info("Samsung 4.19 diagnostic: before fd_install(%d)\\n", fd);
                           fd_install(fd, filp);
                           pr_info("Samsung 4.19 diagnostic: after fd_install(%d)\\n", fd);
-
+          
                           pr_info("Samsung 4.19 diagnostic: before copy_to_user fd reply\\n");
                           if (copy_to_user((int __user *)arg4, &fd, sizeof(fd)))
                               pr_err("Samsung 4.19 diagnostic: copy_to_user fd reply failed\\n");
@@ -2875,18 +2912,18 @@ jobs:
                       }
                   }
               }
-
+          
               return ksu_syscall_table[orig_nr](regs);
           }
-
+          
           '''
-
+          
           if func_anchor not in s:
               raise SystemExit("reboot_handler_pre anchor not found")
-
+          
           s = s.replace(func_anchor, safe_func + func_anchor, 1)
           p.write_text(s)
-
+          
           # ---------------------------------------------------------------
           # syscall_hook_manager.c:
           # Register __NR_reboot with the dispatcher only on old Samsung 4.19.
@@ -2894,7 +2931,7 @@ jobs:
           # ---------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
           s = p.read_text()
-
+          
           include_anchor = '#include "hook/syscall_event_bridge.h"\n'
           if include_anchor not in s:
               raise SystemExit("hook manager include anchor not found")
@@ -2904,12 +2941,12 @@ jobs:
                   include_anchor + '#include "supercall/supercall.h"\n',
                   1
               )
-
+          
           reg_anchor = '''    ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
           '''
-
+          
           reg_new = '''    ksu_register_syscall_hook(__NR_faccessat, ksu_hook_faccessat);
-
+          
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
                * Samsung 4.19: safe replacement for reboot_kp, used only to
@@ -2919,47 +2956,47 @@ jobs:
               pr_info("hook_manager: reboot install-FD syscall hook registered\\n");
           #endif
           '''
-
+          
           if reg_anchor not in s:
               raise SystemExit("hook manager registration anchor not found")
           s = s.replace(reg_anchor, reg_new, 1)
-
+          
           unreg_anchor = '''    ksu_unregister_syscall_hook(__NR_faccessat);
           '''
-
+          
           unreg_new = '''    ksu_unregister_syscall_hook(__NR_faccessat);
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               ksu_unregister_syscall_hook(__NR_reboot);
           #endif
           '''
-
+          
           if unreg_anchor not in s:
               raise SystemExit("hook manager unregister anchor not found")
           s = s.replace(unreg_anchor, unreg_new, 1)
-
+          
           p.write_text(s)
-
+          
           print("Samsung-safe install-FD syscall transport patch applied")
           PY
-
+          
           echo "=== Safe FD transport verification ==="
           grep -n -A45 'ksu_hook_reboot_install_fd' \
             KernelSU-Next/kernel/supercall/supercall.c
           grep -n -B5 -A18 '__NR_reboot' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
-
+          
           # Verify Samsung <5.10 takes the no-kprobe branch.
           python3 - <<'PY'
           from pathlib import Path
           s = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
-
+          
           start = s.find("void __init ksu_supercalls_init(void)")
           end = s.find("void __exit ksu_supercalls_exit", start)
           if start < 0 or end < 0:
               raise SystemExit("cannot locate ksu_supercalls_init for verification")
-
+          
           body = s[start:end]
-
+          
           required = [
               "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)",
               "reboot kprobe disabled for compatibility",
@@ -2969,20 +3006,20 @@ jobs:
           for needle in required:
               if needle not in body:
                   raise SystemExit(f"missing expected probe-safe structure: {needle}")
-
+          
           if body.index("reboot kprobe disabled for compatibility") > body.index("#else"):
               raise SystemExit("Samsung no-kprobe branch is not before #else")
-
+          
           if body.index("register_kprobe(&reboot_kp)") < body.index("#else"):
               raise SystemExit("unsafe reboot kprobe appears in Samsung <5.10 branch")
-
+          
           print("Verified: Samsung <5.10 branch does not register reboot kprobe")
           PY
-
+          
           # The reboot syscall route must remain registered.
           grep -q 'ksu_register_syscall_hook(__NR_reboot, ksu_hook_reboot_install_fd)' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
-
+          
           # Verify copy_to_user() is the only newly added primitive.
           python3 - <<'PY'
           from pathlib import Path
@@ -3010,69 +3047,68 @@ jobs:
           print("Verified: copy_to_user diagnostic only")
           PY
 
-
       - name: Trial 15 direct reboot syscall FD bootstrap for boot-time ksud
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           # supercall.h: declare the direct reboot syscall-table wrapper.
           # Pull in syscall_fn_t before exposing ksu_orig_reboot_syscall.
           p = Path("KernelSU-Next/kernel/supercall/supercall.h")
           s = p.read_text()
-
+          
           include_marker = '#include <linux/uaccess.h>\n'
           include_line = '#include "../hook/syscall_hook.h"\n'
           if include_line not in s:
               if include_marker not in s:
                   raise SystemExit("Trial 15 supercall.h include anchor not found")
               s = s.replace(include_marker, include_marker + include_line, 1)
-
+          
           old = '''long ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs);
-
+          
           void ksu_supercalls_init(void);
           '''
           new = '''long ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs);
           long ksu_sys_reboot_install_fd(const struct pt_regs *regs);
           extern syscall_fn_t ksu_orig_reboot_syscall;
-
+          
           void ksu_supercalls_init(void);
           '''
           if old not in s:
               raise SystemExit("Trial 15 supercall.h anchor not found")
           s = s.replace(old, new, 1)
           p.write_text(s)
-
+          
           # supercall.c: add a direct syscall-table wrapper which handles only
           # the KSU install-FD magic request, then calls the original reboot.
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
-
+          
           func_anchor = '''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
           {
           '''
           if func_anchor not in s:
               raise SystemExit("Trial 15 existing reboot dispatcher handler not found")
-
+          
           direct = r'''syscall_fn_t ksu_orig_reboot_syscall;
-
+          
           static void ksu_samsung419_install_driver_fd(const struct pt_regs *regs)
           {
               int magic1 = (int)PT_REGS_PARM1(regs);
               int magic2 = (int)PT_REGS_PARM2(regs);
               unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
-
+          
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == KSU_INSTALL_MAGIC2) {
                   struct file *filp;
                   int fd = get_unused_fd_flags(O_CLOEXEC);
-
+          
                   pr_info("Samsung 4.19 Trial15: direct reboot FD bootstrap entered, fd=%d\n", fd);
-
+          
                   if (fd < 0)
                       return;
-
+          
                   filp = anon_inode_getfile("[ksu_driver]", &anon_ksu_fops,
                                             NULL, O_RDWR | O_CLOEXEC);
                   if (IS_ERR(filp)) {
@@ -3081,9 +3117,9 @@ jobs:
                       put_unused_fd(fd);
                       return;
                   }
-
+          
                   fd_install(fd, filp);
-
+          
                   if (copy_to_user((int __user *)arg4, &fd, sizeof(fd))) {
                       pr_err("Samsung 4.19 Trial15: copy_to_user fd reply failed\n");
                   } else {
@@ -3092,41 +3128,41 @@ jobs:
                   }
               }
           }
-
+          
           long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
           {
               ksu_samsung419_install_driver_fd(regs);
-
+          
               if (likely(ksu_orig_reboot_syscall))
                   return ksu_orig_reboot_syscall(regs);
-
+          
               return -ENOSYS;
           }
-
+          
           '''
-
+          
           s = s.replace(func_anchor, direct + func_anchor, 1)
-
+          
           start = s.find("long __nocfi ksu_hook_reboot_install_fd")
           end = s.find("static int reboot_handler_pre", start)
           if start < 0 or end < 0:
               raise SystemExit("Trial 15 cannot isolate existing dispatcher handler")
-
+          
           replacement = r'''long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)
           {
               ksu_samsung419_install_driver_fd(regs);
               return ksu_syscall_table[orig_nr](regs);
           }
-
+          
           '''
           s = s[:start] + replacement + s[end:]
           p.write_text(s)
-
+          
           # syscall_hook_manager.c: replace dispatcher-only reboot registration
           # with direct sys_call_table patching on Samsung 4.19.
           p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
           s = p.read_text()
-
+          
           old = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
                * Samsung 4.19: safe replacement for reboot_kp, used only to
@@ -3136,7 +3172,7 @@ jobs:
               pr_info("hook_manager: reboot install-FD syscall hook registered\n");
           #endif
           '''
-
+          
           new = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               /*
                * Samsung 4.19 Trial 15:
@@ -3149,7 +3185,7 @@ jobs:
               pr_info("hook_manager: Trial15 direct reboot FD bootstrap installed\\n");
           #endif
           '''
-
+          
           # The source comments/spacing differ from the workflow's original
           # assumption. Replace the containing #if block by locating the
           # behavior line itself.
@@ -3167,12 +3203,12 @@ jobs:
           else:
               block_end += 1
           s = s[:block_start] + new + s[block_end:]
-
+          
           new_unreg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               ksu_syscall_table_unhook(__NR_reboot);
           #endif
           '''
-
+          
           target = "ksu_unregister_syscall_hook(__NR_reboot);"
           pos = s.find(target)
           if pos < 0:
@@ -3187,26 +3223,26 @@ jobs:
           else:
               block_end += 1
           s = s[:block_start] + new_unreg + s[block_end:]
-
+          
           p.write_text(s)
-
+          
           print("Trial 15 direct boot-time ksud FD bootstrap patch applied")
           PY
-
+          
           echo "=== Trial 15 direct reboot FD bootstrap verification ==="
           grep -n -A70 'ksu_samsung419_install_driver_fd' \
             KernelSU-Next/kernel/supercall/supercall.c
           grep -n -B8 -A18 'Trial15 direct reboot FD bootstrap installed' \
             KernelSU-Next/kernel/hook/syscall_hook_manager.c
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           sc = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
           hm = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c").read_text()
           sh = Path("KernelSU-Next/kernel/supercall/supercall.h").read_text()
           ksud = Path("KernelSU-Next/kernel/runtime/ksud_integration.c").read_text()
-
+          
           required_sc = [
               "ksu_samsung419_install_driver_fd",
               'anon_inode_getfile("[ksu_driver]"',
@@ -3219,7 +3255,7 @@ jobs:
           for needle in required_sc:
               if needle not in sc:
                   raise SystemExit(f"Trial 15 supercall verification missing: {needle}")
-
+          
           required_hm = [
               "ksu_syscall_table_hook(__NR_reboot",
               "(syscall_fn_t)ksu_sys_reboot_install_fd",
@@ -3229,12 +3265,12 @@ jobs:
           for needle in required_hm:
               if needle not in hm:
                   raise SystemExit(f"Trial 15 hook-manager verification missing: {needle}")
-
+          
           if '#include "../hook/syscall_hook.h"' not in sh:
               raise SystemExit("Trial 15 syscall_fn_t provider include missing")
           if "extern syscall_fn_t ksu_orig_reboot_syscall;" not in sh:
               raise SystemExit("Trial 15 original reboot declaration missing")
-
+          
           safeguards = [
               "reboot kprobe disabled for compatibility",
               "input_event kprobe skipped",
@@ -3243,22 +3279,21 @@ jobs:
           for needle in safeguards:
               if needle not in combined:
                   raise SystemExit(f"Trial 15 safeguard marker missing: {needle}")
-
+          
           print("Trial 15 verification passed: direct reboot FD bootstrap only")
           PY
-
 
       - name: Allow K02 and observe K03 event only on Samsung 4.19
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
           import re
-
+          
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           s = p.read_text()
-
+          
           pattern = re.compile(
               r'static\s+long\s+anon_ksu_ioctl\s*\(\s*struct\s+file\s*\*\s*filp\s*,\s*'
               r'unsigned\s+int\s+cmd\s*,\s*unsigned\s+long\s+arg\s*\)\s*\{\s*'
@@ -3266,13 +3301,13 @@ jobs:
               r'\(void\s+__user\s*\*\)\s*arg\s*\)\s*;\s*\}',
               re.S
           )
-
+          
           replacement = """static long anon_ksu_ioctl(struct file *filp, unsigned int cmd,
                                    unsigned long arg)
           {
           #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
               long ret;
-
+          
               /*
                * Samsung 4.19 diagnostic:
                * - K02 GET_INFO executes normally.
@@ -3283,14 +3318,14 @@ jobs:
                */
               if (cmd == 0x40004b0fU) {
                   struct ksu_get_wrapper_fd_cmd k15 = { 0 };
-
+          
                   pr_warn("Samsung 4.19 diagnostic: K15 GET_WRAPPER_FD entered arg=0x%lx\\n",
                           arg);
                   if (copy_from_user(&k15, (void __user *)arg, sizeof(k15))) {
                       pr_err("Samsung 4.19 diagnostic: K15 copy_from_user failed\\n");
                       return -EFAULT;
                   }
-
+          
                   pr_warn("Samsung 4.19 diagnostic: K15 request fd=%u flags=0x%x\\n",
                           k15.fd, k15.flags);
                   ret = ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
@@ -3298,7 +3333,7 @@ jobs:
                           ret);
                   return ret;
               }
-
+          
               if (cmd == 0x80104b02U || cmd == 0x80004b02U ||
                   cmd == 0x40004b03U || cmd == 0x80004b63U ||
                   cmd == 0x80004b05U || cmd == 0xc0004b0dU ||
@@ -3312,29 +3347,29 @@ jobs:
                           cmd, ret);
                   return ret;
               }
-
+          
               pr_warn("Samsung 4.19 diagnostic: blocked post-GET_WRAPPER_FD-K15 ioctl cmd=0x%x\\n", cmd);
               return -ENOTTY;
           #else
               return ksu_supercall_handle_ioctl(cmd, (void __user *)arg);
           #endif
           }"""
-
+          
           ns, n = pattern.subn(lambda _m: replacement, s, count=1)
           if n != 1:
               raise SystemExit("anon_ksu_ioctl anchor not found or changed")
-
+          
           p.write_text(ns)
           PY
-
+          
           echo "=== Samsung 4.19 TRIAL-13B GET_WRAPPER_FD K15 observer diagnostic ==="
           grep -n -A30 -B2 'static long anon_ksu_ioctl' \
             KernelSU-Next/kernel/supercall/supercall.c
-
+          
           grep -q 'allowing through GET_WRAPPER_FD K15 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'cmd == 0x40004b03U' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'blocked post-GET_WRAPPER_FD-K15 ioctl cmd=' KernelSU-Next/kernel/supercall/supercall.c
-
+          
           python3 - <<'PY'
           from pathlib import Path
           s = Path("KernelSU-Next/kernel/supercall/supercall.c").read_text()
@@ -3376,7 +3411,6 @@ jobs:
           print("Verified: previous safe ioctls + K15 observer enabled; later ioctls blocked")
           PY
 
-
       - name: Configure M127F kernel
         run: |
           set -euxo pipefail
@@ -3387,13 +3421,13 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
-
+          
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             exynos850-m12nsxx_defconfig
-
+          
           echo "=== KernelSU ==="
           grep -iE 'KSU|KERNELSU' .config || true
           echo "=== SELinux ==="
@@ -3403,12 +3437,10 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
-
-
       - name: Trial 19 v2 enable SUSFS v1.5.7 features after defconfig
         run: |
           set -euxo pipefail
-
+          
           export PLATFORM_VERSION=13
           export ANDROID_MAJOR_VERSION=t
           export ARCH=arm64
@@ -3416,12 +3448,12 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
           export PATH="$HOME/toolchain/bin:$PATH"
-
+          
           test -f .config
           echo "Trial 19 v2: .config exists after exynos850-m12nsxx_defconfig"
-
+          
           ./scripts/config --enable KSU_SUSFS
-
+          
           for sym in \
             KSU_SUSFS_SUS_PATH \
             KSU_SUSFS_SUS_MOUNT \
@@ -3437,44 +3469,44 @@ jobs:
               ./scripts/config --enable "$sym"
             fi
           done
-
+          
           # Keep SUS_SU off: this Samsung 4.19 build already uses our proven
           # non-kprobe KernelSU transport/hook path.
           ./scripts/config --disable KSU_SUSFS_SUS_SU || true
-
+          
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
-
+          
           echo "=== Trial 19 final SUSFS config ==="
           grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config | sort
-
+          
           grep -q '^CONFIG_KSU_SUSFS=y$' .config
-
+          
           if grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' .config; then
             echo "::error::SUS_SU must remain disabled on this Samsung 4.19 non-kprobe build."
             exit 1
           fi
-
+          
           echo "Trial 19 v2: SUSFS v1.5.7 features enabled after M127F defconfig; SUS_SU intentionally disabled."
 
       - name: Trial 18 v4 enable SUSFS core
         run: |
           set -euxo pipefail
-
+          
           test -x scripts/config
-
+          
           echo "=== SUSFS symbols available after proven import ==="
           grep -Rns --include='Kconfig*' \
             -E 'config[[:space:]]+KSU_SUSFS|KSU_SUSFS_' \
             . 2>/dev/null | head -n 160 || true
-
+          
           # Start with the exact core only. Optional hide/spoof switches remain
           # at their declared defaults for the first boot-safety validation.
           ./scripts/config --enable KSU_SUSFS
-
+          
           export PATH="$HOME/toolchain/bin:$PATH"
           export PLATFORM_VERSION=13
           export ANDROID_MAJOR_VERSION=t
@@ -3482,24 +3514,24 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
-
+          
           echo "Trial 18 v4: reusing Samsung Kconfig environment for olddefconfig"
           echo "PLATFORM_VERSION=$PLATFORM_VERSION ANDROID_MAJOR_VERSION=$ANDROID_MAJOR_VERSION"
-
+          
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
-
+          
           echo "=== Final Trial 18 v2 SUSFS configuration ==="
           grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config || true
-
+          
           if ! grep -q '^CONFIG_KSU_SUSFS=y$' .config; then
             echo "::error::Trial 18 v4: CONFIG_KSU_SUSFS=y was not retained by olddefconfig."
             exit 1
           fi
-
+          
           echo "Trial 18 v4: SUSFS core retained in final kernel config."
 
       - name: Make boot-completed handler track-throne-only on Samsung 4.19
@@ -3515,7 +3547,7 @@ jobs:
           if old not in s:
               raise SystemExit("original on_boot_completed body not found")
           p.write_text(s.replace(old, new, 1))
-
+          
           p = Path("KernelSU-Next/kernel/extras.c")
           s = p.read_text()
           old = '#ifdef CONFIG_KPROBES\n\tpr_info("avc_spoof/init: register slow_avc_audit kprobe!\\n");\n\tslow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);\n#endif'
@@ -3524,7 +3556,7 @@ jobs:
               raise SystemExit("AVC spoof kprobe registration block not found")
           p.write_text(s.replace(old, new, 1))
           PY2
-
+          
           grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
           grep -q 'on_boot_completed full-handler entered' KernelSU-Next/kernel/runtime/boot_event.c
           grep -nA8 -B4 'slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
@@ -3533,33 +3565,33 @@ jobs:
       - name: Trial 16 fix ARM64 4.19 section-mapped kernel address translation
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/hook/arm64/patch_memory.c")
           s = p.read_text()
-
+          
           pud_marker = '    pud = pud_offset(p4d, addr);\n'
           pud_insert = '    pud = pud_offset(p4d, addr);\n#if defined(pud_sect)\n    if (pud_sect(*pud)) {\n        unsigned long phys = __pud_to_phys(*pud) + (addr & ~PUD_MASK);\n        pr_info("Samsung 4.19 Trial16: PUD section VA 0x%lx -> PA 0x%lx\\n",\n                addr, phys);\n        return phys;\n    }\n#endif\n'
           if pud_marker not in s:
               raise SystemExit("Trial 16: PUD marker not found")
           s = s.replace(pud_marker, pud_insert, 1)
-
+          
           pmd_marker = '    pmd = pmd_offset(pud, addr);\n'
           pmd_insert = '    pmd = pmd_offset(pud, addr);\n#if defined(pmd_sect)\n    if (pmd_sect(*pmd)) {\n        unsigned long phys = __pmd_to_phys(*pmd) + (addr & ~PMD_MASK);\n        pr_info("Samsung 4.19 Trial16: PMD section VA 0x%lx -> PA 0x%lx\\n",\n                addr, phys);\n        return phys;\n    }\n#endif\n'
           if pmd_marker not in s:
               raise SystemExit("Trial 16: PMD marker not found")
           s = s.replace(pmd_marker, pmd_insert, 1)
-
+          
           p.write_text(s)
           print("Trial 16 ARM64 4.19 section mapping patch applied")
           PY
-
+          
           echo "=== Trial 16 patch verification ==="
           python3 - <<'PY'
           from pathlib import Path
-
+          
           s = Path("KernelSU-Next/kernel/hook/arm64/patch_memory.c").read_text()
           required = [
               '#if defined(pud_sect)',
@@ -3583,28 +3615,28 @@ jobs:
       - name: Trial 17 initialize SELinux status page through 4.19 lazy allocator
         run: |
           set -euxo pipefail
-
+          
           python3 - <<'PY'
           from pathlib import Path
-
+          
           p = Path("KernelSU-Next/kernel/feature/selinux_hide.c")
           s = p.read_text()
-
+          
           marker = "static void initialize_fake_status()\n{"
           if marker not in s:
               raise SystemExit("Trial 17 v2: initialize_fake_status function marker not found")
-
+          
           insert = 'static void initialize_fake_status()\n{\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n    /*\n     * Linux 4.19 SELinux creates its status page lazily. The Samsung 4.19\n     * compatibility layer may expose the page through KSU_SELINUX_STATUS_PAGE,\n     * so do not anchor this patch to the exact field/mutex spelling produced\n     * by earlier compatibility steps.\n     *\n     * selinux_kernel_status_page() takes the SELinux status mutex internally,\n     * therefore call it before the existing lock in this function.\n     */\n    if (!KSU_SELINUX_STATUS_PAGE) {\n        struct page *real_status =\n            selinux_kernel_status_page(&selinux_state);\n        if (real_status)\n            pr_info("Samsung 4.19 Trial17: real SELinux status page initialized lazily\\n");\n        else\n            pr_warn("Samsung 4.19 Trial17: selinux_kernel_status_page returned NULL\\n");\n    }\n#endif\n'
-
+          
           s = s.replace(marker, insert, 1)
           p.write_text(s)
           print("Trial 17 v2 lazy SELinux status-page patch applied")
           PY
-
+          
           echo "=== Trial 17 v2 patch verification ==="
           python3 - <<'PY'
           from pathlib import Path
-
+          
           s = Path("KernelSU-Next/kernel/feature/selinux_hide.c").read_text()
           required = [
               'static void initialize_fake_status()',
@@ -3617,7 +3649,7 @@ jobs:
           for needle in required:
               if needle not in s:
                   raise SystemExit(f"Trial 17 v2 verification missing: {needle}")
-
+          
           print("Trial 17 v2 verification passed")
           PY
 
@@ -3631,7 +3663,7 @@ jobs:
           export CC=clang
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
-
+          
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -3647,9 +3679,6 @@ jobs:
           test -s System.map
           test -e drivers/kernelsu
 
-          # drivers/kernelsu is a symlink to KernelSU-Next/kernel.
-          # Plain `find` does not descend through a command-line symlink,
-          # so follow it explicitly when checking generated KSUN objects.
           KSUN_OBJECT="$(
             find -L drivers/kernelsu -type f -name '*.o' -print -quit
           )"
@@ -3660,8 +3689,6 @@ jobs:
           )"
           test -n "$SELINUX_HIDE_OBJECT"
 
-          # Also verify that SELinux Hide made it into the final linked kernel,
-          # not merely that its object file was produced.
           if ! grep -Eq 'ksu_(selinux_hide|feature_selinux_hide)|selinux_hide' System.map; then
             echo "ERROR: SELinux Hide symbol not found in final System.map"
             exit 1
@@ -3670,7 +3697,6 @@ jobs:
           echo "KSUN object: $KSUN_OBJECT"
           echo "SELinux Hide object: $SELINUX_HIDE_OBJECT"
           echo "SELinux Hide symbols found in final linked kernel."
-
           ls -lh arch/arm64/boot/Image vmlinux System.map
           sha256sum arch/arm64/boot/Image
 
@@ -3689,7 +3715,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-34-SUSFS-V220-TRANSPLANT-ORDER-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-35-SUSFS-V220-FDINFO-STATE-MODEL.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3702,8 +3728,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-34-SUSFS-V220-TRANSPLANT-ORDER-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-34-SUSFS-V220-TRANSPLANT-ORDER-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-35-SUSFS-V220-FDINFO-STATE-MODEL
+          path: M127F-KSUN-v3.3.0-TRIAL-35-SUSFS-V220-FDINFO-STATE-MODEL.zip
           if-no-files-found: error
           compression-level: 0
 
