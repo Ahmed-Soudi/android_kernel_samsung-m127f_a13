@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 38 SUSFS v2.2.0 stat State Model Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 39 SUSFS v2.2.0 namei SUS Path State Model Port
 
 on:
   workflow_dispatch:
@@ -678,6 +678,60 @@ jobs:
           ! grep -q 'INODE_STATE_SUS_KSTAT' "$FILE"
 
           echo "Trial38: stat SUS_KSTAT handling migrated to TIF_PROC_UMOUNTED + AS_FLAGS_SUS_KSTAT."
+
+      - name: Trial 39 port SUSFS namei SUS_PATH state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/namei.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+          grep -q 'AS_FLAGS_SUS_PATH' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("fs/namei.c")
+          s = p.read_text()
+
+          old_task = "current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC"
+          task_count = s.count(old_task)
+          if task_count < 1:
+              raise SystemExit("Trial39: no old task-state checks found in fs/namei.c")
+
+          s = s.replace(old_task, "test_thread_flag(TIF_PROC_UMOUNTED)")
+
+          pat = re.compile(
+              r'([A-Za-z_][A-Za-z0-9_]*(?:(?:->|\.)[A-Za-z_][A-Za-z0-9_]*)*)'
+              r'->i_state\s*&\s*INODE_STATE_SUS_PATH'
+          )
+
+          s, path_count = pat.subn(
+              r'test_bit(AS_FLAGS_SUS_PATH, &\1->i_mapping->flags)',
+              s
+          )
+
+          if path_count < 1:
+              raise SystemExit("Trial39: no old SUS_PATH inode-state checks were migrated")
+
+          for sym in ("TASK_STRUCT_NON_ROOT_USER_APP_PROC", "INODE_STATE_SUS_PATH"):
+              if sym in s:
+                  raise SystemExit(f"Trial39: stale v1.5.7 symbol remains: {sym}")
+
+          p.write_text(s)
+          print(f"Trial39: migrated {task_count} task checks and {path_count} SUS_PATH inode checks")
+          PY
+
+          echo "=== Trial 39 namei v2.2.0 state-model verification ==="
+          grep -n -E -A2 -B2 'TIF_PROC_UMOUNTED|AS_FLAGS_SUS_PATH' "$FILE" | head -n 220
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          ! grep -q 'INODE_STATE_SUS_PATH' "$FILE"
+          grep -q 'test_thread_flag(TIF_PROC_UMOUNTED)' "$FILE"
+          grep -q 'test_bit(AS_FLAGS_SUS_PATH' "$FILE"
+
+          echo "Trial39: namei SUS_PATH checks migrated to TIF_PROC_UMOUNTED + AS_FLAGS_SUS_PATH."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3864,7 +3918,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-38-SUSFS-V220-STAT-STATE-MODEL.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-39-SUSFS-V220-NAMEI-SUS-PATH-STATE-MODEL.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3877,8 +3931,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-38-SUSFS-V220-STAT-STATE-MODEL
-          path: M127F-KSUN-v3.3.0-TRIAL-38-SUSFS-V220-STAT-STATE-MODEL.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-39-SUSFS-V220-NAMEI-SUS-PATH-STATE-MODEL
+          path: M127F-KSUN-v3.3.0-TRIAL-39-SUSFS-V220-NAMEI-SUS-PATH-STATE-MODEL.zip
           if-no-files-found: error
           compression-level: 0
 
