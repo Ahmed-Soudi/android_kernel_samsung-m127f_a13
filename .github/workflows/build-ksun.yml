@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 41 SUSFS v2.2.0 readdir Task State Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 42 SUSFS v2.2.0 dcache SUS Path State Port
 
 on:
   workflow_dispatch:
@@ -815,6 +815,66 @@ jobs:
           test "$(grep -c 'test_thread_flag(TIF_PROC_UMOUNTED)' "$FILE")" -eq 4
 
           echo "Trial41: readdir SUSFS process gating migrated to TIF_PROC_UMOUNTED."
+
+      - name: Trial 42 port SUSFS dcache SUS_PATH state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/dcache.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+          grep -q 'AS_FLAGS_SUS_PATH' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/dcache.c")
+          s = p.read_text()
+
+          old_task = "current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC"
+          task_count = s.count(old_task)
+          if task_count != 2:
+              raise SystemExit(
+                  f"Trial42: expected exactly two v1.5.7 dcache task-state checks, found {task_count}"
+              )
+          s = s.replace(old_task, "test_thread_flag(TIF_PROC_UMOUNTED)")
+
+          old_path = "dentry->d_inode->i_state & INODE_STATE_SUS_PATH"
+          path_count = s.count(old_path)
+          if path_count != 2:
+              raise SystemExit(
+                  f"Trial42: expected exactly two v1.5.7 dcache SUS_PATH checks, found {path_count}"
+              )
+          s = s.replace(
+              old_path,
+              "test_bit(AS_FLAGS_SUS_PATH, &dentry->d_inode->i_mapping->flags)"
+          )
+
+          for stale in (
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC",
+              "INODE_STATE_SUS_PATH",
+          ):
+              if stale in s:
+                  raise SystemExit(
+                      f"Trial42: stale v1.5.7 dcache symbol remains: {stale}"
+                  )
+
+          p.write_text(s)
+          print(
+              f"Trial42: migrated {task_count} task checks and "
+              f"{path_count} SUS_PATH inode checks"
+          )
+          PY
+
+          echo "=== Trial 42 dcache v2.2.0 state-model verification ==="
+          grep -n -E -A3 -B3 'TIF_PROC_UMOUNTED|AS_FLAGS_SUS_PATH' "$FILE"
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          ! grep -q 'INODE_STATE_SUS_PATH' "$FILE"
+          test "$(grep -c 'test_thread_flag(TIF_PROC_UMOUNTED)' "$FILE")" -eq 2
+          test "$(grep -c 'test_bit(AS_FLAGS_SUS_PATH' "$FILE")" -eq 2
+
+          echo "Trial42: dcache SUS_PATH filtering migrated to TIF_PROC_UMOUNTED + AS_FLAGS_SUS_PATH."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4001,7 +4061,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-41-SUSFS-V220-READDIR-TASK-STATE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-42-SUSFS-V220-DCACHE-SUS-PATH-STATE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4014,8 +4074,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-41-SUSFS-V220-READDIR-TASK-STATE
-          path: M127F-KSUN-v3.3.0-TRIAL-41-SUSFS-V220-READDIR-TASK-STATE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-42-SUSFS-V220-DCACHE-SUS-PATH-STATE
+          path: M127F-KSUN-v3.3.0-TRIAL-42-SUSFS-V220-DCACHE-SUS-PATH-STATE.zip
           if-no-files-found: error
           compression-level: 0
 
