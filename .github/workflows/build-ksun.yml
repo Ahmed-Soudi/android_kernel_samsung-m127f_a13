@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 40 SUSFS v2.2.0 namei Open Redirect State Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 41 SUSFS v2.2.0 readdir Task State Port
 
 on:
   workflow_dispatch:
@@ -773,6 +773,48 @@ jobs:
           grep -q 'test_bit(AS_FLAGS_OPEN_REDIRECT' "$FILE"
 
           echo "Trial40: namei OPEN_REDIRECT migrated from inode->i_state to inode->i_mapping->flags."
+
+      - name: Trial 41 port SUSFS readdir task state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/readdir.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/readdir.c")
+          s = p.read_text()
+
+          old = "current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC"
+          new = "test_thread_flag(TIF_PROC_UMOUNTED)"
+
+          count = s.count(old)
+          if count != 4:
+              raise SystemExit(
+                  f"Trial41: expected exactly four v1.5.7 readdir task-state checks, found {count}"
+              )
+
+          s = s.replace(old, new)
+
+          if "TASK_STRUCT_NON_ROOT_USER_APP_PROC" in s:
+              raise SystemExit(
+                  "Trial41: stale TASK_STRUCT_NON_ROOT_USER_APP_PROC remains in fs/readdir.c"
+              )
+
+          p.write_text(s)
+          print(f"Trial41: migrated {count} readdir task-state checks")
+          PY
+
+          echo "=== Trial 41 readdir v2.2.0 task-state verification ==="
+          grep -n -A3 -B3 'TIF_PROC_UMOUNTED' "$FILE"
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          test "$(grep -c 'test_thread_flag(TIF_PROC_UMOUNTED)' "$FILE")" -eq 4
+
+          echo "Trial41: readdir SUSFS process gating migrated to TIF_PROC_UMOUNTED."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3959,7 +4001,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-40-SUSFS-V220-NAMEI-OPEN-REDIRECT-STATE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-41-SUSFS-V220-READDIR-TASK-STATE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3972,8 +4014,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-40-SUSFS-V220-NAMEI-OPEN-REDIRECT-STATE
-          path: M127F-KSUN-v3.3.0-TRIAL-40-SUSFS-V220-NAMEI-OPEN-REDIRECT-STATE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-41-SUSFS-V220-READDIR-TASK-STATE
+          path: M127F-KSUN-v3.3.0-TRIAL-41-SUSFS-V220-READDIR-TASK-STATE.zip
           if-no-files-found: error
           compression-level: 0
 
