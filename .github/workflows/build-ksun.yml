@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 37 SUSFS v2.2.0 proc fd Mount State Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 38 SUSFS v2.2.0 stat State Model Port
 
 on:
   workflow_dispatch:
@@ -625,6 +625,59 @@ jobs:
           ! grep -q 'DEFAULT_SUS_MNT_ID' "$FILE"
 
           echo "Trial37: proc fd mount filtering migrated to TIF_PROC_UMOUNTED + DEFAULT_KSU_MNT_ID."
+
+      - name: Trial 38 port SUSFS stat state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/stat.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+          grep -q 'AS_FLAGS_SUS_KSTAT' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/stat.c")
+          s = p.read_text()
+
+          old = """	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
+          			unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
+          """
+
+          new = """	if (likely(test_thread_flag(TIF_PROC_UMOUNTED)) &&
+          			unlikely(test_bit(AS_FLAGS_SUS_KSTAT,
+          					  &inode->i_mapping->flags))) {
+          """
+
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial38: expected exactly one v1.5.7 stat SUS_KSTAT state check, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+
+          for stale in (
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC",
+              "INODE_STATE_SUS_KSTAT",
+          ):
+              if stale in s:
+                  raise SystemExit(
+                      f"Trial38: stale v1.5.7 stat symbol remains: {stale}"
+                  )
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 38 stat v2.2.0 state-model verification ==="
+          grep -n -A10 -B6 'TIF_PROC_UMOUNTED' "$FILE"
+          grep -q 'test_bit(AS_FLAGS_SUS_KSTAT' "$FILE"
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          ! grep -q 'INODE_STATE_SUS_KSTAT' "$FILE"
+
+          echo "Trial38: stat SUS_KSTAT handling migrated to TIF_PROC_UMOUNTED + AS_FLAGS_SUS_KSTAT."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3811,7 +3864,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-37-SUSFS-V220-PROC-FD-MOUNT-STATE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-38-SUSFS-V220-STAT-STATE-MODEL.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3824,8 +3877,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-37-SUSFS-V220-PROC-FD-MOUNT-STATE
-          path: M127F-KSUN-v3.3.0-TRIAL-37-SUSFS-V220-PROC-FD-MOUNT-STATE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-38-SUSFS-V220-STAT-STATE-MODEL
+          path: M127F-KSUN-v3.3.0-TRIAL-38-SUSFS-V220-STAT-STATE-MODEL.zip
           if-no-files-found: error
           compression-level: 0
 
