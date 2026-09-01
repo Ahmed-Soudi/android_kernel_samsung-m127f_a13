@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 35 SUSFS v2.2.0 fdinfo State Model Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 36 SUSFS v2.2.0 task_mmu State Model Port
 
 on:
   workflow_dispatch:
@@ -529,6 +529,48 @@ jobs:
           ! grep -q 'INODE_STATE_SUS_KSTAT' "$FILE"
           
           echo "Trial35: fdinfo migrated from v1.5.7 task/inode flags to SUSFS v2.2.0 thread/address-space flags."
+
+      - name: Trial 36 port SUSFS task_mmu kstat state to v2.2.0 address-space flags
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/proc/task_mmu.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'AS_FLAGS_SUS_KSTAT' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/proc/task_mmu.c")
+          s = p.read_text()
+
+          old = "if (unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {"
+          new = """if (unlikely(test_bit(AS_FLAGS_SUS_KSTAT,
+                                          &inode->i_mapping->flags))) {"""
+
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial36: expected exactly one v1.5.7 task_mmu SUS_KSTAT check, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+
+          if "INODE_STATE_SUS_KSTAT" in s:
+              raise SystemExit(
+                  "Trial36: stale INODE_STATE_SUS_KSTAT remains in fs/proc/task_mmu.c"
+              )
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 36 task_mmu v2.2.0 state-model verification ==="
+          grep -n -A8 -B6 'AS_FLAGS_SUS_KSTAT' "$FILE"
+          ! grep -q 'INODE_STATE_SUS_KSTAT' "$FILE"
+          grep -q 'test_bit(AS_FLAGS_SUS_KSTAT' "$FILE"
+
+          echo "Trial36: task_mmu SUS_KSTAT check migrated from inode->i_state to inode->i_mapping->flags."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3715,7 +3757,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-35-SUSFS-V220-FDINFO-STATE-MODEL.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-36-SUSFS-V220-TASK-MMU-STATE-MODEL.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3728,8 +3770,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-35-SUSFS-V220-FDINFO-STATE-MODEL
-          path: M127F-KSUN-v3.3.0-TRIAL-35-SUSFS-V220-FDINFO-STATE-MODEL.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-36-SUSFS-V220-TASK-MMU-STATE-MODEL
+          path: M127F-KSUN-v3.3.0-TRIAL-36-SUSFS-V220-TASK-MMU-STATE-MODEL.zip
           if-no-files-found: error
           compression-level: 0
 
