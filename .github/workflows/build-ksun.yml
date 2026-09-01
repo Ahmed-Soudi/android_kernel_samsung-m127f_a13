@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 36 SUSFS v2.2.0 task_mmu State Model Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 37 SUSFS v2.2.0 proc fd Mount State Port
 
 on:
   workflow_dispatch:
@@ -571,6 +571,60 @@ jobs:
           grep -q 'test_bit(AS_FLAGS_SUS_KSTAT' "$FILE"
 
           echo "Trial36: task_mmu SUS_KSTAT check migrated from inode->i_state to inode->i_mapping->flags."
+
+      - name: Trial 37 port SUSFS proc fd mount state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/proc/fd.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+          grep -q 'DEFAULT_KSU_MNT_ID' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/proc/fd.c")
+          s = p.read_text()
+
+          old = """	if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
+          			mnt->mnt_id >= DEFAULT_SUS_MNT_ID) {
+          		for (; mnt->mnt_id >= DEFAULT_SUS_MNT_ID; mnt = mnt->mnt_parent) { }
+          """
+
+          new = """	if (likely(test_thread_flag(TIF_PROC_UMOUNTED)) &&
+          			mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+          		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+          """
+
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial37: expected exactly one v1.5.7 proc fd mount-state block, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+
+          for stale in (
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC",
+              "DEFAULT_SUS_MNT_ID",
+          ):
+              if stale in s:
+                  raise SystemExit(
+                      f"Trial37: stale v1.5.7 proc fd symbol remains: {stale}"
+                  )
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 37 proc fd v2.2.0 mount-state verification ==="
+          grep -n -A10 -B6 'TIF_PROC_UMOUNTED' "$FILE"
+          grep -q 'DEFAULT_KSU_MNT_ID' "$FILE"
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          ! grep -q 'DEFAULT_SUS_MNT_ID' "$FILE"
+
+          echo "Trial37: proc fd mount filtering migrated to TIF_PROC_UMOUNTED + DEFAULT_KSU_MNT_ID."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3757,7 +3811,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-36-SUSFS-V220-TASK-MMU-STATE-MODEL.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-37-SUSFS-V220-PROC-FD-MOUNT-STATE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3770,8 +3824,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-36-SUSFS-V220-TASK-MMU-STATE-MODEL
-          path: M127F-KSUN-v3.3.0-TRIAL-36-SUSFS-V220-TASK-MMU-STATE-MODEL.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-37-SUSFS-V220-PROC-FD-MOUNT-STATE
+          path: M127F-KSUN-v3.3.0-TRIAL-37-SUSFS-V220-PROC-FD-MOUNT-STATE.zip
           if-no-files-found: error
           compression-level: 0
 
