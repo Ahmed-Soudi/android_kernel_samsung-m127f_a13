@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 39 SUSFS v2.2.0 namei SUS Path State Model Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 40 SUSFS v2.2.0 namei Open Redirect State Port
 
 on:
   workflow_dispatch:
@@ -732,6 +732,47 @@ jobs:
           grep -q 'test_bit(AS_FLAGS_SUS_PATH' "$FILE"
 
           echo "Trial39: namei SUS_PATH checks migrated to TIF_PROC_UMOUNTED + AS_FLAGS_SUS_PATH."
+
+      - name: Trial 40 port SUSFS namei OPEN_REDIRECT state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/namei.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'AS_FLAGS_OPEN_REDIRECT' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namei.c")
+          s = p.read_text()
+
+          old = "filp->f_inode->i_state & INODE_STATE_OPEN_REDIRECT"
+          new = "test_bit(AS_FLAGS_OPEN_REDIRECT, &filp->f_inode->i_mapping->flags)"
+
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial40: expected exactly one v1.5.7 OPEN_REDIRECT check, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+
+          if "INODE_STATE_OPEN_REDIRECT" in s:
+              raise SystemExit(
+                  "Trial40: stale INODE_STATE_OPEN_REDIRECT remains in fs/namei.c"
+              )
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 40 namei OPEN_REDIRECT v2.2.0 verification ==="
+          grep -n -A6 -B6 'AS_FLAGS_OPEN_REDIRECT' "$FILE"
+          ! grep -q 'INODE_STATE_OPEN_REDIRECT' "$FILE"
+          grep -q 'test_bit(AS_FLAGS_OPEN_REDIRECT' "$FILE"
+
+          echo "Trial40: namei OPEN_REDIRECT migrated from inode->i_state to inode->i_mapping->flags."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -3918,7 +3959,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-39-SUSFS-V220-NAMEI-SUS-PATH-STATE-MODEL.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-40-SUSFS-V220-NAMEI-OPEN-REDIRECT-STATE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3931,8 +3972,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-39-SUSFS-V220-NAMEI-SUS-PATH-STATE-MODEL
-          path: M127F-KSUN-v3.3.0-TRIAL-39-SUSFS-V220-NAMEI-SUS-PATH-STATE-MODEL.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-40-SUSFS-V220-NAMEI-OPEN-REDIRECT-STATE
+          path: M127F-KSUN-v3.3.0-TRIAL-40-SUSFS-V220-NAMEI-OPEN-REDIRECT-STATE.zip
           if-no-files-found: error
           compression-level: 0
 
