@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 42 SUSFS v2.2.0 dcache SUS Path State Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 43 SUSFS v2.2.0 Namespace Mount ID Model Port
 
 on:
   workflow_dispatch:
@@ -875,6 +875,104 @@ jobs:
           test "$(grep -c 'test_bit(AS_FLAGS_SUS_PATH' "$FILE")" -eq 2
 
           echo "Trial42: dcache SUS_PATH filtering migrated to TIF_PROC_UMOUNTED + AS_FLAGS_SUS_PATH."
+
+      - name: Trial 43 port SUSFS namespace mount ID model to v2.2.0
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/namespace.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'DEFAULT_KSU_MNT_ID' include/linux/susfs_def.h
+          grep -q 'DEFAULT_KSU_MNT_GROUP_ID' include/linux/susfs_def.h
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          # SUSFS v2.2.0 renamed the reserved KSU mount-ID ranges.
+          mnt_id_count = s.count("DEFAULT_SUS_MNT_ID")
+          group_id_count = s.count("DEFAULT_SUS_MNT_GROUP_ID")
+          unshare_id_count = s.count("DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE")
+
+          if mnt_id_count < 1:
+              raise SystemExit("Trial43: no DEFAULT_SUS_MNT_ID uses found")
+          if group_id_count != 2:
+              raise SystemExit(
+                  f"Trial43: expected exactly two DEFAULT_SUS_MNT_GROUP_ID uses, found {group_id_count}"
+              )
+          if unshare_id_count != 2:
+              raise SystemExit(
+                  f"Trial43: expected exactly two KSU proc-unshare sentinel uses, found {unshare_id_count}"
+              )
+
+          # Handle the removed proc-unshare sentinel semantically before the
+          # broad mount-ID rename. v2.2.0 stores this state in vfsmount::mnt_flags.
+          old_free = """	if (unlikely(mnt->mnt.susfs_mnt_id_backup == DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE)) {
+          		return;
+          	}
+          """
+          new_free = """	if (unlikely(mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT)) {
+          		return;
+          	}
+          """
+          if old_free not in s:
+              raise SystemExit("Trial43: old mnt_free_id KSU-unshare sentinel block not found")
+          s = s.replace(old_free, new_free, 1)
+
+          old_mark = (
+              "mnt->mnt.susfs_mnt_id_backup = "
+              "DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE;"
+          )
+          new_mark = (
+              "mnt->mnt.mnt_flags |= "
+              "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;"
+          )
+          if old_mark not in s:
+              raise SystemExit("Trial43: old clone_mnt KSU-unshare sentinel assignment not found")
+          s = s.replace(old_mark, new_mark, 1)
+
+          # Direct v1.5.7 -> v2.2.0 reserved-range renames.
+          s = s.replace("DEFAULT_SUS_MNT_GROUP_ID", "DEFAULT_KSU_MNT_GROUP_ID")
+          s = s.replace("DEFAULT_SUS_MNT_ID", "DEFAULT_KSU_MNT_ID")
+
+          for stale in (
+              "DEFAULT_SUS_MNT_ID",
+              "DEFAULT_SUS_MNT_GROUP_ID",
+              "DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE",
+          ):
+              if stale in s:
+                  raise SystemExit(
+                      f"Trial43: stale v1.5.7 namespace mount-ID symbol remains: {stale}"
+                  )
+
+          if s.count("VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT") != 2:
+              raise SystemExit(
+                  "Trial43: expected exactly two v2.2.0 KSU-unshared mount flag uses"
+              )
+
+          p.write_text(s)
+          print(
+              f"Trial43: migrated {mnt_id_count} mount-ID references, "
+              f"{group_id_count} group-ID references, and "
+              f"{unshare_id_count} proc-unshare sentinel references"
+          )
+          PY
+
+          echo "=== Trial 43 namespace v2.2.0 mount-ID model verification ==="
+          grep -n -E -A3 -B3             'DEFAULT_KSU_MNT_ID|DEFAULT_KSU_MNT_GROUP_ID|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT'             "$FILE" | head -n 220
+
+          ! grep -q 'DEFAULT_SUS_MNT_ID' "$FILE"
+          ! grep -q 'DEFAULT_SUS_MNT_GROUP_ID' "$FILE"
+          ! grep -q 'DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' "$FILE"
+          grep -q 'DEFAULT_KSU_MNT_ID' "$FILE"
+          grep -q 'DEFAULT_KSU_MNT_GROUP_ID' "$FILE"
+          test "$(grep -c 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' "$FILE")" -eq 2
+
+          echo "Trial43: namespace mount-ID ranges and KSU-unshare state migrated to SUSFS v2.2.0."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4061,7 +4159,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-42-SUSFS-V220-DCACHE-SUS-PATH-STATE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-43-SUSFS-V220-NAMESPACE-MOUNT-ID-MODEL.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4074,8 +4172,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-42-SUSFS-V220-DCACHE-SUS-PATH-STATE
-          path: M127F-KSUN-v3.3.0-TRIAL-42-SUSFS-V220-DCACHE-SUS-PATH-STATE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-43-SUSFS-V220-NAMESPACE-MOUNT-ID-MODEL
+          path: M127F-KSUN-v3.3.0-TRIAL-43-SUSFS-V220-NAMESPACE-MOUNT-ID-MODEL.zip
           if-no-files-found: error
           compression-level: 0
 
