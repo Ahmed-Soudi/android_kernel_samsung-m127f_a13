@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 45 SUSFS v2.2.0 statfs State Model Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 46 SUSFS v2.2.0 fsnotify 4.19 Callback Port
 
 on:
   workflow_dispatch:
@@ -1046,6 +1046,93 @@ jobs:
           grep -q 'test_bit(AS_FLAGS_SUS_MOUNT' "$FILE"
 
           echo "Trial45: statfs SUSFS handling migrated to the v2.2.0 state model."
+
+      - name: Trial 46 backport SUSFS v2.2.0 sdcard fsnotify callback to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/susfs.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'handle_event' include/linux/fsnotify_backend.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/susfs.c")
+          s = p.read_text()
+
+          fn_start = s.find("static int susfs_handle_sdcard_inode_event(")
+          ops_start = s.find("static const struct fsnotify_ops fsnotify_ops", fn_start)
+
+          if fn_start < 0:
+              raise SystemExit("Trial46: susfs sdcard fsnotify callback not found")
+          if ops_start < 0:
+              raise SystemExit("Trial46: susfs fsnotify_ops block not found")
+
+          replacement = '''static int susfs_handle_sdcard_inode_event(
+                  struct fsnotify_group *group,
+                  struct inode *inode,
+                  u32 mask,
+                  const void *data,
+                  int data_type,
+                  const unsigned char *file_name,
+                  u32 cookie,
+                  struct fsnotify_iter_info *iter_info)
+          {
+              (void)group;
+              (void)inode;
+              (void)data;
+              (void)data_type;
+              (void)cookie;
+              (void)iter_info;
+
+              if (!file_name || strlen(file_name) != 7 ||
+                  memcmp(file_name, "Android", 7))
+                  return 0;
+
+              if (test_and_set_bit(0, &sdcard_cleanup_scheduled))
+                  return 0;
+
+              SUSFS_LOGI("'%s' detected, mask: 0x%x\\n",
+                         SDCARD_ANDROID_PATH, mask);
+              SUSFS_LOGI("deferring cleanup for 5 seconds\\n");
+              queue_delayed_work(system_unbound_wq,
+                                 &sdcard_cleanup_dwork, 5 * HZ);
+              return 0;
+          }
+
+          '''
+
+          s = s[:fn_start] + replacement + s[ops_start:]
+
+          old_designator = ".handle_inode_event = susfs_handle_sdcard_inode_event,"
+          new_designator = ".handle_event = susfs_handle_sdcard_inode_event,"
+
+          count = s.count(old_designator)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial46: expected one handle_inode_event designator, found {count}"
+              )
+
+          s = s.replace(old_designator, new_designator, 1)
+
+          if ".handle_inode_event" in s:
+              raise SystemExit(
+                  "Trial46: newer handle_inode_event designator remains in fs/susfs.c"
+              )
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 46 SUSFS fsnotify Samsung 4.19 verification ==="
+          grep -n -A55 -B8 'susfs_handle_sdcard_inode_event' "$FILE" | head -n 100
+          grep -q 'struct fsnotify_group \*group' "$FILE"
+          grep -q 'struct fsnotify_iter_info \*iter_info' "$FILE"
+          grep -q '\.handle_event = susfs_handle_sdcard_inode_event' "$FILE"
+          ! grep -q '\.handle_inode_event' "$FILE"
+
+          echo "Trial46: SUSFS v2.2.0 sdcard watcher now uses Samsung 4.19 fsnotify_ops.handle_event ABI."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4232,7 +4319,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-45-SUSFS-V220-STATFS-STATE-MODEL.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-46-SUSFS-V220-FSNOTIFY-419-CALLBACK.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4245,8 +4332,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-45-SUSFS-V220-STATFS-STATE-MODEL
-          path: M127F-KSUN-v3.3.0-TRIAL-45-SUSFS-V220-STATFS-STATE-MODEL.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-46-SUSFS-V220-FSNOTIFY-419-CALLBACK
+          path: M127F-KSUN-v3.3.0-TRIAL-46-SUSFS-V220-FSNOTIFY-419-CALLBACK.zip
           if-no-files-found: error
           compression-level: 0
 
