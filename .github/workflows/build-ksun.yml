@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 46 SUSFS v2.2.0 fsnotify 4.19 Callback Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 47 SUSFS v2.2.0 proc_namespace Mount ID and Cred Port
 
 on:
   workflow_dispatch:
@@ -1133,6 +1133,81 @@ jobs:
           ! grep -q '\.handle_inode_event' "$FILE"
 
           echo "Trial46: SUSFS v2.2.0 sdcard watcher now uses Samsung 4.19 fsnotify_ops.handle_event ABI."
+
+      - name: Trial 47 port SUSFS proc_namespace mount IDs and current_uid dependency
+        run: |
+          set -euxo pipefail
+
+          HDR="include/linux/susfs_def.h"
+          FILE="fs/proc_namespace.c"
+
+          test -f "$HDR"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'DEFAULT_KSU_MNT_ID' "$HDR"
+          grep -q '#define current_uid()' include/linux/cred.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          hdr = Path("include/linux/susfs_def.h")
+          hs = hdr.read_text()
+
+          # SUSFS v2.2.0 defines inline helpers in susfs_def.h that call
+          # current_uid(). Samsung 4.19 provides current_uid() in linux/cred.h,
+          # so the defining header must include it itself rather than relying
+          # on include-order accidents from individual callers.
+          if "#include <linux/cred.h>" not in hs:
+              anchor = "#include <linux/bits.h>\n"
+              if anchor not in hs:
+                  raise SystemExit(
+                      "Trial47: susfs_def.h bits.h include anchor not found"
+                  )
+              hs = hs.replace(
+                  anchor,
+                  anchor + "#include <linux/cred.h>\n",
+                  1,
+              )
+
+          hdr.write_text(hs)
+
+          p = Path("fs/proc_namespace.c")
+          s = p.read_text()
+
+          old = "DEFAULT_SUS_MNT_ID"
+          count = s.count(old)
+          if count != 3:
+              raise SystemExit(
+                  f"Trial47: expected exactly three proc_namespace "
+                  f"DEFAULT_SUS_MNT_ID thresholds, found {count}"
+              )
+
+          s = s.replace(old, "DEFAULT_KSU_MNT_ID")
+
+          if "DEFAULT_SUS_MNT_ID" in s:
+              raise SystemExit(
+                  "Trial47: stale DEFAULT_SUS_MNT_ID remains in fs/proc_namespace.c"
+              )
+
+          p.write_text(s)
+
+          print(
+              "Trial47: added linux/cred.h dependency to susfs_def.h and "
+              f"migrated {count} proc_namespace mount-ID thresholds"
+          )
+          PY
+
+          echo "=== Trial 47 susfs_def current_uid dependency verification ==="
+          grep -n -A4 -B4 'linux/cred.h' "$HDR"
+          grep -n -A4 -B4 'current_uid().val' "$HDR" || true
+          grep -q '#include <linux/cred.h>' "$HDR"
+
+          echo "=== Trial 47 proc_namespace v2.2.0 mount-ID verification ==="
+          grep -n -A4 -B4 'DEFAULT_KSU_MNT_ID' "$FILE"
+          ! grep -q 'DEFAULT_SUS_MNT_ID' "$FILE"
+          test "$(grep -c 'DEFAULT_KSU_MNT_ID' "$FILE")" -eq 3
+
+          echo "Trial47: proc_namespace now uses v2.2.0 KSU mount IDs and Samsung 4.19 current_uid declaration."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4319,7 +4394,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-46-SUSFS-V220-FSNOTIFY-419-CALLBACK.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-47-SUSFS-V220-PROC-NAMESPACE-MOUNT-ID-CRED.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4332,8 +4407,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-46-SUSFS-V220-FSNOTIFY-419-CALLBACK
-          path: M127F-KSUN-v3.3.0-TRIAL-46-SUSFS-V220-FSNOTIFY-419-CALLBACK.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-47-SUSFS-V220-PROC-NAMESPACE-MOUNT-ID-CRED
+          path: M127F-KSUN-v3.3.0-TRIAL-47-SUSFS-V220-PROC-NAMESPACE-MOUNT-ID-CRED.zip
           if-no-files-found: error
           compression-level: 0
 
