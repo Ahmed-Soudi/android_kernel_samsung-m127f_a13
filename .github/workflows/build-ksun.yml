@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 48 SUSFS v2.2.0 stat Kstat Helper API Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 49 SUSFS v2.2.0 stat Kstat Helper Complete Port
 
 on:
   workflow_dispatch:
@@ -1209,7 +1209,7 @@ jobs:
 
           echo "Trial47: proc_namespace now uses v2.2.0 KSU mount IDs and Samsung 4.19 current_uid declaration."
 
-      - name: Trial 48 port SUSFS stat kstat helper to v2.2.0 API
+      - name: Trial 49 complete SUSFS stat kstat helper v2.2.0 API port
         run: |
           set -euxo pipefail
 
@@ -1220,7 +1220,7 @@ jobs:
           test -f "$CORE"
           grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
 
-          # v2.2.0 moved generic_fillattr spoofing to an inode-aware helper.
+          # v2.2.0 uses the inode-aware kstat spoofer.
           grep -q 'void susfs_sus_kstat_spoof_generic_fillattr' "$CORE"
 
           python3 - <<'PY'
@@ -1229,56 +1229,69 @@ jobs:
           p = Path("fs/stat.c")
           s = p.read_text()
 
+          old_decl = (
+              "extern void susfs_sus_ino_for_generic_fillattr("
+              "unsigned long ino, struct kstat *stat);"
+          )
+          new_decl = (
+              "extern void susfs_sus_kstat_spoof_generic_fillattr("
+              "struct inode *inode, struct kstat *stat);"
+          )
+
+          decl_count = s.count(old_decl)
+          if decl_count != 1:
+              raise SystemExit(
+                  f"Trial49: expected exactly one old generic_fillattr "
+                  f"declaration, found {decl_count}"
+              )
+
           old_call = "susfs_sus_ino_for_generic_fillattr(inode->i_ino, stat);"
           new_call = "susfs_sus_kstat_spoof_generic_fillattr(inode, stat);"
 
-          count = s.count(old_call)
-          if count != 1:
+          call_count = s.count(old_call)
+          if call_count != 1:
               raise SystemExit(
-                  f"Trial48: expected exactly one old generic_fillattr helper call, found {count}"
+                  f"Trial49: expected exactly one old generic_fillattr "
+                  f"call, found {call_count}"
               )
 
+          s = s.replace(old_decl, new_decl, 1)
           s = s.replace(old_call, new_call, 1)
-
-          # The v2.2.0 public header no longer declares internal VFS spoof
-          # helpers, so declare the exact core symbol at this integration site.
-          decl = (
-              "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
-              "extern void susfs_sus_kstat_spoof_generic_fillattr("
-              "struct inode *inode, struct kstat *stat);\n"
-              "#endif\n"
-          )
-
-          if "extern void susfs_sus_kstat_spoof_generic_fillattr(" not in s:
-              marker = '#include "internal.h"\n'
-              if marker not in s:
-                  # Samsung stat.c may not carry fs/internal.h at this point;
-                  # insert immediately before the generic_fillattr comment.
-                  marker = "/**\n * generic_fillattr"
-                  pos = s.find(marker)
-                  if pos < 0:
-                      raise SystemExit(
-                          "Trial48: generic_fillattr declaration insertion anchor not found"
-                      )
-                  s = s[:pos] + decl + "\n" + s[pos:]
-              else:
-                  s = s.replace(marker, marker + "\n" + decl, 1)
 
           if "susfs_sus_ino_for_generic_fillattr" in s:
               raise SystemExit(
-                  "Trial48: stale v1.5.7 generic_fillattr helper remains in fs/stat.c"
+                  "Trial49: stale v1.5.7 generic_fillattr helper remains "
+                  "in fs/stat.c"
+              )
+
+          if s.count(new_decl) != 1:
+              raise SystemExit(
+                  "Trial49: expected exactly one v2.2.0 generic_fillattr "
+                  "declaration"
+              )
+
+          if s.count(new_call) != 1:
+              raise SystemExit(
+                  "Trial49: expected exactly one v2.2.0 generic_fillattr call"
               )
 
           p.write_text(s)
+
+          print(
+              "Trial49: migrated one declaration and one call from "
+              "susfs_sus_ino_for_generic_fillattr to "
+              "susfs_sus_kstat_spoof_generic_fillattr"
+          )
           PY
 
-          echo "=== Trial 48 stat v2.2.0 kstat helper verification ==="
-          grep -n -A8 -B8 'susfs_sus_kstat_spoof_generic_fillattr' "$FILE"
+          echo "=== Trial 49 stat v2.2.0 kstat helper verification ==="
+          grep -n -A10 -B10 'susfs_sus_kstat_spoof_generic_fillattr' "$FILE"
           ! grep -q 'susfs_sus_ino_for_generic_fillattr' "$FILE"
-          grep -q 'susfs_sus_kstat_spoof_generic_fillattr(inode, stat);' "$FILE"
+          test "$(grep -c 'extern void susfs_sus_kstat_spoof_generic_fillattr' "$FILE")" -eq 1
+          test "$(grep -c 'susfs_sus_kstat_spoof_generic_fillattr(inode, stat);' "$FILE")" -eq 1
           grep -q 'void susfs_sus_kstat_spoof_generic_fillattr' "$CORE"
 
-          echo "Trial48: generic_fillattr now calls the real SUSFS v2.2.0 inode-aware kstat spoofer."
+          echo "Trial49: stat declaration and call now use the real SUSFS v2.2.0 inode-aware kstat helper."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4465,7 +4478,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-48-SUSFS-V220-STAT-KSTAT-HELPER-API.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-49-SUSFS-V220-STAT-KSTAT-HELPER-COMPLETE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4478,8 +4491,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-48-SUSFS-V220-STAT-KSTAT-HELPER-API
-          path: M127F-KSUN-v3.3.0-TRIAL-48-SUSFS-V220-STAT-KSTAT-HELPER-API.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-49-SUSFS-V220-STAT-KSTAT-HELPER-COMPLETE
+          path: M127F-KSUN-v3.3.0-TRIAL-49-SUSFS-V220-STAT-KSTAT-HELPER-COMPLETE.zip
           if-no-files-found: error
           compression-level: 0
 
