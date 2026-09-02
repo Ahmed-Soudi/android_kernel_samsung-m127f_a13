@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 49 SUSFS v2.2.0 stat Kstat Helper Complete Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 50 SUSFS v2.2.0 namei Open Redirect Helper API Port
 
 on:
   workflow_dispatch:
@@ -1292,6 +1292,90 @@ jobs:
           grep -q 'void susfs_sus_kstat_spoof_generic_fillattr' "$CORE"
 
           echo "Trial49: stat declaration and call now use the real SUSFS v2.2.0 inode-aware kstat helper."
+
+      - name: Trial 50 port SUSFS namei open-redirect helper to v2.2.0 API
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/namei.c"
+          CORE="fs/susfs.c"
+
+          test -f "$FILE"
+          test -f "$CORE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+
+          # SUSFS v2.2.0 replaced the inode-number lookup helper with
+          # an inode-aware open-redirect spoofer.
+          grep -q 'susfs_open_redirect_spoof_do_sys_openat' "$CORE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namei.c")
+          s = p.read_text()
+
+          old_decl_variants = (
+              "extern struct filename* susfs_get_redirected_path(unsigned long ino);",
+              "extern struct filename *susfs_get_redirected_path(unsigned long ino);",
+          )
+          new_decl = (
+              "extern struct filename *"
+              "susfs_open_redirect_spoof_do_sys_openat(struct inode *inode);"
+          )
+
+          decl_matches = sum(s.count(x) for x in old_decl_variants)
+          if decl_matches != 1:
+              raise SystemExit(
+                  f"Trial50: expected exactly one old open-redirect helper "
+                  f"declaration, found {decl_matches}"
+              )
+
+          for old_decl in old_decl_variants:
+              if old_decl in s:
+                  s = s.replace(old_decl, new_decl, 1)
+                  break
+
+          old_call = "susfs_get_redirected_path(filp->f_inode->i_ino)"
+          new_call = "susfs_open_redirect_spoof_do_sys_openat(filp->f_inode)"
+
+          call_count = s.count(old_call)
+          if call_count != 1:
+              raise SystemExit(
+                  f"Trial50: expected exactly one old namei open-redirect "
+                  f"helper call, found {call_count}"
+              )
+
+          s = s.replace(old_call, new_call, 1)
+
+          if "susfs_get_redirected_path" in s:
+              raise SystemExit(
+                  "Trial50: stale v1.5.7 susfs_get_redirected_path remains "
+                  "in fs/namei.c"
+              )
+
+          if s.count("susfs_open_redirect_spoof_do_sys_openat") != 2:
+              raise SystemExit(
+                  "Trial50: expected one v2.2.0 declaration and one call "
+                  "in fs/namei.c"
+              )
+
+          p.write_text(s)
+
+          print(
+              "Trial50: migrated namei open redirect from "
+              "susfs_get_redirected_path(unsigned long) to "
+              "susfs_open_redirect_spoof_do_sys_openat(struct inode *)"
+          )
+          PY
+
+          echo "=== Trial 50 namei v2.2.0 open-redirect helper verification ==="
+          grep -n -A10 -B10 'susfs_open_redirect_spoof_do_sys_openat' "$FILE"
+          ! grep -q 'susfs_get_redirected_path' "$FILE"
+          test "$(grep -c 'susfs_open_redirect_spoof_do_sys_openat' "$FILE")" -eq 2
+          grep -q 'susfs_open_redirect_spoof_do_sys_openat(filp->f_inode)' "$FILE"
+          grep -q 'susfs_open_redirect_spoof_do_sys_openat' "$CORE"
+
+          echo "Trial50: namei now uses the real SUSFS v2.2.0 inode-aware open-redirect helper."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4478,7 +4562,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-49-SUSFS-V220-STAT-KSTAT-HELPER-COMPLETE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-50-SUSFS-V220-NAMEI-OPEN-REDIRECT-HELPER-API.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4491,8 +4575,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-49-SUSFS-V220-STAT-KSTAT-HELPER-COMPLETE
-          path: M127F-KSUN-v3.3.0-TRIAL-49-SUSFS-V220-STAT-KSTAT-HELPER-COMPLETE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-50-SUSFS-V220-NAMEI-OPEN-REDIRECT-HELPER-API
+          path: M127F-KSUN-v3.3.0-TRIAL-50-SUSFS-V220-NAMEI-OPEN-REDIRECT-HELPER-API.zip
           if-no-files-found: error
           compression-level: 0
 
