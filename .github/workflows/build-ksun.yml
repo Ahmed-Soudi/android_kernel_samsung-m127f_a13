@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 44 SUSFS v2.2.0 Namespace Mount ID Guard Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 45 SUSFS v2.2.0 statfs State Model Port
 
 on:
   workflow_dispatch:
@@ -969,6 +969,83 @@ jobs:
           test "$(grep -c 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' "$FILE")" -eq 2
 
           echo "Trial44: namespace mount-ID ranges and KSU-unshare state migrated to SUSFS v2.2.0."
+
+      - name: Trial 45 port SUSFS statfs state to v2.2.0 model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/statfs.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'TIF_PROC_UMOUNTED' include/linux/susfs_def.h
+          grep -q 'AS_FLAGS_SUS_MOUNT' include/linux/susfs_def.h
+          grep -q 'DEFAULT_KSU_MNT_ID' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/statfs.c")
+          s = p.read_text()
+
+          old_task = "current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC"
+          task_count = s.count(old_task)
+          if task_count != 1:
+              raise SystemExit(
+                  f"Trial45: expected exactly one old statfs task-state check, found {task_count}"
+              )
+          s = s.replace(old_task, "test_thread_flag(TIF_PROC_UMOUNTED)", 1)
+
+          old_mnt_id = "DEFAULT_SUS_MNT_ID"
+          mnt_id_count = s.count(old_mnt_id)
+          if mnt_id_count != 1:
+              raise SystemExit(
+                  f"Trial45: expected exactly one old statfs mount-ID threshold, found {mnt_id_count}"
+              )
+          s = s.replace(old_mnt_id, "DEFAULT_KSU_MNT_ID", 1)
+
+          old_mount_state = (
+              "s->s_root->d_inode->i_state & INODE_STATE_SUS_MOUNT"
+          )
+          new_mount_state = (
+              "test_bit(AS_FLAGS_SUS_MOUNT, "
+              "&s->s_root->d_inode->i_mapping->flags)"
+          )
+          mount_state_count = s.count(old_mount_state)
+          if mount_state_count != 1:
+              raise SystemExit(
+                  f"Trial45: expected exactly one old statfs SUS_MOUNT inode-state check, "
+                  f"found {mount_state_count}"
+              )
+          s = s.replace(old_mount_state, new_mount_state, 1)
+
+          for stale in (
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC",
+              "DEFAULT_SUS_MNT_ID",
+              "INODE_STATE_SUS_MOUNT",
+          ):
+              if stale in s:
+                  raise SystemExit(
+                      f"Trial45: stale v1.5.7 statfs symbol remains: {stale}"
+                  )
+
+          p.write_text(s)
+          print(
+              "Trial45: migrated statfs task state, mount-ID threshold, "
+              "and SUS_MOUNT inode state"
+          )
+          PY
+
+          echo "=== Trial 45 statfs v2.2.0 state-model verification ==="
+          grep -n -E -A5 -B5             'TIF_PROC_UMOUNTED|DEFAULT_KSU_MNT_ID|AS_FLAGS_SUS_MOUNT'             "$FILE"
+
+          ! grep -q 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "$FILE"
+          ! grep -q 'DEFAULT_SUS_MNT_ID' "$FILE"
+          ! grep -q 'INODE_STATE_SUS_MOUNT' "$FILE"
+          grep -q 'test_thread_flag(TIF_PROC_UMOUNTED)' "$FILE"
+          grep -q 'DEFAULT_KSU_MNT_ID' "$FILE"
+          grep -q 'test_bit(AS_FLAGS_SUS_MOUNT' "$FILE"
+
+          echo "Trial45: statfs SUSFS handling migrated to the v2.2.0 state model."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4155,7 +4232,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-44-SUSFS-V220-NAMESPACE-MOUNT-ID-GUARD-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-45-SUSFS-V220-STATFS-STATE-MODEL.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4168,8 +4245,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-44-SUSFS-V220-NAMESPACE-MOUNT-ID-GUARD-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-44-SUSFS-V220-NAMESPACE-MOUNT-ID-GUARD-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-45-SUSFS-V220-STATFS-STATE-MODEL
+          path: M127F-KSUN-v3.3.0-TRIAL-45-SUSFS-V220-STATFS-STATE-MODEL.zip
           if-no-files-found: error
           compression-level: 0
 
