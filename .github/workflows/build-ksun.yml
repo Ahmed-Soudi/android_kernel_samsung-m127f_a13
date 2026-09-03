@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 50 SUSFS v2.2.0 namei Open Redirect Helper API Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 51 SUSFS v2.2.0 readdir Inode-Aware SUS Path Port
 
 on:
   workflow_dispatch:
@@ -1376,6 +1376,127 @@ jobs:
           grep -q 'susfs_open_redirect_spoof_do_sys_openat' "$CORE"
 
           echo "Trial50: namei now uses the real SUSFS v2.2.0 inode-aware open-redirect helper."
+
+      - name: Trial 51 port SUSFS readdir hiding to v2.2.0 inode-aware model
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/readdir.c"
+          CORE="fs/susfs.c"
+
+          test -f "$FILE"
+          test -f "$CORE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'bool susfs_is_inode_sus_path' "$CORE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/readdir.c")
+          s = p.read_text()
+
+          old_decl = "extern int susfs_sus_ino_for_filldir64(unsigned long ino);"
+          if s.count(old_decl) != 1:
+              raise SystemExit("Trial51: expected exactly one old readdir helper declaration")
+
+          s = s.replace(
+              old_decl,
+              "extern bool susfs_is_inode_sus_path(struct inode *inode);",
+              1,
+          )
+
+          old_cond = (
+              "if (likely(test_thread_flag(TIF_PROC_UMOUNTED)) && "
+              "susfs_sus_ino_for_filldir64(ino)) {\n"
+              "\t\treturn 0;\n"
+              "\t}"
+          )
+          replacement = (
+              "if (likely(test_thread_flag(TIF_PROC_UMOUNTED))) {\n"
+              "\t\tstruct inode *susfs_inode = ilookup(buf->sb, ino);\n"
+              "\t\tif (susfs_inode) {\n"
+              "\t\t\tbool hide = susfs_is_inode_sus_path(susfs_inode);\n"
+              "\t\t\tiput(susfs_inode);\n"
+              "\t\t\tif (hide)\n"
+              "\t\t\t\treturn 0;\n"
+              "\t\t}\n"
+              "\t}"
+          )
+          count = s.count(old_cond)
+          if count != 4:
+              raise SystemExit(f"Trial51: expected four old filldir helper blocks, found {count}")
+          s = s.replace(old_cond, replacement)
+
+          callback_structs = (
+              "struct getdents_callback {",
+              "struct getdents_callback64 {",
+              "struct compat_readdir_callback {",
+              "struct compat_getdents_callback {",
+          )
+          for marker in callback_structs:
+              pos = s.find(marker)
+              if pos < 0:
+                  raise SystemExit(f"Trial51: callback struct not found: {marker}")
+              end = s.find("};", pos)
+              if end < 0:
+                  raise SystemExit(f"Trial51: callback struct end not found: {marker}")
+              block = s[pos:end]
+              if "struct super_block *sb;" not in block:
+                  ctx = "\tstruct dir_context ctx;\n"
+                  if ctx not in block:
+                      raise SystemExit(f"Trial51: dir_context anchor not found in {marker}")
+                  block = block.replace(
+                      ctx,
+                      ctx + "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tstruct super_block *sb;\n#endif\n",
+                      1,
+                  )
+                  s = s[:pos] + block + s[end:]
+
+          syscall_markers = (
+              "SYSCALL_DEFINE3(getdents,",
+              "int ksys_getdents64(",
+              "COMPAT_SYSCALL_DEFINE3(old_readdir,",
+              "COMPAT_SYSCALL_DEFINE3(getdents,",
+          )
+          def set_sb_in_function(text, marker):
+              start = text.find(marker)
+              if start < 0:
+                  raise SystemExit(f"Trial51: syscall/function not found: {marker}")
+              end = text.find("\n}\n", start)
+              if end < 0:
+                  raise SystemExit(f"Trial51: function end not found: {marker}")
+              end += 3
+              body = text[start:end]
+              anchor = "\tif (!f.file)\n\t\treturn -EBADF;\n"
+              if anchor not in body:
+                  raise SystemExit(f"Trial51: fd validation anchor not found in {marker}")
+              add = anchor + "\n#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n\tbuf.sb = f.file->f_inode->i_sb;\n#endif\n"
+              body = body.replace(anchor, add, 1)
+              return text[:start] + body + text[end:]
+
+          for marker in syscall_markers:
+              s = set_sb_in_function(s, marker)
+
+          if "susfs_sus_ino_for_filldir64" in s:
+              raise SystemExit("Trial51: stale v1.5.7 readdir helper remains")
+          if s.count("susfs_is_inode_sus_path(susfs_inode)") != 4:
+              raise SystemExit("Trial51: expected four inode-aware SUS_PATH checks")
+          if s.count("buf.sb = f.file->f_inode->i_sb;") != 4:
+              raise SystemExit("Trial51: expected four callback superblock assignments")
+
+          p.write_text(s)
+          print("Trial51: migrated four readdir paths to inode-aware SUS_PATH checks")
+          PY
+
+          echo "=== Trial 51 readdir v2.2.0 inode-aware verification ==="
+          ! grep -q 'susfs_sus_ino_for_filldir64' "$FILE"
+          grep -n -A8 -B5 'susfs_is_inode_sus_path' "$FILE" | head -n 120
+          grep -n -A4 -B4 'buf.sb = f.file->f_inode->i_sb' "$FILE"
+          test "$(grep -c 'susfs_is_inode_sus_path(susfs_inode)' "$FILE")" -eq 4
+          test "$(grep -c 'buf.sb = f.file->f_inode->i_sb;' "$FILE")" -eq 4
+          grep -q 'bool susfs_is_inode_sus_path' "$CORE"
+
+          echo "Trial51: readdir now resolves dirent inode objects before applying SUS_PATH hiding."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4562,7 +4683,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-50-SUSFS-V220-NAMEI-OPEN-REDIRECT-HELPER-API.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-51-SUSFS-V220-READDIR-INODE-AWARE-SUS-PATH.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4575,8 +4696,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-50-SUSFS-V220-NAMEI-OPEN-REDIRECT-HELPER-API
-          path: M127F-KSUN-v3.3.0-TRIAL-50-SUSFS-V220-NAMEI-OPEN-REDIRECT-HELPER-API.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-51-SUSFS-V220-READDIR-INODE-AWARE-SUS-PATH
+          path: M127F-KSUN-v3.3.0-TRIAL-51-SUSFS-V220-READDIR-INODE-AWARE-SUS-PATH.zip
           if-no-files-found: error
           compression-level: 0
 
