@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 53 SUSFS v2.2.0 Namespace Try Umount Guard Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 54 SUSFS v2.2.0 task_mmu Kstat Helper API Port
 
 on:
   workflow_dispatch:
@@ -1583,6 +1583,84 @@ jobs:
           grep -q 'change_mnt_propagation(mnt, MS_PRIVATE);' "$FILE"
 
           echo "Trial53: namespace no longer declares or calls the removed v1.5.7 try_umount core helper."
+
+      - name: Trial 54 port SUSFS task_mmu show_map_vma kstat helper to v2.2.0 API
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/proc/task_mmu.c"
+          CORE="fs/susfs.c"
+
+          test -f "$FILE"
+          test -f "$CORE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'susfs_sus_kstat_spoof_show_map_vma' "$CORE"
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/proc/task_mmu.c")
+          s = p.read_text()
+
+          old_decl = (
+              "extern void susfs_sus_ino_for_show_map_vma("
+              "unsigned long ino, dev_t *out_dev, unsigned long *out_ino);"
+          )
+          new_decl = (
+              "extern void susfs_sus_kstat_spoof_show_map_vma("
+              "struct inode *inode, dev_t *out_dev, unsigned long *out_ino);"
+          )
+
+          decl_count = s.count(old_decl)
+          if decl_count != 1:
+              raise SystemExit(
+                  f"Trial54: expected exactly one old show_map_vma declaration, found {decl_count}"
+              )
+
+          old_call = (
+              "susfs_sus_ino_for_show_map_vma("
+              "inode->i_ino, &dev, &ino);"
+          )
+          new_call = (
+              "susfs_sus_kstat_spoof_show_map_vma("
+              "inode, &dev, &ino);"
+          )
+
+          call_count = s.count(old_call)
+          if call_count != 1:
+              raise SystemExit(
+                  f"Trial54: expected exactly one old show_map_vma call, found {call_count}"
+              )
+
+          s = s.replace(old_decl, new_decl, 1)
+          s = s.replace(old_call, new_call, 1)
+
+          if "susfs_sus_ino_for_show_map_vma" in s:
+              raise SystemExit(
+                  "Trial54: stale v1.5.7 show_map_vma helper remains in task_mmu.c"
+              )
+
+          if s.count("susfs_sus_kstat_spoof_show_map_vma") != 2:
+              raise SystemExit(
+                  "Trial54: expected exactly one v2.2.0 declaration and one call"
+              )
+
+          p.write_text(s)
+
+          print(
+              "Trial54: migrated task_mmu show_map_vma from ino-only v1.5.7 "
+              "helper to v2.2.0 inode-aware kstat spoofer"
+          )
+          PY
+
+          echo "=== Trial 54 task_mmu v2.2.0 show_map_vma helper verification ==="
+          ! grep -q 'susfs_sus_ino_for_show_map_vma' "$FILE"
+          grep -n -A8 -B8 'susfs_sus_kstat_spoof_show_map_vma' "$FILE"
+          test "$(grep -c 'susfs_sus_kstat_spoof_show_map_vma' "$FILE")" -eq 2
+          grep -q 'susfs_sus_kstat_spoof_show_map_vma(inode, &dev, &ino);' "$FILE"
+          grep -q 'susfs_sus_kstat_spoof_show_map_vma' "$CORE"
+
+          echo "Trial54: task_mmu now uses the real SUSFS v2.2.0 inode-aware show_map_vma kstat helper."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4769,7 +4847,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-53-SUSFS-V220-NAMESPACE-TRY-UMOUNT-GUARD-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-54-SUSFS-V220-TASK-MMU-KSTAT-HELPER-API.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4782,8 +4860,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-53-SUSFS-V220-NAMESPACE-TRY-UMOUNT-GUARD-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-53-SUSFS-V220-NAMESPACE-TRY-UMOUNT-GUARD-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-54-SUSFS-V220-TASK-MMU-KSTAT-HELPER-API
+          path: M127F-KSUN-v3.3.0-TRIAL-54-SUSFS-V220-TASK-MMU-KSTAT-HELPER-API.zip
           if-no-files-found: error
           compression-level: 0
 
