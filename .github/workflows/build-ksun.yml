@@ -1,22 +1,10 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 56 SUSFS v2.2.0 Runtime Isolation Kconfig Env Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 57 SUSFS v2.2.0 Runtime Isolation Trigger Fix
 
 on:
   workflow_dispatch:
   push:
     branches:
       - ksun-3.3.0-susfs
-    paths:
-      - ".github/workflows/build-ksun.yml"
-      - "arch/**"
-      - "drivers/**"
-      - "fs/**"
-      - "include/**"
-      - "kernel/**"
-      - "security/**"
-      - "KernelSU-Next/**"
-      - "anykernel/**"
-      - "Makefile"
-      - "Kconfig*"
 
 jobs:
   build:
@@ -4846,7 +4834,7 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
 
-          echo "Trial56: reusing Samsung Kconfig environment for SUSFS-off olddefconfig"
+          echo "Trial57: reusing Samsung Kconfig environment for SUSFS-off olddefconfig"
           echo "PLATFORM_VERSION=$PLATFORM_VERSION ANDROID_MAJOR_VERSION=$ANDROID_MAJOR_VERSION"
 
           make ARCH=arm64 \
@@ -4855,15 +4843,15 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          echo "=== Trial 55 SUSFS runtime isolation config ==="
+          echo "=== Trial 57 SUSFS runtime isolation config ==="
           grep -E '^CONFIG_KSU_SUSFS|^# CONFIG_KSU_SUSFS' .config | sort || true
 
           if grep -q '^CONFIG_KSU_SUSFS=y' .config; then
-            echo "::error::Trial56: CONFIG_KSU_SUSFS unexpectedly re-enabled"
+            echo "::error::Trial57: CONFIG_KSU_SUSFS unexpectedly re-enabled"
             exit 1
           fi
 
-          echo "Trial56: all source migrations preserved; SUSFS runtime disabled for boot isolation."
+          echo "Trial57: all source migrations preserved; SUSFS runtime disabled for boot isolation."
 
       - name: Build M127F kernel
         run: |
@@ -4927,7 +4915,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-56-SUSFS-V220-RUNTIME-ISOLATION-KCONFIG-ENV-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-57-SUSFS-V220-RUNTIME-ISOLATION-TRIGGER-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4940,8 +4928,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-56-SUSFS-V220-RUNTIME-ISOLATION-KCONFIG-ENV-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-56-SUSFS-V220-RUNTIME-ISOLATION-KCONFIG-ENV-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-57-SUSFS-V220-RUNTIME-ISOLATION-TRIGGER-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-57-SUSFS-V220-RUNTIME-ISOLATION-TRIGGER-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
