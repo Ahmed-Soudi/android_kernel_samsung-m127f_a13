@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 51 SUSFS v2.2.0 readdir Inode-Aware SUS Path Port
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 52 SUSFS v2.2.0 Namespace Try Umount API Retirement
 
 on:
   workflow_dispatch:
@@ -1497,6 +1497,84 @@ jobs:
           grep -q 'bool susfs_is_inode_sus_path' "$CORE"
 
           echo "Trial51: readdir now resolves dirent inode objects before applying SUS_PATH hiding."
+
+      - name: Trial 52 retire removed SUSFS namespace try_umount helper
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/namespace.c"
+
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+          grep -q 'DEFAULT_KSU_MNT_ID' include/linux/susfs_def.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          old_call = "\tsusfs_try_umount(current_uid().val);\n"
+          count = s.count(old_call)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial52: expected exactly one legacy susfs_try_umount call, found {count}"
+              )
+
+          # v2.2.0 no longer provides the v1.5.7 susfs_try_umount()/all()
+          # kernel helper. Keep the namespace-local preparation that makes
+          # reserved KSU mounts private, but retire the deleted cross-core call
+          # rather than inventing an ABI compatibility shim.
+          s = s.replace(old_call, "", 1)
+
+          if "susfs_try_umount(" in s:
+              raise SystemExit(
+                  "Trial52: stale deleted susfs_try_umount call remains in fs/namespace.c"
+              )
+
+          # The function must still preserve the namespace-local v2.2.0 mount
+          # preparation migrated in Trial44.
+          fn = "void susfs_run_try_umount_for_current_mnt_ns(void)"
+          start = s.find(fn)
+          if start < 0:
+              raise SystemExit(
+                  "Trial52: namespace helper function not found"
+              )
+          end = s.find("\n}\n#endif", start)
+          if end < 0:
+              raise SystemExit(
+                  "Trial52: namespace helper function end not found"
+              )
+          body = s[start:end]
+
+          required = (
+              "namespace_lock();",
+              "list_for_each_entry(mnt, &mnt_ns->list, mnt_list)",
+              "mnt->mnt_id >= DEFAULT_KSU_MNT_ID",
+              "change_mnt_propagation(mnt, MS_PRIVATE);",
+              "namespace_unlock();",
+          )
+          for token in required:
+              if token not in body:
+                  raise SystemExit(
+                      f"Trial52: required namespace-local behavior missing: {token}"
+                  )
+
+          p.write_text(s)
+
+          print(
+              "Trial52: retired deleted v1.5.7 susfs_try_umount call while "
+              "preserving namespace-local private propagation preparation"
+          )
+          PY
+
+          echo "=== Trial 52 namespace try_umount API retirement verification ==="
+          ! grep -n 'susfs_try_umount(' "$FILE"
+          grep -n -A28 -B4 'void susfs_run_try_umount_for_current_mnt_ns' "$FILE"
+          grep -q 'mnt->mnt_id >= DEFAULT_KSU_MNT_ID' "$FILE"
+          grep -q 'change_mnt_propagation(mnt, MS_PRIVATE);' "$FILE"
+
+          echo "Trial52: namespace no longer links against the removed v1.5.7 try_umount core helper."
 
       - name: Patch KSUN file wrapper for Samsung 4.19
         run: |
@@ -4683,7 +4761,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-51-SUSFS-V220-READDIR-INODE-AWARE-SUS-PATH.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-52-SUSFS-V220-NAMESPACE-TRY-UMOUNT-API-RETIREMENT.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4696,8 +4774,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-51-SUSFS-V220-READDIR-INODE-AWARE-SUS-PATH
-          path: M127F-KSUN-v3.3.0-TRIAL-51-SUSFS-V220-READDIR-INODE-AWARE-SUS-PATH.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-52-SUSFS-V220-NAMESPACE-TRY-UMOUNT-API-RETIREMENT
+          path: M127F-KSUN-v3.3.0-TRIAL-52-SUSFS-V220-NAMESPACE-TRY-UMOUNT-API-RETIREMENT.zip
           if-no-files-found: error
           compression-level: 0
 
