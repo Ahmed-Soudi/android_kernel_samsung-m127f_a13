@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 62 SUSFS v2.2.0 Dispatch Table Anchor Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 63 SUSFS v2.2.0 Reboot Arg Pointer-Level Fix
 
 on:
   workflow_dispatch:
@@ -4570,7 +4570,7 @@ jobs:
           export PATH="$HOME/toolchain/bin:$PATH"
 
           test -f .config
-          echo "Trial62: .config exists after exynos850-m12nsxx_defconfig"
+          echo "Trial63: .config exists after exynos850-m12nsxx_defconfig"
 
           # Keep the SUSFS master/core compiled so the Samsung/KSUN config
           # shape remains close to the Trial54 linking build.
@@ -4624,12 +4624,12 @@ jobs:
             KSU_SUSFS_SUS_SU
           do
             if grep -q "^CONFIG_${sym}=y$" .config; then
-              echo "::error::Trial62: runtime feature unexpectedly enabled: CONFIG_${sym}"
+              echo "::error::Trial63: runtime feature unexpectedly enabled: CONFIG_${sym}"
               exit 1
             fi
           done
 
-          echo "Trial62: CONFIG_KSU_SUSFS=y with ENABLE_LOG only; all higher-risk SUSFS feature families remain disabled."
+          echo "Trial63: CONFIG_KSU_SUSFS=y with ENABLE_LOG only; all higher-risk SUSFS feature families remain disabled."
 
       - name: Trial 18 v4 enable SUSFS core
         run: |
@@ -4810,13 +4810,13 @@ jobs:
           inc = '#include <linux/susfs.h>\n'
           if inc not in s:
               if inc_anchor not in s:
-                  raise SystemExit("Trial62: core/init.c include anchor not found")
+                  raise SystemExit("Trial63: core/init.c include anchor not found")
               s = s.replace(inc_anchor, inc_anchor + inc, 1)
 
           if 'susfs_init();' not in s:
               init_anchor = '\tksu_syscall_hook_init();\n'
               if init_anchor not in s:
-                  raise SystemExit("Trial62: ksu_syscall_hook_init anchor not found")
+                  raise SystemExit("Trial63: ksu_syscall_hook_init anchor not found")
               s = s.replace(
                   init_anchor,
                   init_anchor + '\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n',
@@ -4830,7 +4830,7 @@ jobs:
           inc_anchor = '#include <linux/version.h>\n'
           if '#include <linux/susfs.h>\n' not in s:
               if inc_anchor not in s:
-                  raise SystemExit("Trial62: dispatch.c include anchor not found")
+                  raise SystemExit("Trial63: dispatch.c include anchor not found")
               s = s.replace(inc_anchor, inc_anchor + '#include <linux/susfs.h>\n', 1)
 
           if 'int ksu_handle_sys_reboot(' not in s:
@@ -4841,7 +4841,7 @@ jobs:
               fn_anchor = '// IOCTL handlers mapping table\n'
               pos = s.find(fn_anchor)
               if pos < 0:
-                  raise SystemExit("Trial62: dispatch IOCTL mapping-table anchor not found")
+                  raise SystemExit("Trial63: dispatch IOCTL mapping-table anchor not found")
 
               dispatcher = '''int ksu_handle_sys_reboot(int magic1, int magic2,
                           unsigned int cmd, void __user **arg)
@@ -4929,7 +4929,7 @@ jobs:
                       'unsigned int cmd, void __user **arg);\n'
                       '#endif\n')
               if include_anchor not in s:
-                  raise SystemExit("Trial62: supercall include anchor not found")
+                  raise SystemExit("Trial63: supercall include anchor not found")
               s = s.replace(include_anchor, include_anchor + decl, 1)
 
           old = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
@@ -4953,9 +4953,15 @@ jobs:
 
           #ifdef CONFIG_KSU_SUSFS
               if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == SUSFS_MAGIC &&
-                  current_uid().val == 0)
-                  return ksu_handle_sys_reboot(magic1, magic2, cmd,
-                                               (void __user **)arg4);
+                  current_uid().val == 0) {
+                  void __user *arg = (void __user *)arg4;
+
+                  /*
+                   * ksu_handle_sys_reboot() expects &arg, where arg itself
+                   * contains the userspace command-buffer address.
+                   */
+                  return ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+              }
           #endif
 
               if (likely(ksu_orig_reboot_syscall))
@@ -4965,19 +4971,19 @@ jobs:
           }
           '''
           if old not in s:
-              raise SystemExit("Trial62: Samsung direct reboot wrapper anchor not found")
+              raise SystemExit("Trial63: Samsung direct reboot wrapper anchor not found")
           s = s.replace(old, new, 1)
 
           inc_anchor = '#include <linux/utsname.h> // utsname() and uts_sem\n'
           if '#include <linux/susfs.h>\n' not in s:
               if inc_anchor not in s:
-                  raise SystemExit("Trial62: supercall SUSFS include anchor not found")
+                  raise SystemExit("Trial63: supercall SUSFS include anchor not found")
               s = s.replace(inc_anchor, inc_anchor + '#include <linux/susfs.h>\n', 1)
 
           p.write_text(s)
           PY
 
-          echo "=== Trial 62 initialized SUSFS + Samsung direct reboot ABI verification ==="
+          echo "=== Trial 63 SUSFS reboot argument pointer-level verification ==="
           grep -n -A8 -B4 'susfs_init();' KernelSU-Next/kernel/core/init.c
           grep -n -A55 -B5 'int ksu_handle_sys_reboot' KernelSU-Next/kernel/supercall/dispatch.c
           grep -n -A32 -B5 'long __nocfi ksu_sys_reboot_install_fd' KernelSU-Next/kernel/supercall/supercall.c
@@ -4988,9 +4994,12 @@ jobs:
           grep -q 'susfs_get_enabled_features(arg);' KernelSU-Next/kernel/supercall/dispatch.c
           grep -q 'CMD_SUSFS_SHOW_VERSION' KernelSU-Next/kernel/supercall/dispatch.c
           grep -q 'ksu_handle_sys_reboot(magic1, magic2, cmd' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'void __user \*arg = (void __user \*)arg4;' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);' KernelSU-Next/kernel/supercall/supercall.c
+          ! grep -q '(void __user \*\*)arg4' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'reboot kprobe disabled for compatibility' KernelSU-Next/kernel/supercall/supercall.c
 
-          echo "Trial62: SUSFS initialized and official v2.2 reboot ABI routed through Samsung non-kprobe transport."
+          echo "Trial63: SUSFS v2.2 reboot ABI uses a kernel-local userspace pointer and passes its address."
 
       - name: Trial 61 retain copied_size compatibility guard
         run: |
@@ -5124,7 +5133,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-62-SUSFS-V220-DISPATCH-TABLE-ANCHOR-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-63-SUSFS-V220-REBOOT-ARG-POINTER-LEVEL-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -5137,8 +5146,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-62-SUSFS-V220-DISPATCH-TABLE-ANCHOR-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-62-SUSFS-V220-DISPATCH-TABLE-ANCHOR-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-63-SUSFS-V220-REBOOT-ARG-POINTER-LEVEL-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-63-SUSFS-V220-REBOOT-ARG-POINTER-LEVEL-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
