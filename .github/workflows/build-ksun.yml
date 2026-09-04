@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 59 SUSFS v2.2.0 Base Core copied_size Guard
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 60 SUSFS v2.2.0 Base Core copy_config Helper Guard
 
 on:
   workflow_dispatch:
@@ -4827,6 +4827,41 @@ jobs:
 
           echo "Trial59: copied_size remains available to feature builds but no longer trips -Werror when all feature families are disabled."
 
+      - name: Trial 60 guard unused SUSFS copy_config_to_buf helper in base-core build
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/susfs.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/susfs.c")
+          s = p.read_text()
+
+          old = "static int copy_config_to_buf(const char *config_string, char *buf_ptr, size_t *copied_size, size_t bufsize) {"
+          new = "static __maybe_unused int copy_config_to_buf(const char *config_string, char *buf_ptr, size_t *copied_size, size_t bufsize) {"
+
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial60: expected exactly one copy_config_to_buf definition, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 60 copy_config_to_buf base-core guard ==="
+          grep -n -A5 -B3 'static __maybe_unused int copy_config_to_buf' "$FILE"
+
+          test "$(grep -c 'static __maybe_unused int copy_config_to_buf' "$FILE")" -eq 1
+          ! grep -q '^static int copy_config_to_buf' "$FILE"
+
+          echo "Trial60: copy_config_to_buf remains available for feature-enabled builds but no longer trips -Werror in base-core isolation."
+
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
@@ -4889,7 +4924,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-59-SUSFS-V220-BASE-CORE-COPIED-SIZE-GUARD.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-60-SUSFS-V220-BASE-CORE-COPY-CONFIG-HELPER-GUARD.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4902,8 +4937,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-59-SUSFS-V220-BASE-CORE-COPIED-SIZE-GUARD
-          path: M127F-KSUN-v3.3.0-TRIAL-59-SUSFS-V220-BASE-CORE-COPIED-SIZE-GUARD.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-60-SUSFS-V220-BASE-CORE-COPY-CONFIG-HELPER-GUARD
+          path: M127F-KSUN-v3.3.0-TRIAL-60-SUSFS-V220-BASE-CORE-COPY-CONFIG-HELPER-GUARD.zip
           if-no-files-found: error
           compression-level: 0
 
