@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 58 SUSFS v2.2.0 Base Core Only Runtime Isolation
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 59 SUSFS v2.2.0 Base Core copied_size Guard
 
 on:
   workflow_dispatch:
@@ -4792,6 +4792,41 @@ jobs:
           print("Trial 17 v2 verification passed")
           PY
 
+      - name: Trial 59 guard SUSFS base-core copied_size when feature families are disabled
+        run: |
+          set -euxo pipefail
+
+          FILE="fs/susfs.c"
+          test -f "$FILE"
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/susfs.c")
+          s = p.read_text()
+
+          old = "\tsize_t copied_size = 0;"
+          new = "\tsize_t copied_size __maybe_unused = 0;"
+
+          count = s.count(old)
+          if count != 1:
+              raise SystemExit(
+                  f"Trial59: expected exactly one copied_size declaration, found {count}"
+              )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 59 copied_size base-core guard ==="
+          grep -n -A4 -B4 'copied_size __maybe_unused' "$FILE"
+
+          test "$(grep -c 'size_t copied_size __maybe_unused = 0;' "$FILE")" -eq 1
+          ! grep -q $'\tsize_t copied_size = 0;' "$FILE"
+
+          echo "Trial59: copied_size remains available to feature builds but no longer trips -Werror when all feature families are disabled."
+
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
@@ -4854,7 +4889,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-58-SUSFS-V220-BASE-CORE-ONLY-RUNTIME-ISOLATION.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-59-SUSFS-V220-BASE-CORE-COPIED-SIZE-GUARD.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4867,8 +4902,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-58-SUSFS-V220-BASE-CORE-ONLY-RUNTIME-ISOLATION
-          path: M127F-KSUN-v3.3.0-TRIAL-58-SUSFS-V220-BASE-CORE-ONLY-RUNTIME-ISOLATION.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-59-SUSFS-V220-BASE-CORE-COPIED-SIZE-GUARD
+          path: M127F-KSUN-v3.3.0-TRIAL-59-SUSFS-V220-BASE-CORE-COPIED-SIZE-GUARD.zip
           if-no-files-found: error
           compression-level: 0
 
