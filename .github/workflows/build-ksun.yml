@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 57 SUSFS v2.2.0 Runtime Isolation Trigger Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 58 SUSFS v2.2.0 Base Core Only Runtime Isolation
 
 on:
   workflow_dispatch:
@@ -4557,10 +4557,10 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
-      - name: Trial 19 v2 enable SUSFS v1.5.7 features after defconfig
+      - name: Trial 58 keep SUSFS core enabled but disable all runtime feature families
         run: |
           set -euxo pipefail
-          
+
           export PLATFORM_VERSION=13
           export ANDROID_MAJOR_VERSION=t
           export ARCH=arm64
@@ -4568,12 +4568,18 @@ jobs:
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
           export PATH="$HOME/toolchain/bin:$PATH"
-          
+
           test -f .config
-          echo "Trial 19 v2: .config exists after exynos850-m12nsxx_defconfig"
-          
+          echo "Trial58: .config exists after exynos850-m12nsxx_defconfig"
+
+          # Keep the SUSFS master/core compiled so the Samsung/KSUN config
+          # shape remains close to the Trial54 linking build.
           ./scripts/config --enable KSU_SUSFS
-          
+
+          # Boot-isolation boundary: compile out every active SUSFS feature
+          # family while leaving CONFIG_KSU_SUSFS=y. This avoids the unrelated
+          # Samsung compile fallout observed when the master switch itself was
+          # forced off in Trial57.
           for sym in \
             KSU_SUSFS_SUS_PATH \
             KSU_SUSFS_SUS_MOUNT \
@@ -4583,34 +4589,47 @@ jobs:
             KSU_SUSFS_ENABLE_LOG \
             KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
-            KSU_SUSFS_OPEN_REDIRECT
+            KSU_SUSFS_OPEN_REDIRECT \
+            KSU_SUSFS_SUS_SU \
+            KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT \
+            KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT \
+            KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT \
+            KSU_SUSFS_HAS_MAGIC_MOUNT \
+            KSU_SUSFS_SUS_OVERLAYFS \
+            KSU_SUSFS_SUS_MAP
           do
-            if grep -qE "^config[[:space:]]+$sym([[:space:]]|$)" KernelSU-Next/kernel/Kconfig; then
-              ./scripts/config --enable "$sym"
-            fi
+            ./scripts/config --disable "$sym" || true
           done
-          
-          # Keep SUS_SU off: this Samsung 4.19 build already uses our proven
-          # non-kprobe KernelSU transport/hook path.
-          ./scripts/config --disable KSU_SUSFS_SUS_SU || true
-          
+
           make ARCH=arm64 \
             CC=clang \
             CLANG_TRIPLE=aarch64-linux-gnu- \
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
-          
-          echo "=== Trial 19 final SUSFS config ==="
-          grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config | sort
-          
+
+          echo "=== Trial 58 SUSFS base-core-only config ==="
+          grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config | sort || true
+
           grep -q '^CONFIG_KSU_SUSFS=y$' .config
-          
-          if grep -q '^CONFIG_KSU_SUSFS_SUS_SU=y$' .config; then
-            echo "::error::SUS_SU must remain disabled on this Samsung 4.19 non-kprobe build."
-            exit 1
-          fi
-          
-          echo "Trial 19 v2: SUSFS v1.5.7 features enabled after M127F defconfig; SUS_SU intentionally disabled."
+
+          for sym in \
+            KSU_SUSFS_SUS_PATH \
+            KSU_SUSFS_SUS_MOUNT \
+            KSU_SUSFS_SUS_KSTAT \
+            KSU_SUSFS_TRY_UMOUNT \
+            KSU_SUSFS_SPOOF_UNAME \
+            KSU_SUSFS_ENABLE_LOG \
+            KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
+            KSU_SUSFS_OPEN_REDIRECT \
+            KSU_SUSFS_SUS_SU
+          do
+            if grep -q "^CONFIG_${sym}=y$" .config; then
+              echo "::error::Trial58: runtime feature unexpectedly enabled: CONFIG_${sym}"
+              exit 1
+            fi
+          done
+
+          echo "Trial58: CONFIG_KSU_SUSFS=y retained; active SUSFS runtime feature families disabled."
 
       - name: Trial 18 v4 enable SUSFS core
         run: |
@@ -4773,86 +4792,6 @@ jobs:
           print("Trial 17 v2 verification passed")
           PY
 
-      - name: Trial 56 disable SUSFS runtime for boot isolation with Samsung Kconfig env
-        run: |
-          set -euxo pipefail
-
-          CFG=".config"
-          test -f "$CFG"
-
-          # Runtime isolation only: preserve all Trial34-54 source migrations,
-          # but force SUSFS completely off in the final kernel config.
-          python3 - <<'PY2'
-          from pathlib import Path
-
-          p = Path(".config")
-          lines = p.read_text().splitlines()
-
-          disable = {
-              "CONFIG_KSU_SUSFS",
-              "CONFIG_KSU_SUSFS_SUS_PATH",
-              "CONFIG_KSU_SUSFS_SUS_MOUNT",
-              "CONFIG_KSU_SUSFS_SUS_KSTAT",
-              "CONFIG_KSU_SUSFS_TRY_UMOUNT",
-              "CONFIG_KSU_SUSFS_SPOOF_UNAME",
-              "CONFIG_KSU_SUSFS_ENABLE_LOG",
-              "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG",
-              "CONFIG_KSU_SUSFS_OPEN_REDIRECT",
-              "CONFIG_KSU_SUSFS_SUS_SU",
-              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT",
-              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT",
-              "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT",
-              "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT",
-              "CONFIG_KSU_SUSFS_SUS_OVERLAYFS",
-          }
-
-          out = []
-          seen = set()
-          for line in lines:
-              matched = False
-              for sym in disable:
-                  if line.startswith(sym + "=") or line == f"# {sym} is not set":
-                      if sym not in seen:
-                          out.append(f"# {sym} is not set")
-                          seen.add(sym)
-                      matched = True
-                      break
-              if not matched:
-                  out.append(line)
-
-          for sym in sorted(disable - seen):
-              out.append(f"# {sym} is not set")
-
-          p.write_text("\\n".join(out) + "\\n")
-          PY2
-
-          export PATH="$HOME/toolchain/bin:$PATH"
-          export PLATFORM_VERSION=13
-          export ANDROID_MAJOR_VERSION=t
-          export ARCH=arm64
-          export CC=clang
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-
-          echo "Trial57: reusing Samsung Kconfig environment for SUSFS-off olddefconfig"
-          echo "PLATFORM_VERSION=$PLATFORM_VERSION ANDROID_MAJOR_VERSION=$ANDROID_MAJOR_VERSION"
-
-          make ARCH=arm64 \
-            CC=clang \
-            CLANG_TRIPLE=aarch64-linux-gnu- \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            olddefconfig
-
-          echo "=== Trial 57 SUSFS runtime isolation config ==="
-          grep -E '^CONFIG_KSU_SUSFS|^# CONFIG_KSU_SUSFS' .config | sort || true
-
-          if grep -q '^CONFIG_KSU_SUSFS=y' .config; then
-            echo "::error::Trial57: CONFIG_KSU_SUSFS unexpectedly re-enabled"
-            exit 1
-          fi
-
-          echo "Trial57: all source migrations preserved; SUSFS runtime disabled for boot isolation."
-
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
@@ -4915,7 +4854,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-57-SUSFS-V220-RUNTIME-ISOLATION-TRIGGER-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-58-SUSFS-V220-BASE-CORE-ONLY-RUNTIME-ISOLATION.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4928,8 +4867,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-57-SUSFS-V220-RUNTIME-ISOLATION-TRIGGER-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-57-SUSFS-V220-RUNTIME-ISOLATION-TRIGGER-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-58-SUSFS-V220-BASE-CORE-ONLY-RUNTIME-ISOLATION
+          path: M127F-KSUN-v3.3.0-TRIAL-58-SUSFS-V220-BASE-CORE-ONLY-RUNTIME-ISOLATION.zip
           if-no-files-found: error
           compression-level: 0
 
