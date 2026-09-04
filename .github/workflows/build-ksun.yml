@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 60 SUSFS v2.2.0 Base Core copy_config Helper Guard
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 61 SUSFS v2.2.0 Detection Log Only
 
 on:
   workflow_dispatch:
@@ -4557,7 +4557,7 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
-      - name: Trial 58 keep SUSFS core enabled but disable all runtime feature families
+      - name: Trial 61 enable SUSFS detection with logging only
         run: |
           set -euxo pipefail
 
@@ -4570,14 +4570,15 @@ jobs:
           export PATH="$HOME/toolchain/bin:$PATH"
 
           test -f .config
-          echo "Trial58: .config exists after exynos850-m12nsxx_defconfig"
+          echo "Trial61: .config exists after exynos850-m12nsxx_defconfig"
 
           # Keep the SUSFS master/core compiled so the Samsung/KSUN config
           # shape remains close to the Trial54 linking build.
           ./scripts/config --enable KSU_SUSFS
+          ./scripts/config --enable KSU_SUSFS_ENABLE_LOG
 
-          # Boot-isolation boundary: compile out every active SUSFS feature
-          # family while leaving CONFIG_KSU_SUSFS=y. This avoids the unrelated
+          # Detection-isolation boundary: compile out every active SUSFS feature
+          # family except ENABLE_LOG while leaving CONFIG_KSU_SUSFS=y. This avoids the unrelated
           # Samsung compile fallout observed when the master switch itself was
           # forced off in Trial57.
           for sym in \
@@ -4586,7 +4587,6 @@ jobs:
             KSU_SUSFS_SUS_KSTAT \
             KSU_SUSFS_TRY_UMOUNT \
             KSU_SUSFS_SPOOF_UNAME \
-            KSU_SUSFS_ENABLE_LOG \
             KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
             KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             KSU_SUSFS_OPEN_REDIRECT \
@@ -4607,10 +4607,11 @@ jobs:
             CROSS_COMPILE=aarch64-linux-gnu- \
             olddefconfig
 
-          echo "=== Trial 58 SUSFS base-core-only config ==="
+          echo "=== Trial 61 SUSFS detection log-only config ==="
           grep -E '^CONFIG_KSU_SUSFS(=|_)|^# CONFIG_KSU_SUSFS' .config | sort || true
 
           grep -q '^CONFIG_KSU_SUSFS=y$' .config
+          grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y$' .config
 
           for sym in \
             KSU_SUSFS_SUS_PATH \
@@ -4618,18 +4619,17 @@ jobs:
             KSU_SUSFS_SUS_KSTAT \
             KSU_SUSFS_TRY_UMOUNT \
             KSU_SUSFS_SPOOF_UNAME \
-            KSU_SUSFS_ENABLE_LOG \
             KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG \
             KSU_SUSFS_OPEN_REDIRECT \
             KSU_SUSFS_SUS_SU
           do
             if grep -q "^CONFIG_${sym}=y$" .config; then
-              echo "::error::Trial58: runtime feature unexpectedly enabled: CONFIG_${sym}"
+              echo "::error::Trial61: runtime feature unexpectedly enabled: CONFIG_${sym}"
               exit 1
             fi
           done
 
-          echo "Trial58: CONFIG_KSU_SUSFS=y retained; active SUSFS runtime feature families disabled."
+          echo "Trial61: CONFIG_KSU_SUSFS=y with ENABLE_LOG only; all higher-risk SUSFS feature families remain disabled."
 
       - name: Trial 18 v4 enable SUSFS core
         run: |
@@ -4642,9 +4642,9 @@ jobs:
             -E 'config[[:space:]]+KSU_SUSFS|KSU_SUSFS_' \
             . 2>/dev/null | head -n 160 || true
           
-          # Start with the exact core only. Optional hide/spoof switches remain
-          # at their declared defaults for the first boot-safety validation.
+          # Preserve Trial61 selection: SUSFS core + ENABLE_LOG only.
           ./scripts/config --enable KSU_SUSFS
+          ./scripts/config --enable KSU_SUSFS_ENABLE_LOG
           
           export PATH="$HOME/toolchain/bin:$PATH"
           export PLATFORM_VERSION=13
@@ -4792,7 +4792,203 @@ jobs:
           print("Trial 17 v2 verification passed")
           PY
 
-      - name: Trial 59 guard SUSFS base-core copied_size when feature families are disabled
+      - name: Trial 61 initialize SUSFS and route v2.2 reboot ABI through Samsung direct hook
+        run: |
+          set -euxo pipefail
+
+          test -f fs/susfs.c
+          test -f include/linux/susfs.h
+          grep -q '#define SUSFS_VERSION "v2.2.0"' include/linux/susfs.h
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/core/init.c")
+          s = p.read_text()
+
+          inc_anchor = '#include <linux/workqueue.h>\n'
+          inc = '#include <linux/susfs.h>\n'
+          if inc not in s:
+              if inc_anchor not in s:
+                  raise SystemExit("Trial61: core/init.c include anchor not found")
+              s = s.replace(inc_anchor, inc_anchor + inc, 1)
+
+          if 'susfs_init();' not in s:
+              init_anchor = '\tksu_syscall_hook_init();\n'
+              if init_anchor not in s:
+                  raise SystemExit("Trial61: ksu_syscall_hook_init anchor not found")
+              s = s.replace(
+                  init_anchor,
+                  init_anchor + '\n#ifdef CONFIG_KSU_SUSFS\n\tsusfs_init();\n#endif\n',
+                  1,
+              )
+          p.write_text(s)
+
+          p = Path("KernelSU-Next/kernel/supercall/dispatch.c")
+          s = p.read_text()
+
+          inc_anchor = '#include <linux/version.h>\n'
+          if '#include <linux/susfs.h>\n' not in s:
+              if inc_anchor not in s:
+                  raise SystemExit("Trial61: dispatch.c include anchor not found")
+              s = s.replace(inc_anchor, inc_anchor + '#include <linux/susfs.h>\n', 1)
+
+          if 'int ksu_handle_sys_reboot(' not in s:
+              fn_anchor = 'long ksu_supercall_handle_ioctl(unsigned int cmd, void __user *arg)'
+              pos = s.find(fn_anchor)
+              if pos < 0:
+                  raise SystemExit("Trial61: dispatch ioctl function anchor not found")
+
+              dispatcher = '''int ksu_handle_sys_reboot(int magic1, int magic2,
+                          unsigned int cmd, void __user **arg)
+          {
+              if (magic1 != KSU_INSTALL_MAGIC1)
+                  return -EINVAL;
+
+              if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {
+                  switch (cmd) {
+          #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+                  case CMD_SUSFS_ADD_SUS_PATH:
+            susfs_add_sus_path(arg);
+            return 0;
+                  case CMD_SUSFS_ADD_SUS_PATH_LOOP:
+            susfs_add_sus_path_loop(arg);
+            return 0;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+                  case CMD_SUSFS_ADD_SUS_MOUNT:
+            susfs_add_sus_mount(arg);
+            return 0;
+                  case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS:
+            susfs_hide_sus_mnts_for_non_su_procs(arg);
+            return 0;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+                  case CMD_SUSFS_ADD_SUS_KSTAT:
+            susfs_add_sus_kstat(arg);
+            return 0;
+                  case CMD_SUSFS_UPDATE_SUS_KSTAT:
+            susfs_update_sus_kstat(arg);
+            return 0;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+                  case CMD_SUSFS_SET_UNAME:
+            susfs_set_uname(arg);
+            return 0;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+                  case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+            susfs_set_cmdline_or_bootconfig(arg);
+            return 0;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+                  case CMD_SUSFS_ADD_OPEN_REDIRECT:
+            susfs_add_open_redirect(arg);
+            return 0;
+          #endif
+          #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+                  case CMD_SUSFS_ADD_SUS_MAP:
+            susfs_add_sus_map(arg);
+            return 0;
+          #endif
+                  case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:
+            susfs_set_avc_log_spoofing(arg);
+            return 0;
+                  case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+            susfs_get_enabled_features(arg);
+            return 0;
+                  case CMD_SUSFS_SHOW_VARIANT:
+            susfs_show_variant(arg);
+            return 0;
+                  case CMD_SUSFS_SHOW_VERSION:
+            susfs_show_version(arg);
+            return 0;
+                  default:
+            return -EINVAL;
+                  }
+              }
+
+              return -EINVAL;
+          }
+
+          '''
+              s = s[:pos] + dispatcher + s[pos:]
+          p.write_text(s)
+
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
+          s = p.read_text()
+
+          if 'ksu_handle_sys_reboot' not in s:
+              include_anchor = '#include "supercall/internal.h"\n'
+              decl = ('#ifdef CONFIG_KSU_SUSFS\n'
+                      'extern int ksu_handle_sys_reboot(int magic1, int magic2, '
+                      'unsigned int cmd, void __user **arg);\n'
+                      '#endif\n')
+              if include_anchor not in s:
+                  raise SystemExit("Trial61: supercall include anchor not found")
+              s = s.replace(include_anchor, include_anchor + decl, 1)
+
+          old = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          {
+              ksu_samsung419_install_driver_fd(regs);
+
+              if (likely(ksu_orig_reboot_syscall))
+                  return ksu_orig_reboot_syscall(regs);
+
+              return -ENOSYS;
+          }
+          '''
+          new = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          {
+              int magic1 = (int)PT_REGS_PARM1(regs);
+              int magic2 = (int)PT_REGS_PARM2(regs);
+              unsigned int cmd = (unsigned int)PT_REGS_PARM3(regs);
+              unsigned long arg4 = (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
+
+              ksu_samsung419_install_driver_fd(regs);
+
+          #ifdef CONFIG_KSU_SUSFS
+              if (magic1 == KSU_INSTALL_MAGIC1 && magic2 == SUSFS_MAGIC &&
+                  current_uid().val == 0)
+                  return ksu_handle_sys_reboot(magic1, magic2, cmd,
+                                               (void __user **)arg4);
+          #endif
+
+              if (likely(ksu_orig_reboot_syscall))
+                  return ksu_orig_reboot_syscall(regs);
+
+              return -ENOSYS;
+          }
+          '''
+          if old not in s:
+              raise SystemExit("Trial61: Samsung direct reboot wrapper anchor not found")
+          s = s.replace(old, new, 1)
+
+          inc_anchor = '#include <linux/utsname.h> // utsname() and uts_sem\n'
+          if '#include <linux/susfs.h>\n' not in s:
+              if inc_anchor not in s:
+                  raise SystemExit("Trial61: supercall SUSFS include anchor not found")
+              s = s.replace(inc_anchor, inc_anchor + '#include <linux/susfs.h>\n', 1)
+
+          p.write_text(s)
+          PY
+
+          echo "=== Trial 61 initialized SUSFS + Samsung direct reboot ABI verification ==="
+          grep -n -A8 -B4 'susfs_init();' KernelSU-Next/kernel/core/init.c
+          grep -n -A55 -B5 'int ksu_handle_sys_reboot' KernelSU-Next/kernel/supercall/dispatch.c
+          grep -n -A32 -B5 'long __nocfi ksu_sys_reboot_install_fd' KernelSU-Next/kernel/supercall/supercall.c
+
+          grep -q '#include <linux/susfs.h>' KernelSU-Next/kernel/core/init.c
+          grep -q 'susfs_init();' KernelSU-Next/kernel/core/init.c
+          grep -q 'CMD_SUSFS_SHOW_ENABLED_FEATURES' KernelSU-Next/kernel/supercall/dispatch.c
+          grep -q 'susfs_get_enabled_features(arg);' KernelSU-Next/kernel/supercall/dispatch.c
+          grep -q 'CMD_SUSFS_SHOW_VERSION' KernelSU-Next/kernel/supercall/dispatch.c
+          grep -q 'ksu_handle_sys_reboot(magic1, magic2, cmd' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'reboot kprobe disabled for compatibility' KernelSU-Next/kernel/supercall/supercall.c
+
+          echo "Trial61: SUSFS initialized and official v2.2 reboot ABI routed through Samsung non-kprobe transport."
+
+      - name: Trial 61 retain copied_size compatibility guard
         run: |
           set -euxo pipefail
 
@@ -4827,7 +5023,7 @@ jobs:
 
           echo "Trial59: copied_size remains available to feature builds but no longer trips -Werror when all feature families are disabled."
 
-      - name: Trial 60 guard unused SUSFS copy_config_to_buf helper in base-core build
+      - name: Trial 61 retain copy_config_to_buf compatibility guard
         run: |
           set -euxo pipefail
 
@@ -4924,7 +5120,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-60-SUSFS-V220-BASE-CORE-COPY-CONFIG-HELPER-GUARD.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-61-SUSFS-V220-DETECTION-LOG-ONLY.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -4937,8 +5133,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-60-SUSFS-V220-BASE-CORE-COPY-CONFIG-HELPER-GUARD
-          path: M127F-KSUN-v3.3.0-TRIAL-60-SUSFS-V220-BASE-CORE-COPY-CONFIG-HELPER-GUARD.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-61-SUSFS-V220-DETECTION-LOG-ONLY
+          path: M127F-KSUN-v3.3.0-TRIAL-61-SUSFS-V220-DETECTION-LOG-ONLY.zip
           if-no-files-found: error
           compression-level: 0
 
