@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R1 Manual Reboot Manager UID Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R2 Manager Throne Rediscovery Seccomp Fix
 
 on:
   workflow_dispatch:
@@ -3001,7 +3001,7 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
-      - name: Make boot-completed handler track-throne-only on Samsung 4.19
+      - name: Trial 17R2 rediscover signed manager on boot for seccomp reboot allowance
         run: |
           set -euxo pipefail
           python3 - <<'PY2'
@@ -3010,7 +3010,7 @@ jobs:
           p = Path("KernelSU-Next/kernel/runtime/boot_event.c")
           s = p.read_text()
           old = "void on_boot_completed(void)\n{\n    ksu_boot_completed = true;\n    pr_info(\"on_boot_completed!\\n\");\n    track_throne(true);\n    ksu_selinux_hide_drop_backup_if_unused();\n    ksu_avc_spoof_late_init();\n}\n"
-          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 diagnostic: full boot-completed handler with staged logs. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 diagnostic: on_boot_completed full-handler entered\\n\");\n    track_throne(true);\n    pr_warn(\"Samsung 4.19 diagnostic: track_throne(true) returned\\n\");\n    ksu_selinux_hide_drop_backup_if_unused();\n    pr_warn(\"Samsung 4.19 diagnostic: selinux_hide_drop_backup_if_unused returned\\n\");\n    ksu_avc_spoof_late_init();\n    pr_warn(\"Samsung 4.19 diagnostic: ksu_avc_spoof_late_init returned\\n\");\n}\n"
+          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 Trial17R2: actively rediscover the signed manager at boot. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 Trial17R2: on_boot_completed manager rediscovery entered\\n\");\n    track_throne(false);\n    pr_warn(\"Samsung 4.19 Trial17R2: track_throne(false) returned\\n\");\n    ksu_selinux_hide_drop_backup_if_unused();\n    pr_warn(\"Samsung 4.19 Trial17R2: selinux_hide_drop_backup_if_unused returned\\n\");\n    ksu_avc_spoof_late_init();\n    pr_warn(\"Samsung 4.19 Trial17R2: ksu_avc_spoof_late_init returned\\n\");\n}\n"
           if old not in s:
               raise SystemExit("original on_boot_completed body not found")
           p.write_text(s.replace(old, new, 1))
@@ -3278,7 +3278,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R1-MANUAL-REBOOT-MANAGER-UID-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R2-MANAGER-THRONE-REDISCOVERY-SECCOMP-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3291,8 +3291,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17R1-MANUAL-REBOOT-MANAGER-UID-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-17R1-MANUAL-REBOOT-MANAGER-UID-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17R2-MANAGER-THRONE-REDISCOVERY-SECCOMP-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-17R2-MANAGER-THRONE-REDISCOVERY-SECCOMP-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
