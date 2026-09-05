@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D1 Magisk-Assisted Runtime Diagnostics
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D2 Magisk-Assisted Runtime Diagnostics Anchor Fix
 
 on:
   workflow_dispatch:
@@ -3159,9 +3159,9 @@ jobs:
                   raise SystemExit("Trial17D1: setresuid function anchor not found")
               t = t.replace(fn_anchor, fn_new, 1)
 
-          allow_anchor = "\t\tksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);\n"
-          allow_add = '''\t\tpr_warn("Trial17D1: manager reboot cache allow requested nr=%d filter=%px\\n",
-          \t\t\t__NR_reboot, current->seccomp.filter);\n'''
+          allow_anchor = "        ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);\n"
+          allow_add = '''        pr_warn("Trial17D1: manager reboot cache allow requested nr=%d filter=%px\\n",
+                    __NR_reboot, current->seccomp.filter);\n'''
           if "Trial17D1: manager reboot cache allow requested" not in t:
               if allow_anchor not in t:
                   raise SystemExit("Trial17D1: manager seccomp allow anchor not found")
@@ -3348,7 +3348,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D1-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D2-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS-ANCHOR-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3361,8 +3361,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17D1-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS
-          path: M127F-KSUN-v3.3.0-TRIAL-17D1-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D2-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS-ANCHOR-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-17D2-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS-ANCHOR-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
