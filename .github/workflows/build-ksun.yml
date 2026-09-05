@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R4 Direct setresuid Seccomp Hook
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D1 Magisk-Assisted Runtime Diagnostics
 
 on:
   workflow_dispatch:
@@ -3001,36 +3001,6 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
-      - name: Trial 17R2 rediscover signed manager on boot for seccomp reboot allowance
-        run: |
-          set -euxo pipefail
-          python3 - <<'PY2'
-          from pathlib import Path
-          
-          p = Path("KernelSU-Next/kernel/runtime/boot_event.c")
-          s = p.read_text()
-          old = "void on_boot_completed(void)\n{\n    ksu_boot_completed = true;\n    pr_info(\"on_boot_completed!\\n\");\n    track_throne(true);\n    ksu_selinux_hide_drop_backup_if_unused();\n    ksu_avc_spoof_late_init();\n}\n"
-          new = "void on_boot_completed(void)\n{\n    /* Samsung 4.19 Trial17R2: actively rediscover the signed manager at boot. */\n    ksu_boot_completed = true;\n    pr_warn(\"Samsung 4.19 Trial17R2: on_boot_completed manager rediscovery entered\\n\");\n    track_throne(false);\n    pr_warn(\"Samsung 4.19 Trial17R2: track_throne(false) returned\\n\");\n    ksu_selinux_hide_drop_backup_if_unused();\n    pr_warn(\"Samsung 4.19 Trial17R2: selinux_hide_drop_backup_if_unused returned\\n\");\n    ksu_avc_spoof_late_init();\n    pr_warn(\"Samsung 4.19 Trial17R2: ksu_avc_spoof_late_init returned\\n\");\n}\n"
-          if old not in s:
-              raise SystemExit("original on_boot_completed body not found")
-          p.write_text(s.replace(old, new, 1))
-          
-          p = Path("KernelSU-Next/kernel/extras.c")
-          s = p.read_text()
-          old = '#ifdef CONFIG_KPROBES\n\tpr_info("avc_spoof/init: register slow_avc_audit kprobe!\\n");\n\tslow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);\n#endif'
-          new = '#ifdef CONFIG_KPROBES\n#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n\tpr_warn("Samsung 4.19 diagnostic: avc_spoof slow_avc_audit kprobe suppressed\\n");\n#else\n\tpr_info("avc_spoof/init: register slow_avc_audit kprobe!\\n");\n\tslow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);\n#endif\n#endif'
-          if old not in s:
-              raise SystemExit("AVC spoof kprobe registration block not found")
-          p.write_text(s.replace(old, new, 1))
-          PY2
-          
-          grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
-          grep -q 'Samsung 4.19 Trial17R2: on_boot_completed manager rediscovery entered' KernelSU-Next/kernel/runtime/boot_event.c
-          grep -nA8 -B4 'slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
-          grep -q 'avc_spoof slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
-          grep -q 'track_throne(false);' KernelSU-Next/kernel/runtime/boot_event.c
-          echo "Trial17R3: manager rediscovery verification matches the patched runtime marker."
-
       - name: Trial 16 fix ARM64 4.19 section-mapped kernel address translation
         run: |
           set -euxo pipefail
@@ -3122,227 +3092,199 @@ jobs:
           print("Trial 17 v2 verification passed")
           PY
 
-      - name: Trial 17R1 restore CHANGE_MANAGER_UID on Samsung direct reboot hook
+
+      - name: Trial 17D1 instrument manager UID, setresuid, seccomp and reboot path
         run: |
           set -euxo pipefail
-
-          FILE="KernelSU-Next/kernel/supercall/supercall.c"
-          test -f "$FILE"
 
           python3 - <<'PY'
           from pathlib import Path
 
+          def insert_once(path, anchor, addition, label):
+              p = Path(path)
+              txt = p.read_text()
+              if addition.strip() in txt:
+                  return
+              if anchor not in txt:
+                  raise SystemExit(f"Trial17D1: {label} anchor not found")
+              txt = txt.replace(anchor, anchor + addition, 1)
+              p.write_text(txt)
+
+          # -------------------------------------------------------------
+          # 1) Manager throne tracking: log active manager appid and crown.
+          # -------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/manager/throne_tracker.c")
+          t = p.read_text()
+
+          anchor = "void track_throne(bool prune_only)\n{\n"
+          add = '''\tpr_warn("Trial17D1: track_throne prune_only=%d manager_appid=%u valid=%d\\n",
+          \t\tprune_only, ksu_get_manager_appid(),
+          \t\tksu_is_manager_appid_valid());\n'''
+          if "Trial17D1: track_throne" not in t:
+              if anchor not in t:
+                  raise SystemExit("Trial17D1: track_throne anchor not found")
+              t = t.replace(anchor, anchor + add, 1)
+
+          crown_anchor = "\t\t\tksu_set_manager_appid(np->uid);\n"
+          crown_add = '''\t\t\tpr_warn("Trial17D1: crowned manager package=%s appid=%u\\n",
+          \t\t\t\tpkg, np->uid);\n'''
+          if "Trial17D1: crowned manager" not in t:
+              if crown_anchor not in t:
+                  raise SystemExit("Trial17D1: crown_manager anchor not found")
+              t = t.replace(crown_anchor, crown_anchor + crown_add, 1)
+
+          p.write_text(t)
+
+          # -------------------------------------------------------------
+          # 2) setresuid hook: prove whether zygote->manager transition reaches
+          #    KernelSU and whether reboot cache permission is requested.
+          # -------------------------------------------------------------
+          p = Path("KernelSU-Next/kernel/hook/setuid_hook.c")
+          t = p.read_text()
+
+          fn_anchor = '''int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
+          {
+              // we rely on the fact that zygote always call setresuid(3) with same uids
+          '''
+          fn_new = '''int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
+          {
+              // we rely on the fact that zygote always call setresuid(3) with same uids
+              pr_warn("Trial17D1: setresuid old=%u new=%u manager_appid=%u is_manager=%d seccomp_mode=%d filter=%px\\n",
+                      old_uid, new_uid, ksu_get_manager_appid(),
+                      is_uid_manager(new_uid), current->seccomp.mode,
+                      current->seccomp.filter);
+          '''
+          if "Trial17D1: setresuid" not in t:
+              if fn_anchor not in t:
+                  raise SystemExit("Trial17D1: setresuid function anchor not found")
+              t = t.replace(fn_anchor, fn_new, 1)
+
+          allow_anchor = "\t\tksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);\n"
+          allow_add = '''\t\tpr_warn("Trial17D1: manager reboot cache allow requested nr=%d filter=%px\\n",
+          \t\t\t__NR_reboot, current->seccomp.filter);\n'''
+          if "Trial17D1: manager reboot cache allow requested" not in t:
+              if allow_anchor not in t:
+                  raise SystemExit("Trial17D1: manager seccomp allow anchor not found")
+              t = t.replace(allow_anchor, allow_anchor + allow_add, 1)
+
+          p.write_text(t)
+
+          # -------------------------------------------------------------
+          # 3) Real Samsung 4.19 seccomp engine: log reboot syscall filtering.
+          #    No allow/deny behavior is changed.
+          # -------------------------------------------------------------
+          p = Path("kernel/seccomp.c")
+          t = p.read_text()
+
+          inc_anchor = "#include <linux/sysctl.h>\n"
+          if "#include <asm/unistd.h>\n" not in t:
+              if inc_anchor not in t:
+                  raise SystemExit("Trial17D1: seccomp include anchor not found")
+              t = t.replace(inc_anchor, inc_anchor + "#include <asm/unistd.h>\n", 1)
+
+          pop_anchor = '''\tif (!sd) {
+          \t\tpopulate_seccomp_data(&sd_local);
+          \t\tsd = &sd_local;
+          \t}
+
+          \t/*
+          '''
+          pop_new = '''\tif (!sd) {
+          \t\tpopulate_seccomp_data(&sd_local);
+          \t\tsd = &sd_local;
+          \t}
+
+          \tif (unlikely(sd->nr == __NR_reboot))
+          \t\tpr_warn("Trial17D1: seccomp evaluating reboot uid=%u filter=%px\\n",
+          \t\t\tcurrent_uid().val, f);
+
+          \t/*
+          '''
+          if "Trial17D1: seccomp evaluating reboot" not in t:
+              if pop_anchor not in t:
+                  raise SystemExit("Trial17D1: seccomp evaluation anchor not found")
+              t = t.replace(pop_anchor, pop_new, 1)
+
+          loop_anchor = '''\tfor (; f; f = f->prev) {
+          \t\tu32 cur_ret = BPF_PROG_RUN(f->prog, sd);
+
+          \t\tif (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
+          '''
+          loop_new = '''\tfor (; f; f = f->prev) {
+          \t\tu32 cur_ret = BPF_PROG_RUN(f->prog, sd);
+
+          \t\tif (unlikely(sd->nr == __NR_reboot))
+          \t\t\tpr_warn("Trial17D1: seccomp reboot filter=%px cur_ret=0x%x aggregate_before=0x%x\\n",
+          \t\t\t\tf, cur_ret, ret);
+
+          \t\tif (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
+          '''
+          if "Trial17D1: seccomp reboot filter" not in t:
+              if loop_anchor not in t:
+                  raise SystemExit("Trial17D1: seccomp loop anchor not found")
+              t = t.replace(loop_anchor, loop_new, 1)
+
+          ret_anchor = "\treturn ret;\n}\n#endif /* CONFIG_SECCOMP_FILTER */\n"
+          ret_new = '''\tif (unlikely(sd->nr == __NR_reboot))
+          \t\tpr_warn("Trial17D1: seccomp reboot final_ret=0x%x uid=%u\\n",
+          \t\t\tret, current_uid().val);
+          \treturn ret;
+          }
+          #endif /* CONFIG_SECCOMP_FILTER */
+          '''
+          if "Trial17D1: seccomp reboot final_ret" not in t:
+              if ret_anchor not in t:
+                  raise SystemExit("Trial17D1: seccomp return anchor not found")
+              t = t.replace(ret_anchor, ret_new, 1)
+
+          p.write_text(t)
+
+          # -------------------------------------------------------------
+          # 4) Existing Samsung direct reboot wrapper: log whether a reboot
+          #    supercall survives seccomp and actually reaches the hook.
+          # -------------------------------------------------------------
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
-          s = p.read_text()
+          t = p.read_text()
 
-          old = """long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          wrapper_anchor = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
           {
               ksu_samsung419_install_driver_fd(regs);
-
-              if (likely(ksu_orig_reboot_syscall))
-                  return ksu_orig_reboot_syscall(regs);
-
-              return -ENOSYS;
-          }
-          """
-
-          new = """long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          '''
+          wrapper_new = '''long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
           {
-              int magic2 = (int)PT_REGS_PARM2(regs);
-              unsigned int cmd = (unsigned int)PT_REGS_PARM3(regs);
-              unsigned long arg4 =
-                  (unsigned long)PT_REGS_SYSCALL_PARM4(regs);
-              unsigned long reply = arg4;
-
-              /*
-               * Preserve Trial 15's Samsung-safe [ksu_driver] FD bootstrap.
-               * The reboot kprobe remains disabled on this 4.19 tree.
-               */
+              pr_warn("Trial17D1: reboot hook reached uid=%u magic1=0x%lx magic2=0x%lx cmd=0x%lx\\n",
+                      current_uid().val,
+                      (unsigned long)PT_REGS_PARM1(regs),
+                      (unsigned long)PT_REGS_PARM2(regs),
+                      (unsigned long)PT_REGS_PARM3(regs));
               ksu_samsung419_install_driver_fd(regs);
+          '''
+          if "Trial17D1: reboot hook reached" not in t:
+              if wrapper_anchor not in t:
+                  raise SystemExit("Trial17D1: direct reboot wrapper anchor not found")
+              t = t.replace(wrapper_anchor, wrapper_new, 1)
 
-              /*
-               * KernelSU-Next v3.3.0 also uses sys_reboot as a control
-               * transport for CHANGE_MANAGER_UID. The original Trial 15
-               * direct transport only forwarded the FD bootstrap, so manager
-               * appid changes were silently lost after suppressing the reboot
-               * kprobe.
-               *
-               * Mirror the pinned v3.3.0 reboot_handler_pre() semantics here,
-               * without restoring the Samsung-unsafe kprobe.
-               */
-              if (magic2 == CHANGE_MANAGER_UID) {
-                  if (current_uid().val != 0)
-                      goto call_original;
-
-                  pr_info("Samsung 4.19 Trial17R1: ksu_set_manager_appid to: %u\\n",
-                          cmd);
-                  ksu_set_manager_appid(cmd);
-
-                  if (cmd == ksu_get_manager_appid()) {
-                      if (copy_to_user((void __user *)arg4,
-                                       &reply, sizeof(reply)))
-                          pr_info("Samsung 4.19 Trial17R1: manager uid reply failed\\n");
-                  }
-
-                  return 0;
-              }
-
-          call_original:
-              if (likely(ksu_orig_reboot_syscall))
-                  return ksu_orig_reboot_syscall(regs);
-
-              return -ENOSYS;
-          }
-          """
-
-          count = s.count(old)
-          if count != 1:
-              raise SystemExit(
-                  f"Trial17R1: expected exactly one Trial15 reboot wrapper, found {count}"
-              )
-
-          s = s.replace(old, new, 1)
-          p.write_text(s)
+          p.write_text(t)
           PY
 
-          echo "=== Trial 17R1 manager UID manual reboot hook ==="
-          grep -n -A65 -B8 'long __nocfi ksu_sys_reboot_install_fd' "$FILE"
+          echo "=== Trial 17D1 diagnostic instrumentation verification ==="
 
-          grep -q 'magic2 == CHANGE_MANAGER_UID' "$FILE"
-          grep -q 'ksu_set_manager_appid(cmd);' "$FILE"
-          grep -q 'cmd == ksu_get_manager_appid()' "$FILE"
-          grep -q 'Samsung 4.19 Trial17R1: ksu_set_manager_appid' "$FILE"
+          grep -q 'Trial17D1: track_throne' \
+            KernelSU-Next/kernel/manager/throne_tracker.c
+          grep -q 'Trial17D1: setresuid' \
+            KernelSU-Next/kernel/hook/setuid_hook.c
+          grep -q 'Trial17D1: manager reboot cache allow requested' \
+            KernelSU-Next/kernel/hook/setuid_hook.c
+          grep -q 'Trial17D1: seccomp evaluating reboot' kernel/seccomp.c
+          grep -q 'Trial17D1: seccomp reboot final_ret' kernel/seccomp.c
+          grep -q 'Trial17D1: reboot hook reached' \
+            KernelSU-Next/kernel/supercall/supercall.c
 
-          # Critical Samsung 4.19 invariant: never restore the reboot kprobe.
-          grep -q 'reboot kprobe disabled for compatibility' "$FILE"
-
-          echo "Trial17R1: restored CHANGE_MANAGER_UID only; reboot kprobe remains disabled."
-
-
-      - name: Trial 17R4 hook setresuid directly on Samsung 4.19
-        run: |
-          set -euxo pipefail
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          hp = Path("KernelSU-Next/kernel/hook/syscall_event_bridge.h")
-          hs = hp.read_text()
-          anchor = "long ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs);\n"
-          decl = (
-              "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
-              "void __init ksu_setresuid_direct_hook_init(void);\n"
-              "#endif\n"
-          )
-          if decl not in hs:
-              if anchor not in hs:
-                  raise SystemExit("Trial17R4: setresuid declaration anchor not found")
-              hs = hs.replace(anchor, anchor + decl, 1)
-          hp.write_text(hs)
-
-          p = Path("KernelSU-Next/kernel/hook/syscall_event_bridge.c")
-          cs = p.read_text()
-
-          end_anchor = '''long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
-          {
-              uid_t old_uid = current_uid().val;
-              long ret = ksu_syscall_table[orig_nr](regs);
-
-              if (ret < 0)
-                  return ret;
-
-              ksu_handle_setresuid(old_uid, current_uid().val);
-              return ret;
-          }
-          '''
-
-          fn = '''
-          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-          static syscall_fn_t ksu_orig_setresuid_syscall;
-
-          static long __nocfi ksu_sys_setresuid_direct(const struct pt_regs *regs)
-          {
-              uid_t old_uid = current_uid().val;
-              long ret;
-
-              if (unlikely(!ksu_orig_setresuid_syscall))
-                  return -ENOSYS;
-
-              ret = ksu_orig_setresuid_syscall(regs);
-              if (ret < 0)
-                  return ret;
-
-              ksu_handle_setresuid(old_uid, current_uid().val);
-              return ret;
-          }
-
-          void __init ksu_setresuid_direct_hook_init(void)
-          {
-              ksu_syscall_table_hook(
-                  __NR_setresuid,
-                  (syscall_fn_t)ksu_sys_setresuid_direct,
-                  &ksu_orig_setresuid_syscall);
-
-              pr_info("Trial17R4: direct __NR_setresuid hook installed\\n");
-          }
-          #endif
-          '''
-
-          if "ksu_setresuid_direct_hook_init" not in cs:
-              if end_anchor not in cs:
-                  raise SystemExit("Trial17R4: upstream setresuid wrapper anchor not found")
-              cs = cs.replace(end_anchor, end_anchor + fn, 1)
-
-          p.write_text(cs)
-
-          p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
-          ms = p.read_text()
-
-          old_reg = "    ksu_register_syscall_hook(__NR_setresuid, ksu_hook_setresuid);\n"
-          new_reg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              ksu_setresuid_direct_hook_init();
-          #else
-              ksu_register_syscall_hook(__NR_setresuid, ksu_hook_setresuid);
-          #endif
-          '''
-          if old_reg not in ms:
-              raise SystemExit("Trial17R4: setresuid registration anchor not found")
-          ms = ms.replace(old_reg, new_reg, 1)
-
-          old_unreg = "    ksu_unregister_syscall_hook(__NR_setresuid);\n"
-          new_unreg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-              ksu_syscall_table_unhook(__NR_setresuid);
-          #else
-              ksu_unregister_syscall_hook(__NR_setresuid);
-          #endif
-          '''
-          if old_unreg not in ms:
-              raise SystemExit("Trial17R4: setresuid unregister anchor not found")
-          ms = ms.replace(old_unreg, new_unreg, 1)
-
-          p.write_text(ms)
-          PY
-
-          echo "=== Trial 17R4 direct setresuid verification ==="
-          grep -n -A60 -B8 'ksu_sys_setresuid_direct' \
-            KernelSU-Next/kernel/hook/syscall_event_bridge.c
-          grep -n -A28 -B10 'ksu_setresuid_direct_hook_init' \
-            KernelSU-Next/kernel/hook/syscall_hook_manager.c
-
-          grep -q 'ksu_handle_setresuid(old_uid, current_uid().val);' \
-            KernelSU-Next/kernel/hook/syscall_event_bridge.c
-          grep -q 'ksu_syscall_table_hook(' \
-            KernelSU-Next/kernel/hook/syscall_event_bridge.c
-          grep -q '__NR_setresuid' \
-            KernelSU-Next/kernel/hook/syscall_event_bridge.c
-          grep -q 'ksu_setresuid_direct_hook_init();' \
-            KernelSU-Next/kernel/hook/syscall_hook_manager.c
-          grep -q 'ksu_syscall_table_unhook(__NR_setresuid);' \
-            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+          # This is diagnostics only: keep Trial 17 Samsung safety invariants.
           grep -q 'reboot kprobe disabled for compatibility' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          echo "Trial17R4: Samsung 4.19 now delivers setresuid through a direct syscall-table wrapper."
+          echo "Trial17D1: instrumentation only; no new root/SUSFS behavior added."
 
       - name: Build M127F kernel
         run: |
@@ -3406,7 +3348,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R4-DIRECT-SETRESUID-SECCOMP-HOOK.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D1-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3419,8 +3361,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17R4-DIRECT-SETRESUID-SECCOMP-HOOK
-          path: M127F-KSUN-v3.3.0-TRIAL-17R4-DIRECT-SETRESUID-SECCOMP-HOOK.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D1-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS
+          path: M127F-KSUN-v3.3.0-TRIAL-17D1-MAGISK-ASSISTED-RUNTIME-DIAGNOSTICS.zip
           if-no-files-found: error
           compression-level: 0
 
