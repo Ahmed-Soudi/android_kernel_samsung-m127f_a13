@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17S2 Samsung 4.19 Seccomp Cache Anchor Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D3 Targeted Seccomp Reboot Runtime Trace
 
 on:
   workflow_dispatch:
@@ -3093,300 +3093,129 @@ jobs:
           PY
 
 
-      - name: Trial 17S1 make Samsung 4.19 seccomp consume KernelSU allow cache
+      - name: Trial 17D3 trace only manager reboot seccomp path
         run: |
           set -euxo pipefail
 
           python3 - <<'PY'
           from pathlib import Path
 
-          # =============================================================
-          # A) Extend the REAL Samsung 4.19 seccomp_filter object.
-          #
-          # This tree's kernel/seccomp.c owns:
-          #   refcount_t usage;
-          #   bool log;
-          #   struct seccomp_filter *prev;
-          #   struct bpf_prog *prog;
-          #
-          # KernelSU-Next v3.3.0's seccomp_cache.c assumes the much newer:
-          #   refs/users/log/action_cache/prev/prog/notif/...
-          #
-          # Therefore the old compatibility shim only made KSU compile; its
-          # set_bit() targeted offsets that do not exist in the real 4.19
-          # object, and kernel/seccomp.c never checked those bits.
-          #
-          # Trial17S1 adds the smallest real shared state required: one action
-          # cache bitmap embedded in the actual 4.19 filter and an early allow
-          # check in seccomp_run_filters().  New filters are kzalloc()'d by
-          # seccomp_prepare_filter(), so this cache starts cleared.
-          # =============================================================
+          # 1) Log only the manager transition that requests reboot allowance.
+          p = Path("KernelSU-Next/kernel/hook/setuid_hook.c")
+          t = p.read_text()
+
+          anchor = """        ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+                  ksu_set_task_tracepoint_flag(current);
+          """
+          replacement = """        ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+                  pr_info("Trial17D3: manager seccomp allow requested uid=%u appid=%u mode=%d filter=%px nr=%d\\n",
+                          current_uid().val, ksu_get_manager_appid(),
+                          current->seccomp.mode, current->seccomp.filter,
+                          __NR_reboot);
+                  ksu_set_task_tracepoint_flag(current);
+          """
+
+          if "Trial17D3: manager seccomp allow requested" not in t:
+              if anchor not in t:
+                  raise SystemExit("Trial17D3: setuid manager seccomp anchor not found")
+              t = t.replace(anchor, replacement, 1)
+          p.write_text(t)
+
+          # 2) Observe only UID 10295 evaluating __NR_reboot in Samsung seccomp.
+          # No cache is added or consulted; no return value is modified.
           p = Path("kernel/seccomp.c")
           t = p.read_text()
 
-          inc_anchor = "#include <linux/sysctl.h>\n"
-          if "#include <asm/unistd.h>\n" not in t:
-              if inc_anchor not in t:
-                  raise SystemExit("Trial17S1: kernel/seccomp.c include anchor not found")
-              t = t.replace(
-                  inc_anchor,
-                  inc_anchor + "#include <asm/unistd.h>\n",
-                  1,
-              )
+          loop_anchor = """\tfor (; f; f = f->prev) {
+          \t\tu32 cur_ret = BPF_PROG_RUN(f->prog, sd);
 
-          old_struct = """struct seccomp_filter {
-          	refcount_t usage;
-          	bool log;
-          	struct seccomp_filter *prev;
-          	struct bpf_prog *prog;
-          };
+          \t\tif (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
+          """
+          loop_replacement = """\tfor (; f; f = f->prev) {
+          \t\tu32 cur_ret = BPF_PROG_RUN(f->prog, sd);
+
+          \t\tif (unlikely(current_uid().val == 10295 && sd->nr == __NR_reboot))
+          \t\t\tpr_info("Trial17D3: seccomp filter uid=%u nr=%d filter=%px cur=0x%x aggregate_before=0x%x\\n",
+          \t\t\t\tcurrent_uid().val, sd->nr, f, cur_ret, ret);
+
+          \t\tif (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
           """
 
-          new_struct = """struct ksu_action_cache {
-          	DECLARE_BITMAP(allow_native, NR_syscalls);
-          #ifdef CONFIG_COMPAT
-          	DECLARE_BITMAP(allow_compat, __NR_compat_syscalls);
-          #endif
-          };
+          if "Trial17D3: seccomp filter uid=" not in t:
+              if loop_anchor not in t:
+                  raise SystemExit("Trial17D3: seccomp filter loop anchor not found")
+              t = t.replace(loop_anchor, loop_replacement, 1)
 
-          struct seccomp_filter {
-          	refcount_t usage;
-          	bool log;
-          	struct ksu_action_cache ksu_cache;
-          	struct seccomp_filter *prev;
-          	struct bpf_prog *prog;
-          };
-          """
-
-          if "struct ksu_action_cache {" not in t:
-              if old_struct not in t:
-                  raise SystemExit("Trial17S1: real Samsung seccomp_filter layout anchor not found")
-              t = t.replace(old_struct, new_struct, 1)
-
-          action_anchor = """#define ACTION_ONLY(ret) ((s32)((ret) & (SECCOMP_RET_ACTION_FULL)))
-          static u32 seccomp_run_filters(const struct seccomp_data *sd,
-          			       struct seccomp_filter **match)
-          {
-          """
-
-          action_new = """#define ACTION_ONLY(ret) ((s32)((ret) & (SECCOMP_RET_ACTION_FULL)))
-
-          static __always_inline bool
-          ksu_seccomp_cache_allows(const struct seccomp_filter *filter,
-                                   const struct seccomp_data *sd)
-          {
-          	int nr = sd->nr;
-
-          	if (nr < 0)
-          		return false;
-
-          #ifdef CONFIG_COMPAT
-          	if (in_compat_syscall()) {
-          		if (nr >= __NR_compat_syscalls)
-          			return false;
-          		return test_bit(nr, filter->ksu_cache.allow_compat);
-          	}
-          #endif
-
-          	if (nr >= NR_syscalls)
-          		return false;
-
-          	return test_bit(nr, filter->ksu_cache.allow_native);
+          return_anchor = """\t}
+          \treturn ret;
           }
+          #endif /* CONFIG_SECCOMP_FILTER */
+          """
+          return_replacement = """\t}
 
-          static u32 seccomp_run_filters(const struct seccomp_data *sd,
-          			       struct seccomp_filter **match)
-          {
+          \tif (unlikely(current_uid().val == 10295 && sd->nr == __NR_reboot))
+          \t\tpr_info("Trial17D3: seccomp final uid=%u nr=%d ret=0x%x\\n",
+          \t\t\tcurrent_uid().val, sd->nr, ret);
+
+          \treturn ret;
+          }
+          #endif /* CONFIG_SECCOMP_FILTER */
           """
 
-          if "ksu_seccomp_cache_allows" not in t:
-              if action_anchor not in t:
-                  raise SystemExit("Trial17S1: seccomp_run_filters anchor not found")
-              t = t.replace(action_anchor, action_new, 1)
-
-          eval_anchor = """	if (!sd) {
-          		populate_seccomp_data(&sd_local);
-          		sd = &sd_local;
-          	}
-
-          	/*
-          	 * All filters in the list are evaluated and the lowest BPF return
-          """
-
-          eval_new = """	if (!sd) {
-          		populate_seccomp_data(&sd_local);
-          		sd = &sd_local;
-          	}
-
-          	/*
-          	 * KernelSU-Next explicitly adds __NR_reboot to the manager's
-          	 * seccomp allow cache during the zygote setresuid transition.
-          	 * Samsung 4.19 has no native action cache, so honor that explicit
-          	 * override here before running the inherited BPF chain.
-          	 */
-          	if (ksu_seccomp_cache_allows(f, sd))
-          		return SECCOMP_RET_ALLOW;
-
-          	/*
-          	 * All filters in the list are evaluated and the lowest BPF return
-          """
-
-          if "KernelSU-Next explicitly adds __NR_reboot" not in t:
-              if eval_anchor not in t:
-                  raise SystemExit("Trial17S1: seccomp evaluation insertion anchor not found")
-              t = t.replace(eval_anchor, eval_new, 1)
-
+          if "Trial17D3: seccomp final uid=" not in t:
+              if return_anchor not in t:
+                  raise SystemExit("Trial17D3: seccomp final-return anchor not found")
+              t = t.replace(return_anchor, return_replacement, 1)
           p.write_text(t)
 
-          # =============================================================
-          # B) Make KernelSU's private seccomp_filter declaration match the
-          # exact real Samsung 4.19 layout above.
-          #
-          # Keep the upstream/newer declaration untouched for >= 5.10.
-          # The pre-existing Trial 17 syscall-count compatibility macros
-          # remain in place.
-          # =============================================================
-          p = Path("KernelSU-Next/kernel/infra/seccomp_cache.c")
+          # 3) Prove whether UID 10295 reaches the Samsung direct reboot wrapper.
+          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           t = p.read_text()
 
-          old_action = """struct action_cache {
-          	DECLARE_BITMAP(allow_native, SECCOMP_ARCH_NATIVE_NR);
-          #ifdef SECCOMP_ARCH_COMPAT
-          	DECLARE_BITMAP(allow_compat, SECCOMP_ARCH_COMPAT_NR);
-          #endif
-          };
+          wrapper_anchor = """long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          {
+              ksu_samsung419_install_driver_fd(regs);
 
-          struct seccomp_filter {
-          	refcount_t refs;
-          	refcount_t users;
-          	bool log;
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-          	bool wait_killable_recv;
-          #endif
-          	struct action_cache cache;
-          	struct seccomp_filter *prev;
-          	struct bpf_prog *prog;
-          	struct notification *notif;
-          	struct mutex notify_lock;
-          	wait_queue_head_t wqh;
-          };
+              if (likely(ksu_orig_reboot_syscall))
+          """
+          wrapper_replacement = """long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
+          {
+              if (unlikely(current_uid().val == 10295))
+                  pr_info("Trial17D3: reboot wrapper reached uid=%u x0=0x%lx x1=0x%lx x2=0x%lx x3=0x%lx\\n",
+                          current_uid().val,
+                          (unsigned long)PT_REGS_PARM1(regs),
+                          (unsigned long)PT_REGS_PARM2(regs),
+                          (unsigned long)PT_REGS_PARM3(regs),
+                          (unsigned long)PT_REGS_SYSCALL_PARM4(regs));
+
+              ksu_samsung419_install_driver_fd(regs);
+
+              if (likely(ksu_orig_reboot_syscall))
           """
 
-          new_action = """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-          struct ksu_action_cache {
-          	DECLARE_BITMAP(allow_native, SECCOMP_ARCH_NATIVE_NR);
-          #ifdef SECCOMP_ARCH_COMPAT
-          	DECLARE_BITMAP(allow_compat, SECCOMP_ARCH_COMPAT_NR);
-          #endif
-          };
-
-          struct seccomp_filter {
-          	refcount_t usage;
-          	bool log;
-          	struct ksu_action_cache ksu_cache;
-          	struct seccomp_filter *prev;
-          	struct bpf_prog *prog;
-          };
-          #else
-          struct action_cache {
-          	DECLARE_BITMAP(allow_native, SECCOMP_ARCH_NATIVE_NR);
-          #ifdef SECCOMP_ARCH_COMPAT
-          	DECLARE_BITMAP(allow_compat, SECCOMP_ARCH_COMPAT_NR);
-          #endif
-          };
-
-          struct seccomp_filter {
-          	refcount_t refs;
-          	refcount_t users;
-          	bool log;
-          #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-          	bool wait_killable_recv;
-          #endif
-          	struct action_cache cache;
-          	struct seccomp_filter *prev;
-          	struct bpf_prog *prog;
-          	struct notification *notif;
-          	struct mutex notify_lock;
-          	wait_queue_head_t wqh;
-          };
-          #endif
-          """
-
-          if "struct ksu_action_cache {" not in t:
-              if old_action not in t:
-                  raise SystemExit("Trial17S1: pinned KSU seccomp layout anchor not found")
-              t = t.replace(old_action, new_action, 1)
-
-          # On Samsung 4.19, write exactly the real ksu_cache field.
-          old_clear_native = "        clear_bit(nr, filter->cache.allow_native);\n"
-          old_clear_compat = "        clear_bit(nr, filter->cache.allow_compat);\n"
-          old_set_native = "        set_bit(nr, filter->cache.allow_native);\n"
-          old_set_compat = "        set_bit(nr, filter->cache.allow_compat);\n"
-
-          new_clear_native = """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-                  clear_bit(nr, filter->ksu_cache.allow_native);
-          #else
-                  clear_bit(nr, filter->cache.allow_native);
-          #endif
-          """
-          new_clear_compat = """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-                  clear_bit(nr, filter->ksu_cache.allow_compat);
-          #else
-                  clear_bit(nr, filter->cache.allow_compat);
-          #endif
-          """
-          new_set_native = """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-                  set_bit(nr, filter->ksu_cache.allow_native);
-          #else
-                  set_bit(nr, filter->cache.allow_native);
-          #endif
-          """
-          new_set_compat = """#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-                  set_bit(nr, filter->ksu_cache.allow_compat);
-          #else
-                  set_bit(nr, filter->cache.allow_compat);
-          #endif
-          """
-
-          replacements = [
-              (old_clear_native, new_clear_native, "clear native"),
-              (old_clear_compat, new_clear_compat, "clear compat"),
-              (old_set_native, new_set_native, "set native"),
-              (old_set_compat, new_set_compat, "set compat"),
-          ]
-          for old, new, label in replacements:
-              if old not in t:
-                  raise SystemExit(f"Trial17S1: {label} cache access anchor not found")
-              t = t.replace(old, new, 1)
-
+          if "Trial17D3: reboot wrapper reached" not in t:
+              if wrapper_anchor not in t:
+                  raise SystemExit("Trial17D3: direct reboot wrapper anchor not found")
+              t = t.replace(wrapper_anchor, wrapper_replacement, 1)
           p.write_text(t)
           PY
 
-          echo "=== Trial 17S1 real Samsung 4.19 seccomp cache ==="
-          grep -n -A28 -B8 'struct ksu_action_cache' kernel/seccomp.c | head -80
-          grep -n -A45 -B12 'ksu_seccomp_cache_allows' kernel/seccomp.c
-          grep -n -A48 -B8 'struct ksu_action_cache' \
-            KernelSU-Next/kernel/infra/seccomp_cache.c | head -100
+          echo "=== Trial 17D3 targeted runtime trace verification ==="
+          grep -n -A10 -B6 'Trial17D3: manager seccomp allow requested' \
+            KernelSU-Next/kernel/hook/setuid_hook.c
+          grep -n -A20 -B8 'Trial17D3: seccomp filter uid=' kernel/seccomp.c
+          grep -n -A10 -B8 'Trial17D3: seccomp final uid=' kernel/seccomp.c
+          grep -n -A18 -B6 'Trial17D3: reboot wrapper reached' \
+            KernelSU-Next/kernel/supercall/supercall.c
 
-          # Exact structural checks.
-          grep -q 'struct ksu_action_cache ksu_cache;' kernel/seccomp.c
-          grep -q 'ksu_seccomp_cache_allows(f, sd)' kernel/seccomp.c
-          grep -q 'return SECCOMP_RET_ALLOW;' kernel/seccomp.c
-          grep -q 'struct ksu_action_cache ksu_cache;' \
-            KernelSU-Next/kernel/infra/seccomp_cache.c
-          grep -q 'set_bit(nr, filter->ksu_cache.allow_native);' \
-            KernelSU-Next/kernel/infra/seccomp_cache.c
-          grep -q 'clear_bit(nr, filter->ksu_cache.allow_native);' \
-            KernelSU-Next/kernel/infra/seccomp_cache.c
+          # The diagnostic must remain log-only.
+          ! grep -q 'struct ksu_action_cache ksu_cache;' kernel/seccomp.c
+          ! grep -q '^ksu_seccomp_cache_allows' kernel/seccomp.c
 
-          # Prove Samsung's allocation remains zero-initialized.
-          grep -q 'sfilter = kzalloc(sizeof(\*sfilter), GFP_KERNEL' kernel/seccomp.c
-
-          # Preserve proven Trial 17 Samsung safety boundaries.
           grep -q 'reboot kprobe disabled for compatibility' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          echo "Trial17S1: KernelSU now writes the same seccomp cache that Samsung 4.19 reads."
+          echo "Trial17D3: targeted logging only; Samsung seccomp behavior unchanged."
 
       - name: Build M127F kernel
         run: |
@@ -3450,7 +3279,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17S2-SAMSUNG-419-SECCOMP-CACHE-ANCHOR-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D3-TARGETED-SECCOMP-REBOOT-TRACE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3463,8 +3292,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17S2-SAMSUNG-419-SECCOMP-CACHE-ANCHOR-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-17S2-SAMSUNG-419-SECCOMP-CACHE-ANCHOR-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D3-TARGETED-SECCOMP-REBOOT-TRACE
+          path: M127F-KSUN-v3.3.0-TRIAL-17D3-TARGETED-SECCOMP-REBOOT-TRACE.zip
           if-no-files-found: error
           compression-level: 0
 
