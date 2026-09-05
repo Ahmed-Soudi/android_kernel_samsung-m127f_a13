@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17S1 Samsung 4.19 Seccomp Cache Compatibility Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17S2 Samsung 4.19 Seccomp Cache Anchor Fix
 
 on:
   workflow_dispatch:
@@ -3210,7 +3210,7 @@ jobs:
           	}
 
           	/*
-           * All filters in the list are evaluated and the lowest BPF return
+          	 * All filters in the list are evaluated and the lowest BPF return
           """
 
           eval_new = """	if (!sd) {
@@ -3228,7 +3228,7 @@ jobs:
           		return SECCOMP_RET_ALLOW;
 
           	/*
-           * All filters in the list are evaluated and the lowest BPF return
+          	 * All filters in the list are evaluated and the lowest BPF return
           """
 
           if "KernelSU-Next explicitly adds __NR_reboot" not in t:
@@ -3450,7 +3450,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17S1-SAMSUNG-419-SECCOMP-CACHE-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17S2-SAMSUNG-419-SECCOMP-CACHE-ANCHOR-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3463,8 +3463,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17S1-SAMSUNG-419-SECCOMP-CACHE-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-17S1-SAMSUNG-419-SECCOMP-CACHE-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17S2-SAMSUNG-419-SECCOMP-CACHE-ANCHOR-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-17S2-SAMSUNG-419-SECCOMP-CACHE-ANCHOR-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
