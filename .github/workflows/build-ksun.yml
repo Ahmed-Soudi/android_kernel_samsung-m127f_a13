@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R2 Manager Throne Rediscovery Seccomp Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R3 Manager Throne Rediscovery Verification Fix
 
 on:
   workflow_dispatch:
@@ -3025,9 +3025,11 @@ jobs:
           PY2
           
           grep -nA6 -B2 'on_boot_completed(void)' KernelSU-Next/kernel/runtime/boot_event.c
-          grep -q 'on_boot_completed full-handler entered' KernelSU-Next/kernel/runtime/boot_event.c
+          grep -q 'Samsung 4.19 Trial17R2: on_boot_completed manager rediscovery entered' KernelSU-Next/kernel/runtime/boot_event.c
           grep -nA8 -B4 'slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
           grep -q 'avc_spoof slow_avc_audit kprobe suppressed' KernelSU-Next/kernel/extras.c
+          grep -q 'track_throne(false);' KernelSU-Next/kernel/runtime/boot_event.c
+          echo "Trial17R3: manager rediscovery verification matches the patched runtime marker."
 
       - name: Trial 16 fix ARM64 4.19 section-mapped kernel address translation
         run: |
@@ -3278,7 +3280,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R2-MANAGER-THRONE-REDISCOVERY-SECCOMP-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R3-MANAGER-THRONE-REDISCOVERY-VERIFICATION-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3291,8 +3293,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17R2-MANAGER-THRONE-REDISCOVERY-SECCOMP-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-17R2-MANAGER-THRONE-REDISCOVERY-SECCOMP-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17R3-MANAGER-THRONE-REDISCOVERY-VERIFICATION-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-17R3-MANAGER-THRONE-REDISCOVERY-VERIFICATION-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
