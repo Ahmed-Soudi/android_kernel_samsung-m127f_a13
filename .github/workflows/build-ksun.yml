@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R3 Manager Throne Rediscovery Verification Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17R4 Direct setresuid Seccomp Hook
 
 on:
   workflow_dispatch:
@@ -3218,6 +3218,132 @@ jobs:
 
           echo "Trial17R1: restored CHANGE_MANAGER_UID only; reboot kprobe remains disabled."
 
+
+      - name: Trial 17R4 hook setresuid directly on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          hp = Path("KernelSU-Next/kernel/hook/syscall_event_bridge.h")
+          hs = hp.read_text()
+          anchor = "long ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs);\n"
+          decl = (
+              "#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n"
+              "void __init ksu_setresuid_direct_hook_init(void);\n"
+              "#endif\n"
+          )
+          if decl not in hs:
+              if anchor not in hs:
+                  raise SystemExit("Trial17R4: setresuid declaration anchor not found")
+              hs = hs.replace(anchor, anchor + decl, 1)
+          hp.write_text(hs)
+
+          p = Path("KernelSU-Next/kernel/hook/syscall_event_bridge.c")
+          cs = p.read_text()
+
+          end_anchor = '''long __nocfi ksu_hook_setresuid(int orig_nr, const struct pt_regs *regs)
+          {
+              uid_t old_uid = current_uid().val;
+              long ret = ksu_syscall_table[orig_nr](regs);
+
+              if (ret < 0)
+                  return ret;
+
+              ksu_handle_setresuid(old_uid, current_uid().val);
+              return ret;
+          }
+          '''
+
+          fn = '''
+          #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+          static syscall_fn_t ksu_orig_setresuid_syscall;
+
+          static long __nocfi ksu_sys_setresuid_direct(const struct pt_regs *regs)
+          {
+              uid_t old_uid = current_uid().val;
+              long ret;
+
+              if (unlikely(!ksu_orig_setresuid_syscall))
+                  return -ENOSYS;
+
+              ret = ksu_orig_setresuid_syscall(regs);
+              if (ret < 0)
+                  return ret;
+
+              ksu_handle_setresuid(old_uid, current_uid().val);
+              return ret;
+          }
+
+          void __init ksu_setresuid_direct_hook_init(void)
+          {
+              ksu_syscall_table_hook(
+                  __NR_setresuid,
+                  (syscall_fn_t)ksu_sys_setresuid_direct,
+                  &ksu_orig_setresuid_syscall);
+
+              pr_info("Trial17R4: direct __NR_setresuid hook installed\\n");
+          }
+          #endif
+          '''
+
+          if "ksu_setresuid_direct_hook_init" not in cs:
+              if end_anchor not in cs:
+                  raise SystemExit("Trial17R4: upstream setresuid wrapper anchor not found")
+              cs = cs.replace(end_anchor, end_anchor + fn, 1)
+
+          p.write_text(cs)
+
+          p = Path("KernelSU-Next/kernel/hook/syscall_hook_manager.c")
+          ms = p.read_text()
+
+          old_reg = "    ksu_register_syscall_hook(__NR_setresuid, ksu_hook_setresuid);\n"
+          new_reg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              ksu_setresuid_direct_hook_init();
+          #else
+              ksu_register_syscall_hook(__NR_setresuid, ksu_hook_setresuid);
+          #endif
+          '''
+          if old_reg not in ms:
+              raise SystemExit("Trial17R4: setresuid registration anchor not found")
+          ms = ms.replace(old_reg, new_reg, 1)
+
+          old_unreg = "    ksu_unregister_syscall_hook(__NR_setresuid);\n"
+          new_unreg = '''#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+              ksu_syscall_table_unhook(__NR_setresuid);
+          #else
+              ksu_unregister_syscall_hook(__NR_setresuid);
+          #endif
+          '''
+          if old_unreg not in ms:
+              raise SystemExit("Trial17R4: setresuid unregister anchor not found")
+          ms = ms.replace(old_unreg, new_unreg, 1)
+
+          p.write_text(ms)
+          PY
+
+          echo "=== Trial 17R4 direct setresuid verification ==="
+          grep -n -A60 -B8 'ksu_sys_setresuid_direct' \
+            KernelSU-Next/kernel/hook/syscall_event_bridge.c
+          grep -n -A28 -B10 'ksu_setresuid_direct_hook_init' \
+            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+
+          grep -q 'ksu_handle_setresuid(old_uid, current_uid().val);' \
+            KernelSU-Next/kernel/hook/syscall_event_bridge.c
+          grep -q 'ksu_syscall_table_hook(' \
+            KernelSU-Next/kernel/hook/syscall_event_bridge.c
+          grep -q '__NR_setresuid' \
+            KernelSU-Next/kernel/hook/syscall_event_bridge.c
+          grep -q 'ksu_setresuid_direct_hook_init();' \
+            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+          grep -q 'ksu_syscall_table_unhook(__NR_setresuid);' \
+            KernelSU-Next/kernel/hook/syscall_hook_manager.c
+          grep -q 'reboot kprobe disabled for compatibility' \
+            KernelSU-Next/kernel/supercall/supercall.c
+
+          echo "Trial17R4: Samsung 4.19 now delivers setresuid through a direct syscall-table wrapper."
+
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
@@ -3280,7 +3406,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R3-MANAGER-THRONE-REDISCOVERY-VERIFICATION-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17R4-DIRECT-SETRESUID-SECCOMP-HOOK.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3293,8 +3419,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17R3-MANAGER-THRONE-REDISCOVERY-VERIFICATION-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-17R3-MANAGER-THRONE-REDISCOVERY-VERIFICATION-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17R4-DIRECT-SETRESUID-SECCOMP-HOOK
+          path: M127F-KSUN-v3.3.0-TRIAL-17R4-DIRECT-SETRESUID-SECCOMP-HOOK.zip
           if-no-files-found: error
           compression-level: 0
 
