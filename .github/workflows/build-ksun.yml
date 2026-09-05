@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D3 Targeted Seccomp Reboot Runtime Trace
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D4 Disable Samsung 4.19 Invalid Seccomp Cache Write
 
 on:
   workflow_dispatch:
@@ -3093,129 +3093,52 @@ jobs:
           PY
 
 
-      - name: Trial 17D3 trace only manager reboot seccomp path
+      - name: Trial 17D4 disable invalid Samsung 4.19 seccomp cache write
         run: |
           set -euxo pipefail
 
           python3 - <<'PY'
           from pathlib import Path
 
-          # 1) Log only the manager transition that requests reboot allowance.
           p = Path("KernelSU-Next/kernel/hook/setuid_hook.c")
           t = p.read_text()
 
           anchor = """        ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
-                  ksu_set_task_tracepoint_flag(current);
-          """
-          replacement = """        ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
-                  pr_info("Trial17D3: manager seccomp allow requested uid=%u appid=%u mode=%d filter=%px nr=%d\\n",
-                          current_uid().val, ksu_get_manager_appid(),
-                          current->seccomp.mode, current->seccomp.filter,
-                          __NR_reboot);
-                  ksu_set_task_tracepoint_flag(current);
           """
 
-          if "Trial17D3: manager seccomp allow requested" not in t:
+          replacement = """#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+                  ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+          #else
+                  pr_info_once("Trial17D4: Samsung 4.19 - skipping incompatible ksu_seccomp_allow_cache reboot write\\n");
+          #endif
+          """
+
+          if "Trial17D4: Samsung 4.19 - skipping incompatible" not in t:
               if anchor not in t:
-                  raise SystemExit("Trial17D3: setuid manager seccomp anchor not found")
+                  raise SystemExit("Trial17D4: seccomp cache write anchor not found")
               t = t.replace(anchor, replacement, 1)
-          p.write_text(t)
 
-          # 2) Observe only UID 10295 evaluating __NR_reboot in Samsung seccomp.
-          # No cache is added or consulted; no return value is modified.
-          p = Path("kernel/seccomp.c")
-          t = p.read_text()
-
-          loop_anchor = """\tfor (; f; f = f->prev) {
-          \t\tu32 cur_ret = BPF_PROG_RUN(f->prog, sd);
-
-          \t\tif (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
-          """
-          loop_replacement = """\tfor (; f; f = f->prev) {
-          \t\tu32 cur_ret = BPF_PROG_RUN(f->prog, sd);
-
-          \t\tif (unlikely(current_uid().val == 10295 && sd->nr == __NR_reboot))
-          \t\t\tpr_info("Trial17D3: seccomp filter uid=%u nr=%d filter=%px cur=0x%x aggregate_before=0x%x\\n",
-          \t\t\t\tcurrent_uid().val, sd->nr, f, cur_ret, ret);
-
-          \t\tif (ACTION_ONLY(cur_ret) < ACTION_ONLY(ret)) {
-          """
-
-          if "Trial17D3: seccomp filter uid=" not in t:
-              if loop_anchor not in t:
-                  raise SystemExit("Trial17D3: seccomp filter loop anchor not found")
-              t = t.replace(loop_anchor, loop_replacement, 1)
-
-          return_anchor = """\t}
-          \treturn ret;
-          }
-          #endif /* CONFIG_SECCOMP_FILTER */
-          """
-          return_replacement = """\t}
-
-          \tif (unlikely(current_uid().val == 10295 && sd->nr == __NR_reboot))
-          \t\tpr_info("Trial17D3: seccomp final uid=%u nr=%d ret=0x%x\\n",
-          \t\t\tcurrent_uid().val, sd->nr, ret);
-
-          \treturn ret;
-          }
-          #endif /* CONFIG_SECCOMP_FILTER */
-          """
-
-          if "Trial17D3: seccomp final uid=" not in t:
-              if return_anchor not in t:
-                  raise SystemExit("Trial17D3: seccomp final-return anchor not found")
-              t = t.replace(return_anchor, return_replacement, 1)
-          p.write_text(t)
-
-          # 3) Prove whether UID 10295 reaches the Samsung direct reboot wrapper.
-          p = Path("KernelSU-Next/kernel/supercall/supercall.c")
-          t = p.read_text()
-
-          wrapper_anchor = """long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
-          {
-              ksu_samsung419_install_driver_fd(regs);
-
-              if (likely(ksu_orig_reboot_syscall))
-          """
-          wrapper_replacement = """long __nocfi ksu_sys_reboot_install_fd(const struct pt_regs *regs)
-          {
-              if (unlikely(current_uid().val == 10295))
-                  pr_info("Trial17D3: reboot wrapper reached uid=%u x0=0x%lx x1=0x%lx x2=0x%lx x3=0x%lx\\n",
-                          current_uid().val,
-                          (unsigned long)PT_REGS_PARM1(regs),
-                          (unsigned long)PT_REGS_PARM2(regs),
-                          (unsigned long)PT_REGS_PARM3(regs),
-                          (unsigned long)PT_REGS_SYSCALL_PARM4(regs));
-
-              ksu_samsung419_install_driver_fd(regs);
-
-              if (likely(ksu_orig_reboot_syscall))
-          """
-
-          if "Trial17D3: reboot wrapper reached" not in t:
-              if wrapper_anchor not in t:
-                  raise SystemExit("Trial17D3: direct reboot wrapper anchor not found")
-              t = t.replace(wrapper_anchor, wrapper_replacement, 1)
           p.write_text(t)
           PY
 
-          echo "=== Trial 17D3 targeted runtime trace verification ==="
-          grep -n -A10 -B6 'Trial17D3: manager seccomp allow requested' \
+          echo "=== Trial 17D4 verification ==="
+          grep -n -A8 -B6 'Trial17D4: Samsung 4.19 - skipping incompatible' \
             KernelSU-Next/kernel/hook/setuid_hook.c
-          grep -n -A20 -B8 'Trial17D3: seccomp filter uid=' kernel/seccomp.c
-          grep -n -A10 -B8 'Trial17D3: seccomp final uid=' kernel/seccomp.c
-          grep -n -A18 -B6 'Trial17D3: reboot wrapper reached' \
-            KernelSU-Next/kernel/supercall/supercall.c
 
-          # The diagnostic must remain log-only.
+          grep -q '#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)' \
+            KernelSU-Next/kernel/hook/setuid_hook.c
+          grep -q 'Trial17D4: Samsung 4.19 - skipping incompatible' \
+            KernelSU-Next/kernel/hook/setuid_hook.c
+
+          # Preserve the clean Trial17 Samsung seccomp implementation:
+          # no S2 cache-consumer code may be present in kernel/seccomp.c.
           ! grep -q 'struct ksu_action_cache ksu_cache;' kernel/seccomp.c
-          ! grep -q '^ksu_seccomp_cache_allows' kernel/seccomp.c
+          ! grep -q 'ksu_seccomp_cache_allows' kernel/seccomp.c
 
           grep -q 'reboot kprobe disabled for compatibility' \
             KernelSU-Next/kernel/supercall/supercall.c
 
-          echo "Trial17D3: targeted logging only; Samsung seccomp behavior unchanged."
+          echo "Trial17D4: only the incompatible Samsung 4.19 seccomp cache write is disabled."
 
       - name: Build M127F kernel
         run: |
@@ -3279,7 +3202,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D3-TARGETED-SECCOMP-REBOOT-TRACE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D4-DISABLE-SAMSUNG419-INVALID-SECCOMP-CACHE-WRITE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3292,8 +3215,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17D3-TARGETED-SECCOMP-REBOOT-TRACE
-          path: M127F-KSUN-v3.3.0-TRIAL-17D3-TARGETED-SECCOMP-REBOOT-TRACE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D4-DISABLE-SAMSUNG419-INVALID-SECCOMP-CACHE-WRITE
+          path: M127F-KSUN-v3.3.0-TRIAL-17D4-DISABLE-SAMSUNG419-INVALID-SECCOMP-CACHE-WRITE.zip
           if-no-files-found: error
           compression-level: 0
 
