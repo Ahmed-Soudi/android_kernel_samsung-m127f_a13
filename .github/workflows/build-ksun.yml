@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D4 Disable Samsung 4.19 Invalid Seccomp Cache Write
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D5 Disable Samsung 4.19 slow_avc_audit Kprobe
 
 on:
   workflow_dispatch:
@@ -3140,6 +3140,64 @@ jobs:
 
           echo "Trial17D4: only the incompatible Samsung 4.19 seccomp cache write is disabled."
 
+      - name: Trial 17D5 disable only slow_avc_audit kprobe on Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("KernelSU-Next/kernel/extras.c")
+          t = p.read_text()
+
+          marker = "Trial17D5: Samsung 4.19 - slow_avc_audit kprobe skipped"
+          pattern = (
+              r'#ifdef CONFIG_KPROBES\n'
+              r'\tpr_info\("avc_spoof/init: register slow_avc_audit kprobe!\\n"\);\n'
+              r'\tslow_avc_audit_kp = init_kprobe\("slow_avc_audit", slow_avc_audit_pre_handler\);\n'
+              r'#endif[ \t]*\n'
+          )
+          replacement = (
+              '#ifdef CONFIG_KPROBES\n'
+              '#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)\n'
+              '\t/* Trial 17D5: isolate only the Samsung 4.19 slow_avc_audit kprobe. */\n'
+              '\tpr_warn("Trial17D5: Samsung 4.19 - slow_avc_audit kprobe skipped\\n");\n'
+              '#else\n'
+              '\tpr_info("avc_spoof/init: register slow_avc_audit kprobe!\\n");\n'
+              '\tslow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);\n'
+              '#endif\n'
+              '#endif\n'
+          )
+
+          if marker not in t:
+              t, n = re.subn(pattern, replacement, t, count=1)
+              if n != 1:
+                  raise SystemExit("Trial17D5: exact slow_avc_audit registration block not found")
+
+          p.write_text(t)
+          PY
+
+          echo "=== Trial 17D5 verification ==="
+          grep -n -A14 -B8 'Trial17D5: Samsung 4.19 - slow_avc_audit kprobe skipped' \
+            KernelSU-Next/kernel/extras.c
+
+          grep -q 'ksu_register_feature_handler(&avc_spoof_handler)' \
+            KernelSU-Next/kernel/extras.c
+          grep -q 'void ksu_avc_spoof_enable(void)' \
+            KernelSU-Next/kernel/extras.c
+          grep -q 'atomic_set(&disable_spoof, 0)' \
+            KernelSU-Next/kernel/extras.c
+          grep -q 'slow_avc_audit_kp = init_kprobe("slow_avc_audit", slow_avc_audit_pre_handler);' \
+            KernelSU-Next/kernel/extras.c
+
+          grep -q 'reboot kprobe disabled for compatibility' \
+            KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'input_event kprobe skipped' \
+            KernelSU-Next/kernel/runtime/ksud_integration.c
+
+          echo "Trial17D5: only Samsung 4.19 slow_avc_audit kprobe registration is disabled."
+
       - name: Build M127F kernel
         run: |
           set -euxo pipefail
@@ -3202,7 +3260,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D4-DISABLE-SAMSUNG419-INVALID-SECCOMP-CACHE-WRITE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D5-DISABLE-SAMSUNG419-SLOW-AVC-AUDIT-KPROBE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3215,8 +3273,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17D4-DISABLE-SAMSUNG419-INVALID-SECCOMP-CACHE-WRITE
-          path: M127F-KSUN-v3.3.0-TRIAL-17D4-DISABLE-SAMSUNG419-INVALID-SECCOMP-CACHE-WRITE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D5-DISABLE-SAMSUNG419-SLOW-AVC-AUDIT-KPROBE
+          path: M127F-KSUN-v3.3.0-TRIAL-17D5-DISABLE-SAMSUNG419-SLOW-AVC-AUDIT-KPROBE.zip
           if-no-files-found: error
           compression-level: 0
 
