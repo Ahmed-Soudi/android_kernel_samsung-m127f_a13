@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D5 Disable Samsung 4.19 slow_avc_audit Kprobe
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D5A slow_avc_audit Kprobe Replacement Escape Fix
 
 on:
   workflow_dispatch:
@@ -3171,7 +3171,7 @@ jobs:
           )
 
           if marker not in t:
-              t, n = re.subn(pattern, replacement, t, count=1)
+              t, n = re.subn(pattern, lambda _m: replacement, t, count=1)
               if n != 1:
                   raise SystemExit("Trial17D5: exact slow_avc_audit registration block not found")
 
@@ -3260,7 +3260,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D5-DISABLE-SAMSUNG419-SLOW-AVC-AUDIT-KPROBE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D5A-SLOW-AVC-AUDIT-KPROBE-ESCAPE-FIX.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3273,8 +3273,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17D5-DISABLE-SAMSUNG419-SLOW-AVC-AUDIT-KPROBE
-          path: M127F-KSUN-v3.3.0-TRIAL-17D5-DISABLE-SAMSUNG419-SLOW-AVC-AUDIT-KPROBE.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D5A-SLOW-AVC-AUDIT-KPROBE-ESCAPE-FIX
+          path: M127F-KSUN-v3.3.0-TRIAL-17D5A-SLOW-AVC-AUDIT-KPROBE-ESCAPE-FIX.zip
           if-no-files-found: error
           compression-level: 0
 
