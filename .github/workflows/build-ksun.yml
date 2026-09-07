@@ -1,4 +1,4 @@
-name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D5A slow_avc_audit Kprobe Replacement Escape Fix
+name: Build M127F Kernel - KSUN v3.3.0 - Trial 17D5A PS5 UAC1 Gadget Enable
 
 on:
   workflow_dispatch:
@@ -3001,6 +3001,72 @@ jobs:
           echo "=== KPROBES ==="
           grep -i 'KPROBE' .config || true
 
+      - name: Enable standard USB Audio Class 1 gadget for PS5 trial
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path(".config")
+          t = p.read_text()
+
+          def set_bool(symbol, enabled=True):
+              global t
+              yes = f"{symbol}=y"
+              no = f"# {symbol} is not set"
+              lines = t.splitlines()
+              found = False
+              out = []
+              for line in lines:
+                  if line == yes or line == no or line.startswith(symbol + "="):
+                      if not found:
+                          out.append(yes if enabled else no)
+                          found = True
+                      continue
+                  out.append(line)
+              if not found:
+                  out.append(yes if enabled else no)
+              t = "\n".join(out) + "\n"
+
+          # Keep Samsung's existing configfs gadget stack intact and add only
+          # the standard UAC1 function needed for host -> phone PCM streaming.
+          set_bool("CONFIG_USB_CONFIGFS_F_UAC1", True)
+
+          # Do not add UAC2 in the first PS5 compatibility trial.
+          set_bool("CONFIG_USB_CONFIGFS_F_UAC2", False)
+
+          p.write_text(t)
+          PY
+
+          export PATH="$HOME/toolchain/bin:$PATH"
+          export PLATFORM_VERSION=13
+          export ANDROID_MAJOR_VERSION=t
+          export ARCH=arm64
+          export CC=clang
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+
+          make ARCH=arm64 \
+            CC=clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            olddefconfig
+
+          echo "=== PS5 UAC1 gadget config ==="
+          grep -E 'CONFIG_USB_(CONFIGFS|CONFIGFS_F_UAC1|CONFIGFS_F_UAC2|F_UAC1|F_UAC2|U_AUDIO)=' .config || true
+          grep -E '^CONFIG_SND(=|_)' .config | head -40 || true
+
+          grep -q '^CONFIG_USB_CONFIGFS=y$' .config
+          grep -q '^CONFIG_USB_CONFIGFS_F_UAC1=y$' .config
+          grep -q '^CONFIG_USB_F_UAC1=y$' .config
+          grep -q '^CONFIG_USB_U_AUDIO=y$' .config
+          grep -q '^CONFIG_SND=y$' .config
+          grep -q '^CONFIG_SND_PCM=y$' .config
+          grep -q '^# CONFIG_USB_CONFIGFS_F_UAC2 is not set$' .config
+
+          echo "Trial PS5-A1: standard UAC1 configfs gadget support enabled."
+
       - name: Trial 16 fix ARM64 4.19 section-mapped kernel address translation
         run: |
           set -euxo pipefail
@@ -3260,7 +3326,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D5A-SLOW-AVC-AUDIT-KPROBE-ESCAPE-FIX.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D5A-PS5-UAC1-GADGET-ENABLE.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3273,8 +3339,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17D5A-SLOW-AVC-AUDIT-KPROBE-ESCAPE-FIX
-          path: M127F-KSUN-v3.3.0-TRIAL-17D5A-SLOW-AVC-AUDIT-KPROBE-ESCAPE-FIX.zip
+          name: M127F-KSUN-v3.3.0-TRIAL-17D5A-PS5-UAC1-GADGET-ENABLE
+          path: M127F-KSUN-v3.3.0-TRIAL-17D5A-PS5-UAC1-GADGET-ENABLE.zip
           if-no-files-found: error
           compression-level: 0
 
