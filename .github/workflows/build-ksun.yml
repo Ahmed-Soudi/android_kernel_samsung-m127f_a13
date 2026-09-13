@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - ksun-3.3.0-susfs
+      - ksun-3.3.0-ps5-susfs230
 
 jobs:
   build:
