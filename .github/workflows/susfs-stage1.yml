@@ -332,33 +332,36 @@ jobs:
         run: |
           set -euxo pipefail
 
-          git diff --binary > /tmp/susfs-samsung-stage1.patch
+          git diff --binary \
+            > /tmp/M127F-SUSFS-Stage1-Samsung419.patch
 
-          git status --short > /tmp/status.txt
+          git status --short \
+            > /tmp/M127F-SUSFS-Stage1-status.txt
 
           find . \
             -name '*.rej' \
             -print \
             -exec cat {} \; \
-            > /tmp/remaining-rejects.txt
+            > /tmp/M127F-SUSFS-Stage1-remaining-rejects.txt
 
-          git diff --stat > /tmp/diff-stat.txt
+          git diff --stat \
+            > /tmp/M127F-SUSFS-Stage1-diff-stat.txt
 
           echo "=== DIFF STAT ==="
-          cat /tmp/diff-stat.txt
+          cat /tmp/M127F-SUSFS-Stage1-diff-stat.txt
 
           echo
           echo "=== REMAINING REJECTS ==="
-          cat /tmp/remaining-rejects.txt
+          cat /tmp/M127F-SUSFS-Stage1-remaining-rejects.txt
 
       - name: Upload Stage 1 result
         uses: actions/upload-artifact@v4
         with:
-          name: susfs-samsung-419-stage1
+          name: m127f-susfs-stage1-samsung419
           path: |
-            /tmp/susfs-samsung-stage1.patch
-            /tmp/status.txt
-            /tmp/remaining-rejects.txt
-            /tmp/diff-stat.txt
+            /tmp/M127F-SUSFS-Stage1-Samsung419.patch
+            /tmp/M127F-SUSFS-Stage1-status.txt
+            /tmp/M127F-SUSFS-Stage1-remaining-rejects.txt
+            /tmp/M127F-SUSFS-Stage1-diff-stat.txt
           if-no-files-found: error
           retention-days: 7
