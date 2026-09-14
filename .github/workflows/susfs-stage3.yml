@@ -734,7 +734,18 @@ jobs:
           grep -n "SUSFS_MNT_ID_BACKUP" fs/namespace.c
 
           # Generic 4.19 syntax must not survive outside the helper macro.
-          if grep -n -- '->mnt\.susfs_mnt_id_backup' fs/namespace.c; then
+          #
+          # The non-KDP definition of SUSFS_MNT_ID_BACKUP intentionally
+          # contains ->mnt.susfs_mnt_id_backup, so exclude that one
+          # preprocessor line from the verification.
+          BAD_SUSFS_MNT_ACCESS="$(
+            grep -n -- '->mnt\.susfs_mnt_id_backup' fs/namespace.c \
+              | grep -v '#define SUSFS_MNT_ID_BACKUP' \
+              || true
+          )"
+
+          if [ -n "$BAD_SUSFS_MNT_ACCESS" ]; then
+            echo "$BAD_SUSFS_MNT_ACCESS"
             echo "Found non-KDP-safe SUSFS vfsmount field access"
             exit 1
           fi
