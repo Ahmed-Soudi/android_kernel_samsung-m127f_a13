@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 4 - Trial 4
+name: SUSFS Samsung 4.19 Stage 4 - Trial 5
 
 permissions:
   contents: write
@@ -940,7 +940,7 @@ jobs:
               "\n"
               "\t\t\tkfree(pathname);\n"
               "\t\t}\n"
-              "susfs_fdinfo_fallback:\n"
+              "susfs_fdinfo_fallback: ;\n"
               "#endif\n"
           )
 
@@ -1422,7 +1422,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage4-trial4-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage4-trial5-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1447,7 +1447,7 @@ jobs:
             .ci/stage4/build-ksun-stage4.yml
 
           git status --short
-          git commit -m "CI: SUSFS Stage 4 Trial 4 Samsung 4.19 compile probe"
+          git commit -m "CI: SUSFS Stage 4 Trial 5 Samsung 4.19 compile probe"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -1476,7 +1476,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 4 Trial 4: {name} ====="',
+                  f'echo "===== Stage 4 Trial 5: {name} ====="',
                   script,
                   "",
               ]
@@ -1487,14 +1487,14 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 4 Trial 4 compile recipe completed."
+          echo "Stage 4 Trial 5 compile recipe completed."
           echo "Compile probe only — do not flash."
 
-      - name: Upload Stage 4 Trial 4 compile outputs
+      - name: Upload Stage 4 Trial 5 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage4-trial4
+          name: m127f-susfs-stage4-trial5
           if-no-files-found: warn
           path: |
             Image
