@@ -1347,17 +1347,19 @@ jobs:
           if anchor not in s:
               raise SystemExit("build workflow KSUN patch anchor missing")
 
-          step = '''      - name: Stage 4 apply SUSFS KSUN compile-probe glue
-        run: |
-          set -euxo pipefail
-          test -s .github/patches/stage4-ksun-susfs-compile-probe.patch
-          git -C KernelSU-Next apply \\
-            ../.github/patches/stage4-ksun-susfs-compile-probe.patch
-          grep -n 'KernelSU - SUSFS Stage4 compile probe' KernelSU-Next/kernel/Kconfig
-          grep -n 'susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c
-          grep -n 'susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c
-
-          '''
+          step = "\n".join([
+              "      - name: Stage 4 apply SUSFS KSUN compile-probe glue",
+              "        run: |",
+              "          set -euxo pipefail",
+              "          test -s .github/patches/stage4-ksun-susfs-compile-probe.patch",
+              "          git -C KernelSU-Next apply \\\\",
+              "            ../.github/patches/stage4-ksun-susfs-compile-probe.patch",
+              "          grep -n 'KernelSU - SUSFS Stage4 compile probe' KernelSU-Next/kernel/Kconfig",
+              "          grep -n 'susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c",
+              "          grep -n 'susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c",
+              "",
+              "",
+          ])
           if "Stage 4 apply SUSFS KSUN compile-probe glue" not in s:
               s = s.replace(anchor, step + anchor, 1)
 
@@ -1365,24 +1367,26 @@ jobs:
           if verify_anchor not in s:
               raise SystemExit("build workflow package anchor missing")
 
-          verify = '''      - name: Verify Stage 4 SUSFS compile probe
-        run: |
-          set -euxo pipefail
-          grep -E '^CONFIG_KSU_SUSFS(=|_)' .config || true
-          grep -q '^CONFIG_KSU_SUSFS=y$' .config
-          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' .config
-          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' .config
-          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' .config
-          test -s fs/susfs.o
-          if ! grep -Eq '(^|[[:space:]])susfs_' System.map; then
-            echo "ERROR: SUSFS symbols not linked into final kernel"
-            exit 1
-          fi
-          ls -lh fs/susfs.o
-          grep -E '(^|[[:space:]])susfs_' System.map | head -40
-          echo "Stage 4 compile probe passed."
-
-          '''
+          verify = "\n".join([
+              "      - name: Verify Stage 4 SUSFS compile probe",
+              "        run: |",
+              "          set -euxo pipefail",
+              "          grep -E '^CONFIG_KSU_SUSFS(=|_)' .config || true",
+              "          grep -q '^CONFIG_KSU_SUSFS=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' .config",
+              "          test -s fs/susfs.o",
+              "          if ! grep -Eq '(^|[[:space:]])susfs_' System.map; then",
+              '            echo "ERROR: SUSFS symbols not linked into final kernel"',
+              "            exit 1",
+              "          fi",
+              "          ls -lh fs/susfs.o",
+              "          grep -E '(^|[[:space:]])susfs_' System.map | head -40",
+              '          echo "Stage 4 compile probe passed."',
+              "",
+              "",
+          ])
           if "Verify Stage 4 SUSFS compile probe" not in s:
               s = s.replace(verify_anchor, verify + verify_anchor, 1)
 
