@@ -13,6 +13,9 @@
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
 #include <linux/exportfs.h>
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#include <linux/susfs_def.h>
+#endif
 
 #include "inotify/inotify.h"
 #include "fsnotify.h"
@@ -21,16 +24,27 @@
 
 #if defined(CONFIG_INOTIFY_USER) || defined(CONFIG_FANOTIFY)
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+static void show_fdinfo(struct seq_file *m, struct file *f,
+			void (*show)(struct seq_file *m,
+				     struct fsnotify_mark *mark,
+					 struct file *file))
+#else
 static void show_fdinfo(struct seq_file *m, struct file *f,
 			void (*show)(struct seq_file *m,
 				     struct fsnotify_mark *mark))
+#endif
 {
 	struct fsnotify_group *group = f->private_data;
 	struct fsnotify_mark *mark;
 
 	mutex_lock(&group->mark_mutex);
 	list_for_each_entry(mark, &group->marks_list, g_list) {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		show(m, mark, f);
+#else
 		show(m, mark);
+#endif
 		if (seq_has_overflowed(m))
 			break;
 	}
@@ -72,7 +86,11 @@ static void show_mark_fhandle(struct seq_file *m, struct inode *inode)
 
 #ifdef CONFIG_INOTIFY_USER
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark, struct file *file)
+#else
 static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
+#endif
 {
 	struct inotify_inode_mark *inode_mark;
 	struct inode *inode;
@@ -83,6 +101,49 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
 	inode = igrab(fsnotify_conn_inode(mark->connector));
 	if (inode) {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		/* fdinfo_susfs_samsung419 */
+		if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
+		    unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
+			struct path susfs_path;
+			char *pathname;
+			char *dpath;
+
+			pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			if (!pathname)
+				goto susfs_fdinfo_fallback;
+
+			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
+			if (IS_ERR(dpath)) {
+				kfree(pathname);
+				goto susfs_fdinfo_fallback;
+			}
+
+			if (!kern_path(dpath, 0, &susfs_path)) {
+				u32 susfs_mask = mark->mask & IN_ALL_EVENTS;
+
+				seq_printf(m,
+					"inotify wd:%x ino:%lx sdev:%x mask:%x ignored_mask:%x ",
+					inode_mark->wd,
+					susfs_path.dentry->d_inode->i_ino,
+					susfs_path.dentry->d_inode->i_sb->s_dev,
+					susfs_mask,
+					mark->ignored_mask);
+
+				show_mark_fhandle(
+					m,
+					susfs_path.dentry->d_inode);
+				seq_putc(m, '\n');
+				path_put(&susfs_path);
+				kfree(pathname);
+				iput(inode);
+				return;
+			}
+
+			kfree(pathname);
+		}
+susfs_fdinfo_fallback:
+#endif
 		/*
 		 * IN_ALL_EVENTS represents all of the mask bits
 		 * that we expose to userspace.  There is at
