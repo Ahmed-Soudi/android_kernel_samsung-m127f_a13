@@ -3326,7 +3326,7 @@ jobs:
       - name: Create flashable ZIP
         run: |
           set -euxo pipefail
-          ZIP_NAME="M127F-KSUN-v3.3.0-TRIAL-17D5A-PS5-UAC1-GADGET-ENABLE.zip"
+          ZIP_NAME="M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip"
           rm -f "$ZIP_NAME"
           cd output
           zip -r9 "../$ZIP_NAME" .
@@ -3339,8 +3339,8 @@ jobs:
       - name: Upload flashable kernel ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-TRIAL-17D5A-PS5-UAC1-GADGET-ENABLE
-          path: M127F-KSUN-v3.3.0-TRIAL-17D5A-PS5-UAC1-GADGET-ENABLE.zip
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230
+          path: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip
           if-no-files-found: error
           compression-level: 0
 
