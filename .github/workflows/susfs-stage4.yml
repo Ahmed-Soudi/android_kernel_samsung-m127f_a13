@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 4 Compile Probe
+name: SUSFS Samsung 4.19 Stage 4 - Trial 2
 
 permissions:
   contents: write
@@ -1423,7 +1423,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage4-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage4-trial2-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1434,7 +1434,11 @@ jobs:
             fs \
             include/linux \
             kernel \
-            arch/arm64/configs/exynos850-m12nsxx_defconfig \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+          # Samsung's tree ignores .github, but these two generated CI files
+          # are intentionally part of the disposable Stage 4 branch.
+          git add -f \
             .github/patches/stage4-ksun-susfs-compile-probe.patch \
             .github/workflows/build-ksun.yml
 
