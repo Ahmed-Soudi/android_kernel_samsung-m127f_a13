@@ -22,8 +22,14 @@ jobs:
       - name: Record exact baseline
         run: |
           set -euxo pipefail
+
+          echo "=== Kernel commit ==="
           git rev-parse HEAD
+
+          echo "=== Parent commit ==="
           git rev-parse HEAD^
+
+          echo "=== KernelSU-Next submodule ==="
           git submodule status KernelSU-Next
 
       - name: Fetch Linux 4.19 SUSFS reference patch
@@ -34,7 +40,10 @@ jobs:
             https://raw.githubusercontent.com/sch-lda/susfs4ksu-4.19-1.5.7/Branch_a/kernel_patches/50_add_susfs_in_kernel-4.19.patch \
             -o /tmp/susfs-4.19-1.5.7.patch
 
+          echo "=== Reference patch SHA256 ==="
           sha256sum /tmp/susfs-4.19-1.5.7.patch
+
+          echo "=== Reference patch line count ==="
           wc -l /tmp/susfs-4.19-1.5.7.patch
 
       - name: Test structural patch against Samsung 4.19
@@ -43,39 +52,107 @@ jobs:
           set -uo pipefail
 
           echo "=== git apply --check ==="
+
+          # GitHub Actions invokes bash with -e.
+          # Failure here is EXPECTED because Samsung's 4.19 tree differs
+          # from the generic SUSFS 4.19 reference.
+          set +e
+
           git apply --check --verbose \
             /tmp/susfs-4.19-1.5.7.patch \
             2>&1 | tee /tmp/apply-check.log
 
           CHECK_RC=${PIPESTATUS[0]}
+
+          set -e
+
           echo "apply-check rc=$CHECK_RC"
 
-          echo "=== disposable reject pass ==="
+          echo
+          echo "=== Reset before disposable reject pass ==="
 
           git reset --hard HEAD
           git clean -fd
+
+          echo
+          echo "=== git apply --reject diagnostic pass ==="
+
+          # Again, rejects are expected. We want git to apply everything
+          # it safely can and leave *.rej files for Samsung-specific hunks.
+          set +e
 
           git apply \
             --reject \
             --whitespace=nowarn \
             /tmp/susfs-4.19-1.5.7.patch \
-            2>&1 | tee /tmp/apply-reject.log || true
+            2>&1 | tee /tmp/apply-reject.log
 
-          echo "=== reject files ==="
+          REJECT_RC=${PIPESTATUS[0]}
+
+          set -e
+
+          echo "apply-reject rc=$REJECT_RC"
+
+          echo
+          echo "=== Reject files ==="
 
           find . \
+            -type f \
             -name '*.rej' \
             -print \
-            -exec sh -c 'echo "----- $1"; cat "$1"' _ {} \; \
+            -exec sh -c '
+              echo "============================================================"
+              echo "REJECT FILE: $1"
+              echo "============================================================"
+              cat "$1"
+              echo
+            ' _ {} \; \
             | tee /tmp/rejects.log
 
-          echo "=== touched paths ==="
+          echo
+          echo "=== Modified / generated paths ==="
 
-          git status --short | tee /tmp/status.log
+          git status --short \
+            | tee /tmp/status.log
 
-          # Diagnostic only.
-          # We expect conflicts because this is Samsung's modified 4.19 tree.
-          exit 0
+          echo
+          echo "=== Modified file list only ==="
+
+          git diff --name-only \
+            | tee /tmp/modified-files.log
+
+          echo
+          echo "=== Diff stats ==="
+
+          git diff --stat \
+            | tee /tmp/diff-stat.log
+
+          echo
+          echo "=== Successfully applied diff ==="
+
+          git diff \
+            | tee /tmp/applied.diff
+
+          echo
+          echo "=== Reject summary ==="
+
+          REJECT_COUNT="$(
+            find . -type f -name '*.rej' | wc -l
+          )"
+
+          echo "reject_count=$REJECT_COUNT" \
+            | tee /tmp/summary.log
+
+          echo "apply_check_rc=$CHECK_RC" \
+            | tee -a /tmp/summary.log
+
+          echo "apply_reject_rc=$REJECT_RC" \
+            | tee -a /tmp/summary.log
+
+          echo
+          echo "Preflight completed successfully."
+          echo "This workflow is diagnostic only."
+          echo "No SUSFS changes are committed."
 
       - name: Upload SUSFS preflight diagnostics
         uses: actions/upload-artifact@v4
@@ -86,4 +163,9 @@ jobs:
             /tmp/apply-reject.log
             /tmp/rejects.log
             /tmp/status.log
+            /tmp/modified-files.log
+            /tmp/diff-stat.log
+            /tmp/applied.diff
+            /tmp/summary.log
           if-no-files-found: error
+          retention-days: 7
