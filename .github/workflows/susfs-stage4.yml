@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 4 - Trial 7
+name: SUSFS Samsung 4.19 Stage 5 - Trial 1
 
 permissions:
   contents: write
@@ -361,6 +361,8 @@ jobs:
           ! grep -q 'bool is_zygote_pid =' fs/namespace.c
           ! grep -q 'int last_entry_mnt_id = 0;' fs/namespace.c
           grep -q 'susfs_namespace_generic_cleanup_samsung419' fs/namespace.c
+          grep -Eq '^#define[[:space:]]+SUSFS_VERSION[[:space:]]+"2\\.3\\.0"' include/linux/susfs.h
+          test -s .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff
 
       - name: Resolve Samsung KDP namespace rejects
         run: |
@@ -1319,7 +1321,75 @@ jobs:
             /tmp/M127F-SUSFS-Stage3-diff-stat.txt
           if-no-files-found: error
           retention-days: 7
-      - name: Prepare Stage 4 KSUN SUSFS compile-probe integration
+      - name: Stage 5 Trial 1 import official SUSFS 2.3.0 core
+        run: |
+          set -euxo pipefail
+
+          # Stage 4 proved that our Samsung 4.19 VFS adaptation compiles.
+          # Stage 5 now replaces the old 1.5.7 SUSFS implementation/header
+          # payload with the current official 2.3.0 implementation.  We do
+          # NOT apply the modern 5.15 kernel patch wholesale: Samsung 4.19
+          # keeps the already-adapted VFS hooks from Stage 3/4.
+          BASE="https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android13-5.15/kernel_patches"
+
+          curl --fail --location --retry 3 \
+            "$BASE/fs/susfs.c" \
+            --output /tmp/susfs-230.c
+
+          curl --fail --location --retry 3 \
+            "$BASE/include/linux/susfs.h" \
+            --output /tmp/susfs-230.h
+
+          curl --fail --location --retry 3 \
+            "$BASE/include/linux/susfs_def.h" \
+            --output /tmp/susfs_def-230.h
+
+          test -s /tmp/susfs-230.c
+          test -s /tmp/susfs-230.h
+          test -s /tmp/susfs_def-230.h
+
+          grep -Eq '^#define[[:space:]]+SUSFS_VERSION[[:space:]]+"2\.3\.0"' \
+            /tmp/susfs-230.h
+
+          mkdir -p .ci/stage5
+          cp fs/susfs.c .ci/stage5/susfs-1.5.7-reference.c
+          cp include/linux/susfs.h .ci/stage5/susfs-1.5.7-reference.h
+          cp include/linux/susfs_def.h .ci/stage5/susfs_def-1.5.7-reference.h
+
+          cp /tmp/susfs-230.c fs/susfs.c
+          cp /tmp/susfs-230.h include/linux/susfs.h
+          cp /tmp/susfs_def-230.h include/linux/susfs_def.h
+
+          # Save the exact upstream delta used by this trial.  This makes the
+          # next 4.19 backport pass deterministic from the Actions artifact.
+          diff -u \
+            .ci/stage5/susfs-1.5.7-reference.c \
+            fs/susfs.c \
+            > .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff || true
+
+          diff -u \
+            .ci/stage5/susfs-1.5.7-reference.h \
+            include/linux/susfs.h \
+            > .ci/stage5/susfs-header-1.5.7-to-2.3.0.diff || true
+
+          diff -u \
+            .ci/stage5/susfs_def-1.5.7-reference.h \
+            include/linux/susfs_def.h \
+            > .ci/stage5/susfs-def-1.5.7-to-2.3.0.diff || true
+
+          {
+            echo "Stage 5 Trial 1"
+            echo "Official branch: gki-android13-5.15"
+            grep -E '^#define[[:space:]]+SUSFS_VERSION' include/linux/susfs.h
+            sha256sum \
+              fs/susfs.c \
+              include/linux/susfs.h \
+              include/linux/susfs_def.h
+          } | tee .ci/stage5/official-230-source.txt
+
+          echo "Official SUSFS 2.3.0 core imported."
+
+      - name: Prepare Stage 5 KSUN SUSFS 2.3.0 compile-probe integration
         run: |
           set -euxo pipefail
 
@@ -1420,7 +1490,7 @@ jobs:
           wrapper = '''
 
           #ifdef CONFIG_KSU_SUSFS
-          /* Stage 4 compile-probe adapters; final 2.3.0 integration will replace these. */
+          /* Stage 5 2.3.0 compile-probe adapters for Samsung 4.19. */
           bool susfs_is_current_ksu_domain(void)
           {
               return is_ksu_domain();
@@ -1584,7 +1654,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage4-trial7-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial1-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1606,10 +1676,11 @@ jobs:
 
           git add -f \
             .github/patches/stage4-ksun-susfs-compile-probe.patch \
-            .ci/stage4/build-ksun-stage4.yml
+            .ci/stage4/build-ksun-stage4.yml \
+            .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 4 Trial 7 Samsung 4.19 compile probe"
+          git commit -m "CI: SUSFS Stage 5 Trial 1 official 2.3.0 core port probe"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -1638,7 +1709,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 4 Trial 7: {name} ====="',
+                  f'echo "===== Stage 5 Trial 1: {name} ====="',
                   script,
                   "",
               ]
@@ -1649,18 +1720,19 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 4 Trial 7 compile recipe completed."
+          echo "Stage 5 Trial 1 compile recipe completed."
           echo "Compile probe only — do not flash."
 
-      - name: Upload Stage 4 Trial 7 compile outputs
+      - name: Upload Stage 5 Trial 1 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage4-trial7
+          name: m127f-susfs-stage5-trial1
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
+            .ci/stage5/
             M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-STAGE4-COMPILE-PROBE.zip
 
