@@ -327,13 +327,14 @@ jobs:
 
           marker = (
               "static inline int may_create("
-              "struct inode *dir, struct dentry *child)\n"
+              "struct vfsmount *mnt, struct inode *dir, "
+              "struct dentry *child)\n"
               "{\n"
           )
 
           if marker not in s:
               raise SystemExit(
-                  "may_create function anchor missing"
+                  "Samsung may_create(mnt, dir, child) anchor missing"
               )
 
           if "may_create_susfs_samsung419" not in s:
@@ -361,7 +362,7 @@ jobs:
                   "may_create audit anchor missing"
               )
 
-          if "susfs_error = inode_permission" not in s:
+          if "susfs_error = inode_permission2" not in s:
               block = (
                   "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
                   "\tif (child->d_inode &&\n"
@@ -369,8 +370,8 @@ jobs:
                   "INODE_STATE_SUS_PATH) &&\n"
                   "\t    likely(current->susfs_task_state & "
                   "TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {\n"
-                  "\t\tsusfs_error = inode_permission("
-                  "dir, MAY_WRITE | MAY_EXEC);\n"
+                  "\t\tsusfs_error = inode_permission2("
+                  "mnt, dir, MAY_WRITE | MAY_EXEC);\n"
                   "\t\tif (susfs_error)\n"
                   "\t\t\treturn susfs_error;\n"
                   "\n"
