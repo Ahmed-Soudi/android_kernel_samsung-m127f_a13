@@ -1,0 +1,89 @@
+name: SUSFS 4.19 Backport Preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ksun-3.3.0-ps5-susfs230
+    paths:
+      - '.github/workflows/susfs-preflight.yml'
+
+jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout PS5 known-good branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Record exact baseline
+        run: |
+          set -euxo pipefail
+          git rev-parse HEAD
+          git rev-parse HEAD^
+          git submodule status KernelSU-Next
+
+      - name: Fetch Linux 4.19 SUSFS reference patch
+        run: |
+          set -euxo pipefail
+
+          curl -fL --retry 5 \
+            https://raw.githubusercontent.com/sch-lda/susfs4ksu-4.19-1.5.7/Branch_a/kernel_patches/50_add_susfs_in_kernel-4.19.patch \
+            -o /tmp/susfs-4.19-1.5.7.patch
+
+          sha256sum /tmp/susfs-4.19-1.5.7.patch
+          wc -l /tmp/susfs-4.19-1.5.7.patch
+
+      - name: Test structural patch against Samsung 4.19
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          echo "=== git apply --check ==="
+          git apply --check --verbose \
+            /tmp/susfs-4.19-1.5.7.patch \
+            2>&1 | tee /tmp/apply-check.log
+
+          CHECK_RC=${PIPESTATUS[0]}
+          echo "apply-check rc=$CHECK_RC"
+
+          echo "=== disposable reject pass ==="
+
+          git reset --hard HEAD
+          git clean -fd
+
+          git apply \
+            --reject \
+            --whitespace=nowarn \
+            /tmp/susfs-4.19-1.5.7.patch \
+            2>&1 | tee /tmp/apply-reject.log || true
+
+          echo "=== reject files ==="
+
+          find . \
+            -name '*.rej' \
+            -print \
+            -exec sh -c 'echo "----- $1"; cat "$1"' _ {} \; \
+            | tee /tmp/rejects.log
+
+          echo "=== touched paths ==="
+
+          git status --short | tee /tmp/status.log
+
+          # Diagnostic only.
+          # We expect conflicts because this is Samsung's modified 4.19 tree.
+          exit 0
+
+      - name: Upload SUSFS preflight diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: susfs-4.19-preflight
+          path: |
+            /tmp/apply-check.log
+            /tmp/apply-reject.log
+            /tmp/rejects.log
+            /tmp/status.log
+          if-no-files-found: error
