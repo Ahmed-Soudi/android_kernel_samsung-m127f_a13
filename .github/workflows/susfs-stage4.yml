@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 4 - Trial 2
+name: SUSFS Samsung 4.19 Stage 4 - Trial 3
 
 permissions:
   contents: write
@@ -1423,7 +1423,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage4-trial2-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage4-trial3-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1436,23 +1436,70 @@ jobs:
             kernel \
             arch/arm64/configs/exynos850-m12nsxx_defconfig
 
-          # Samsung's tree ignores .github, but these two generated CI files
-          # are intentionally part of the disposable Stage 4 branch.
+          # GitHub Actions' repository token cannot push a modified workflow
+          # without the separate workflows permission. Keep the generated
+          # Stage-4 build recipe as ordinary data instead.
+          mkdir -p .ci/stage4
+          cp .github/workflows/build-ksun.yml .ci/stage4/build-ksun-stage4.yml
+          git checkout -- .github/workflows/build-ksun.yml
+
           git add -f \
             .github/patches/stage4-ksun-susfs-compile-probe.patch \
-            .github/workflows/build-ksun.yml
+            .ci/stage4/build-ksun-stage4.yml
 
           git status --short
-          git commit -m "CI: SUSFS Stage 4 Samsung 4.19 compile probe"
+          git commit -m "CI: SUSFS Stage 4 Trial 3 Samsung 4.19 compile probe"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
-      - name: Dispatch normal M127F build on Stage 4 branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Execute Stage 4 build recipe
         run: |
           set -euxo pipefail
-          gh workflow run build-ksun.yml --ref "$STAGE4_BRANCH"
-          echo "Stage 4 build dispatched on $STAGE4_BRANCH"
-          echo "This is an intermediate compile probe, NOT the final SUSFS 2.3.0 port."
+
+          # Execute shell steps from the generated build recipe in this runner.
+          # Action-only steps (checkout/setup/upload) are skipped.
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          wf = yaml.safe_load(Path(".ci/stage4/build-ksun-stage4.yml").read_text())
+          jobs = wf.get("jobs", {})
+          if len(jobs) != 1:
+              raise SystemExit(f"expected one build job, got {list(jobs)}")
+
+          steps = next(iter(jobs.values())).get("steps", [])
+          chunks = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
+
+          for idx, step in enumerate(steps, 1):
+              name = step.get("name", f"step-{idx}")
+              script = step.get("run")
+              if script is None:
+                  print(f"skip action-only step: {name}")
+                  continue
+              chunks += [
+                  f'echo "===== Stage 4 Trial 3: {name} ====="',
+                  script,
+                  "",
+              ]
+
+          Path("/tmp/stage4-build-recipe.sh").write_text("\n".join(chunks))
+          PY
+
+          chmod +x /tmp/stage4-build-recipe.sh
+          bash /tmp/stage4-build-recipe.sh
+
+          echo "Stage 4 Trial 3 compile recipe completed."
+          echo "Compile probe only — do not flash."
+
+      - name: Upload Stage 4 Trial 3 compile outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m127f-susfs-stage4-trial3
+          if-no-files-found: warn
+          path: |
+            Image
+            System.map
+            .config
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-STAGE4-COMPILE-PROBE.zip
 
