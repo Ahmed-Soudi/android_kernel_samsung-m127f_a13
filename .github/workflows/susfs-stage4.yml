@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 1
+name: SUSFS Samsung 4.19 Stage 5 - Trial 2
 
 permissions:
   contents: write
@@ -361,8 +361,6 @@ jobs:
           ! grep -q 'bool is_zygote_pid =' fs/namespace.c
           ! grep -q 'int last_entry_mnt_id = 0;' fs/namespace.c
           grep -q 'susfs_namespace_generic_cleanup_samsung419' fs/namespace.c
-          grep -Eq '^#define[[:space:]]+SUSFS_VERSION[[:space:]]+"2\\.3\\.0"' include/linux/susfs.h
-          test -s .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff
 
       - name: Resolve Samsung KDP namespace rejects
         run: |
@@ -1321,7 +1319,7 @@ jobs:
             /tmp/M127F-SUSFS-Stage3-diff-stat.txt
           if-no-files-found: error
           retention-days: 7
-      - name: Stage 5 Trial 1 import official SUSFS 2.3.0 core
+      - name: Stage 5 Trial 2 import official SUSFS 2.3.0 core
         run: |
           set -euxo pipefail
 
@@ -1348,8 +1346,13 @@ jobs:
           test -s /tmp/susfs-230.h
           test -s /tmp/susfs_def-230.h
 
-          grep -Eq '^#define[[:space:]]+SUSFS_VERSION[[:space:]]+"2\.3\.0"' \
-            /tmp/susfs-230.h
+          if ! grep -Eq 'SUSFS_VERSION.*2\.3\.0|2\.3\.0.*SUSFS_VERSION' \
+              /tmp/susfs-230.h /tmp/susfs_def-230.h /tmp/susfs-230.c; then
+            echo "::error::Downloaded official source does not identify itself as SUSFS 2.3.0"
+            grep -nE 'SUSFS_VERSION|2\.3\.0' \
+              /tmp/susfs-230.h /tmp/susfs_def-230.h /tmp/susfs-230.c || true
+            exit 1
+          fi
 
           mkdir -p .ci/stage5
           cp fs/susfs.c .ci/stage5/susfs-1.5.7-reference.c
@@ -1378,7 +1381,7 @@ jobs:
             > .ci/stage5/susfs-def-1.5.7-to-2.3.0.diff || true
 
           {
-            echo "Stage 5 Trial 1"
+            echo "Stage 5 Trial 2"
             echo "Official branch: gki-android13-5.15"
             grep -E '^#define[[:space:]]+SUSFS_VERSION' include/linux/susfs.h
             sha256sum \
@@ -1387,7 +1390,22 @@ jobs:
               include/linux/susfs_def.h
           } | tee .ci/stage5/official-230-source.txt
 
-          echo "Official SUSFS 2.3.0 core imported."
+          grep -Eq 'SUSFS_VERSION.*2\.3\.0|2\.3\.0.*SUSFS_VERSION' \
+            fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          test -s .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff
+
+          echo "Official SUSFS 2.3.0 core imported and verified."
+
+      - name: Verify Stage 5 official 2.3.0 import ordering
+        run: |
+          set -euxo pipefail
+
+          test -s .ci/stage5/official-230-source.txt
+          test -s .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff
+          grep -Eq 'SUSFS_VERSION.*2\.3\.0|2\.3\.0.*SUSFS_VERSION' \
+            fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
+          echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
       - name: Prepare Stage 5 KSUN SUSFS 2.3.0 compile-probe integration
         run: |
@@ -1654,7 +1672,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial1-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial2-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1680,7 +1698,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 1 official 2.3.0 core port probe"
+          git commit -m "CI: SUSFS Stage 5 Trial 2 official 2.3.0 core port probe"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -1709,7 +1727,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 5 Trial 1: {name} ====="',
+                  f'echo "===== Stage 5 Trial 2: {name} ====="',
                   script,
                   "",
               ]
@@ -1720,14 +1738,14 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 5 Trial 1 compile recipe completed."
+          echo "Stage 5 Trial 2 compile recipe completed."
           echo "Compile probe only — do not flash."
 
-      - name: Upload Stage 5 Trial 1 compile outputs
+      - name: Upload Stage 5 Trial 2 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial1
+          name: m127f-susfs-stage5-trial2
           if-no-files-found: warn
           path: |
             Image
