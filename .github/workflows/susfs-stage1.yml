@@ -1,0 +1,327 @@
+name: SUSFS Samsung 4.19 Stage 1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ksun-3.3.0-ps5-susfs230
+    paths:
+      - '.github/workflows/susfs-stage1.yml'
+
+jobs:
+  stage1:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout exact kernel
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify baseline
+        run: |
+          set -euxo pipefail
+
+          echo "HEAD:"
+          git rev-parse HEAD
+
+          echo "KernelSU:"
+          git submodule status KernelSU-Next
+
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = \
+            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+
+      - name: Fetch 4.19 compatibility reference
+        run: |
+          set -euxo pipefail
+
+          BASE="https://raw.githubusercontent.com/sch-lda/susfs4ksu-4.19-1.5.7/Branch_a/kernel_patches"
+
+          curl -fL --retry 5 \
+            "$BASE/50_add_susfs_in_kernel-4.19.patch" \
+            -o /tmp/susfs419.patch
+
+          curl -fL --retry 5 \
+            "$BASE/fs/susfs.c" \
+            -o /tmp/susfs.c
+
+          curl -fL --retry 5 \
+            "$BASE/fs/sus_su.c" \
+            -o /tmp/sus_su.c
+
+          curl -fL --retry 5 \
+            "$BASE/include/linux/susfs.h" \
+            -o /tmp/susfs.h
+
+          curl -fL --retry 5 \
+            "$BASE/include/linux/susfs_def.h" \
+            -o /tmp/susfs_def.h
+
+          curl -fL --retry 5 \
+            "$BASE/include/linux/sus_su.h" \
+            -o /tmp/sus_su.h
+
+      - name: Apply compatible 4.19 VFS hunks
+        run: |
+          set -euxo pipefail
+
+          set +e
+          git apply \
+            --reject \
+            --whitespace=nowarn \
+            /tmp/susfs419.patch
+          RC=$?
+          set -e
+
+          echo "reference patch rc=$RC"
+
+          cp /tmp/susfs.c fs/susfs.c
+          cp /tmp/sus_su.c fs/sus_su.c
+
+          cp /tmp/susfs.h include/linux/susfs.h
+          cp /tmp/susfs_def.h include/linux/susfs_def.h
+          cp /tmp/sus_su.h include/linux/sus_su.h
+
+      - name: Adapt task_struct for Samsung kernel
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("include/linux/sched.h")
+          s = p.read_text()
+
+          marker = """\
+          /*
+           * New fields for task_struct should be added above here, so that
+           * they are included in the randomized portion of task_struct.
+           */
+          randomized_struct_fields_end
+          """
+
+          addition = """\
+          #ifdef CONFIG_KSU_SUSFS
+              u64 susfs_task_state;
+              u64 susfs_last_fake_mnt_id;
+          #endif
+
+          /*
+           * New fields for task_struct should be added above here, so that
+           * they are included in the randomized portion of task_struct.
+           */
+          randomized_struct_fields_end
+          """
+
+          if "u64 susfs_task_state;" not in s:
+              if marker not in s:
+                  raise SystemExit("task_struct insertion marker not found")
+              s = s.replace(marker, addition, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Adapt vfsmount for Samsung KDP_NS
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("include/linux/mount.h")
+          s = p.read_text()
+
+          old = """\
+              int mnt_flags;
+              void *data;
+          } __randomize_layout;
+          """
+
+          new = """\
+              int mnt_flags;
+          #ifdef CONFIG_KSU_SUSFS
+              u64 susfs_mnt_id_backup;
+          #endif
+              void *data;
+          } __randomize_layout;
+          """
+
+          if "susfs_mnt_id_backup" not in s:
+              if old not in s:
+                  raise SystemExit("vfsmount insertion marker not found")
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
+          PY
+
+      - name: Resolve include-only rejects
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def add_after(path, anchor, text):
+              p = Path(path)
+              s = p.read_text()
+
+              if text.strip() in s:
+                  return
+
+              if anchor not in s:
+                  raise SystemExit(f"{path}: anchor not found: {anchor!r}")
+
+              s = s.replace(
+                  anchor,
+                  anchor + "\n" + text,
+                  1
+              )
+
+              p.write_text(s)
+
+          add_after(
+              "fs/dcache.c",
+              '#include <linux/list_lru.h>',
+              """#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+          #include <linux/susfs_def.h>
+          #endif"""
+          )
+
+          add_after(
+              "fs/namei.c",
+              '#include <linux/build_bug.h>',
+              """#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+          #include <linux/susfs_def.h>
+          #endif"""
+          )
+
+          add_after(
+              "fs/proc/task_mmu.c",
+              '#include <linux/mm_inline.h>',
+              """#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+          #include <linux/susfs_def.h>
+          #endif"""
+          )
+          PY
+
+      - name: Add Samsung-aware namespace declarations
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          anchor = '#include <linux/sched/task.h>\n'
+
+          block = """\
+          #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
+          #include <linux/susfs_def.h>
+          #endif
+          """
+
+          if "#include <linux/susfs_def.h>" not in s:
+              if anchor not in s:
+                  raise SystemExit("namespace include anchor missing")
+              s = s.replace(anchor, anchor + block, 1)
+
+          anchor2 = '#include "internal.h"\n'
+
+          block2 = """
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          extern bool susfs_is_current_ksu_domain(void);
+          extern bool susfs_is_current_zygote_domain(void);
+
+          static DEFINE_IDA(susfs_mnt_id_ida);
+          static DEFINE_IDA(susfs_mnt_group_ida);
+
+          #define CL_COPY_MNT_NS BIT(25)
+          #endif
+
+          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+          extern void susfs_auto_add_sus_ksu_default_mount(
+              const char __user *to_pathname);
+          bool susfs_is_auto_add_sus_ksu_default_mount_enabled = true;
+          #endif
+
+          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+          extern int susfs_auto_add_sus_bind_mount(
+              const char *pathname,
+              struct path *path_target);
+          bool susfs_is_auto_add_sus_bind_mount_enabled = true;
+          #endif
+
+          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+          extern void susfs_auto_add_try_umount_for_bind_mount(
+              struct path *path);
+          bool susfs_is_auto_add_try_umount_for_bind_mount_enabled = true;
+          #endif
+          """
+
+          if "static DEFINE_IDA(susfs_mnt_id_ida)" not in s:
+              if anchor2 not in s:
+                  raise SystemExit("namespace internal.h anchor missing")
+              s = s.replace(
+                  anchor2,
+                  anchor2 + block2,
+                  1
+              )
+
+          p.write_text(s)
+          PY
+
+      - name: Remove handled reject files
+        run: |
+          set -euxo pipefail
+
+          rm -f \
+            include/linux/sched.h.rej \
+            include/linux/mount.h.rej \
+            fs/dcache.c.rej \
+            fs/proc/task_mmu.c.rej
+
+          echo "Remaining rejects:"
+          find . -name '*.rej' -print | sort
+
+      - name: Verify Samsung-specific structural changes
+        run: |
+          set -euxo pipefail
+
+          grep -n "susfs_task_state" include/linux/sched.h
+          grep -n "susfs_last_fake_mnt_id" include/linux/sched.h
+          grep -n "susfs_mnt_id_backup" include/linux/mount.h
+          grep -n "susfs_def.h" fs/namespace.c
+
+          test -f fs/susfs.c
+          test -f fs/sus_su.c
+          test -f include/linux/susfs.h
+          test -f include/linux/susfs_def.h
+
+      - name: Generate Stage 1 patch
+        run: |
+          set -euxo pipefail
+
+          git diff --binary > /tmp/susfs-samsung-stage1.patch
+
+          git status --short > /tmp/status.txt
+
+          find . -name '*.rej' -print -exec cat {} \; \
+            > /tmp/remaining-rejects.txt
+
+          git diff --stat > /tmp/diff-stat.txt
+
+          cat /tmp/diff-stat.txt
+
+      - name: Upload Stage 1 result
+        uses: actions/upload-artifact@v4
+        with:
+          name: susfs-samsung-419-stage1
+          path: |
+            /tmp/susfs-samsung-stage1.patch
+            /tmp/status.txt
+            /tmp/remaining-rejects.txt
+            /tmp/diff-stat.txt
+          retention-days: 7
