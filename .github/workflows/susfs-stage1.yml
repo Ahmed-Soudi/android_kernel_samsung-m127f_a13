@@ -93,33 +93,32 @@ jobs:
           p = Path("include/linux/sched.h")
           s = p.read_text()
 
-          marker = """\
-          /*
-           * New fields for task_struct should be added above here, so that
-           * they are included in the randomized portion of task_struct.
-           */
-          randomized_struct_fields_end
-          """
+          if "u64 susfs_task_state;" in s:
+              print("SUSFS task fields already present")
+              raise SystemExit(0)
 
-          addition = """\
-          #ifdef CONFIG_KSU_SUSFS
-              u64 susfs_task_state;
-              u64 susfs_last_fake_mnt_id;
-          #endif
+          marker = "randomized_struct_fields_end"
 
-          /*
-           * New fields for task_struct should be added above here, so that
-           * they are included in the randomized portion of task_struct.
-           */
-          randomized_struct_fields_end
-          """
+          idx = s.find(marker)
 
-          if "u64 susfs_task_state;" not in s:
-              if marker not in s:
-                  raise SystemExit("task_struct insertion marker not found")
-              s = s.replace(marker, addition, 1)
+          if idx == -1:
+              raise SystemExit(
+                  "randomized_struct_fields_end not found"
+              )
+
+          insert = """\
+#ifdef CONFIG_KSU_SUSFS
+\tu64\t\t\t\tsusfs_task_state;
+\tu64\t\t\t\tsusfs_last_fake_mnt_id;
+#endif
+
+"""
+
+          s = s[:idx] + insert + s[idx:]
 
           p.write_text(s)
+
+          print("Inserted SUSFS task_struct fields")
           PY
 
       - name: Adapt vfsmount for Samsung KDP_NS
@@ -132,27 +131,32 @@ jobs:
           p = Path("include/linux/mount.h")
           s = p.read_text()
 
-          old = """\
-              int mnt_flags;
-              void *data;
-          } __randomize_layout;
-          """
+          if "susfs_mnt_id_backup" in s:
+              print("SUSFS vfsmount field already present")
+              raise SystemExit(0)
 
-          new = """\
-              int mnt_flags;
-          #ifdef CONFIG_KSU_SUSFS
-              u64 susfs_mnt_id_backup;
-          #endif
-              void *data;
-          } __randomize_layout;
-          """
+          marker = "\tint mnt_flags;\n"
 
-          if "susfs_mnt_id_backup" not in s:
-              if old not in s:
-                  raise SystemExit("vfsmount insertion marker not found")
-              s = s.replace(old, new, 1)
+          idx = s.find(marker)
+
+          if idx == -1:
+              raise SystemExit(
+                  "vfsmount mnt_flags marker not found"
+              )
+
+          insert_at = idx + len(marker)
+
+          insert = """\
+#ifdef CONFIG_KSU_SUSFS
+\tu64 susfs_mnt_id_backup;
+#endif
+"""
+
+          s = s[:insert_at] + insert + s[insert_at:]
 
           p.write_text(s)
+
+          print("Inserted SUSFS vfsmount field")
           PY
 
       - name: Resolve include-only rejects
@@ -166,11 +170,14 @@ jobs:
               p = Path(path)
               s = p.read_text()
 
-              if text.strip() in s:
+              if "susfs_def.h" in s:
+                  print(f"{path}: SUSFS include already present")
                   return
 
               if anchor not in s:
-                  raise SystemExit(f"{path}: anchor not found: {anchor!r}")
+                  raise SystemExit(
+                      f"{path}: anchor not found: {anchor!r}"
+                  )
 
               s = s.replace(
                   anchor,
@@ -182,26 +189,26 @@ jobs:
 
           add_after(
               "fs/dcache.c",
-              '#include <linux/list_lru.h>',
+              "#include <linux/list_lru.h>",
               """#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-          #include <linux/susfs_def.h>
-          #endif"""
+#include <linux/susfs_def.h>
+#endif"""
           )
 
           add_after(
               "fs/namei.c",
-              '#include <linux/build_bug.h>',
+              "#include <linux/build_bug.h>",
               """#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
-          #include <linux/susfs_def.h>
-          #endif"""
+#include <linux/susfs_def.h>
+#endif"""
           )
 
           add_after(
               "fs/proc/task_mmu.c",
-              '#include <linux/mm_inline.h>',
+              "#include <linux/mm_inline.h>",
               """#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
-          #include <linux/susfs_def.h>
-          #endif"""
+#include <linux/susfs_def.h>
+#endif"""
           )
           PY
 
@@ -215,62 +222,74 @@ jobs:
           p = Path("fs/namespace.c")
           s = p.read_text()
 
-          anchor = '#include <linux/sched/task.h>\n'
-
-          block = """\
-          #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
-          #include <linux/susfs_def.h>
-          #endif
-          """
-
           if "#include <linux/susfs_def.h>" not in s:
+              anchor = "#include <linux/sched/task.h>\n"
+
               if anchor not in s:
-                  raise SystemExit("namespace include anchor missing")
-              s = s.replace(anchor, anchor + block, 1)
+                  raise SystemExit(
+                      "namespace include anchor missing"
+                  )
 
-          anchor2 = '#include "internal.h"\n'
+              block = """\
+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
+#include <linux/susfs_def.h>
+#endif
+"""
 
-          block2 = """
-          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-          extern bool susfs_is_current_ksu_domain(void);
-          extern bool susfs_is_current_zygote_domain(void);
-
-          static DEFINE_IDA(susfs_mnt_id_ida);
-          static DEFINE_IDA(susfs_mnt_group_ida);
-
-          #define CL_COPY_MNT_NS BIT(25)
-          #endif
-
-          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
-          extern void susfs_auto_add_sus_ksu_default_mount(
-              const char __user *to_pathname);
-          bool susfs_is_auto_add_sus_ksu_default_mount_enabled = true;
-          #endif
-
-          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
-          extern int susfs_auto_add_sus_bind_mount(
-              const char *pathname,
-              struct path *path_target);
-          bool susfs_is_auto_add_sus_bind_mount_enabled = true;
-          #endif
-
-          #ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
-          extern void susfs_auto_add_try_umount_for_bind_mount(
-              struct path *path);
-          bool susfs_is_auto_add_try_umount_for_bind_mount_enabled = true;
-          #endif
-          """
+              s = s.replace(
+                  anchor,
+                  anchor + block,
+                  1
+              )
 
           if "static DEFINE_IDA(susfs_mnt_id_ida)" not in s:
-              if anchor2 not in s:
-                  raise SystemExit("namespace internal.h anchor missing")
+              anchor = '#include "internal.h"\n'
+
+              if anchor not in s:
+                  raise SystemExit(
+                      "namespace internal.h anchor missing"
+                  )
+
+              block = """
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+extern bool susfs_is_current_ksu_domain(void);
+extern bool susfs_is_current_zygote_domain(void);
+
+static DEFINE_IDA(susfs_mnt_id_ida);
+static DEFINE_IDA(susfs_mnt_group_ida);
+
+#define CL_COPY_MNT_NS BIT(25)
+#endif
+
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+extern void susfs_auto_add_sus_ksu_default_mount(
+    const char __user *to_pathname);
+bool susfs_is_auto_add_sus_ksu_default_mount_enabled = true;
+#endif
+
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+extern int susfs_auto_add_sus_bind_mount(
+    const char *pathname,
+    struct path *path_target);
+bool susfs_is_auto_add_sus_bind_mount_enabled = true;
+#endif
+
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+extern void susfs_auto_add_try_umount_for_bind_mount(
+    struct path *path);
+bool susfs_is_auto_add_try_umount_for_bind_mount_enabled = true;
+#endif
+"""
+
               s = s.replace(
-                  anchor2,
-                  anchor2 + block2,
+                  anchor,
+                  anchor + block,
                   1
               )
 
           p.write_text(s)
+
+          print("Added Samsung-aware namespace SUSFS declarations")
           PY
 
       - name: Remove handled reject files
@@ -299,6 +318,7 @@ jobs:
           test -f fs/sus_su.c
           test -f include/linux/susfs.h
           test -f include/linux/susfs_def.h
+          test -f include/linux/sus_su.h
 
       - name: Generate Stage 1 patch
         run: |
@@ -308,12 +328,20 @@ jobs:
 
           git status --short > /tmp/status.txt
 
-          find . -name '*.rej' -print -exec cat {} \; \
+          find . \
+            -name '*.rej' \
+            -print \
+            -exec cat {} \; \
             > /tmp/remaining-rejects.txt
 
           git diff --stat > /tmp/diff-stat.txt
 
+          echo "=== DIFF STAT ==="
           cat /tmp/diff-stat.txt
+
+          echo
+          echo "=== REMAINING REJECTS ==="
+          cat /tmp/remaining-rejects.txt
 
       - name: Upload Stage 1 result
         uses: actions/upload-artifact@v4
@@ -324,4 +352,5 @@ jobs:
             /tmp/status.txt
             /tmp/remaining-rejects.txt
             /tmp/diff-stat.txt
+          if-no-files-found: error
           retention-days: 7
