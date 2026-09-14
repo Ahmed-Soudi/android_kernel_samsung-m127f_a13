@@ -405,26 +405,24 @@ jobs:
               print("fdinfo SUSFS adaptation already present")
               raise SystemExit(0)
 
-          if (
+          # Stage 1 successfully applies the SUSFS callback plumbing:
+          # under CONFIG_KSU_SUSFS_SUS_MOUNT the callback order is
+          #   inotify_fdinfo(m, mark, file)
+          # Only the Samsung-specific function-body hunk rejects.
+          signature = (
               "static void inotify_fdinfo("
-              "struct seq_file *m, struct file *file, "
-              "struct fsnotify_mark *mark)"
-          ) not in s:
-              raise SystemExit(
-                  "Expected Stage-1 inotify file-aware signature missing"
-              )
-
-          anchor = "\tif (inode) {\n"
-
-          start = s.find(
-              "static void inotify_fdinfo("
+              "struct seq_file *m, struct fsnotify_mark *mark, "
+              "struct file *file)"
           )
+
+          start = s.find(signature)
 
           if start == -1:
               raise SystemExit(
-                  "inotify_fdinfo missing"
+                  "Expected Stage-1 inotify (m, mark, file) signature missing"
               )
 
+          anchor = "\tif (inode) {\n"
           idx = s.find(anchor, start)
 
           if idx == -1:
