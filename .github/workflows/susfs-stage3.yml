@@ -390,30 +390,37 @@ jobs:
           # mnt_clone_internal etc do not call alloc_vfsmnt directly.
           # Any still-generic direct calls outside our target functions
           # should remain normal allocations.
-          def function_bounds(text, signature):
+          def function_region(text, signature, end_marker):
+              """
+              Return a stable source slice without trying to count C braces.
+
+              Samsung namespace.c has CONFIG_KDP_NS / #else alternatives
+              that each contain their own opening braces but share closing
+              braces after #endif. A raw lexical brace counter therefore
+              sees both mutually-exclusive branches and cannot determine
+              function boundaries correctly.
+              """
               start = text.find(signature)
               if start == -1:
                   raise SystemExit(f"function missing: {signature}")
-              brace = text.find("{", start)
-              if brace == -1:
-                  raise SystemExit(f"function opening brace missing: {signature}")
-              depth = 0
-              i = brace
-              while i < len(text):
-                  if text[i] == "{":
-                      depth += 1
-                  elif text[i] == "}":
-                      depth -= 1
-                      if depth == 0:
-                          return start, i + 1
-                  i += 1
-              raise SystemExit(f"function closing brace missing: {signature}")
+
+              end = text.find(end_marker, start)
+              if end == -1:
+                  raise SystemExit(
+                      f"function end marker missing: {signature} -> {end_marker}"
+                  )
+
+              return start, end
 
           # ----------------------------------------------------------
           # 4. vfs_kern_mount(): KSU-created mounts get SUSFS IDs.
           # Preserve KDP mount object allocation and root setup.
           # ----------------------------------------------------------
-          vstart, vend = function_bounds(s, "struct vfsmount *\nvfs_kern_mount(")
+          vstart, vend = function_region(
+              s,
+              "struct vfsmount *\nvfs_kern_mount(",
+              "EXPORT_SYMBOL_GPL(vfs_kern_mount);"
+          )
           vf = s[vstart:vend]
 
           if "susfs_vfs_kern_mount_samsung419" not in vf:
@@ -480,7 +487,11 @@ jobs:
           # 5. clone_mnt(): distinguish namespace-copy clones from
           # single clones and use KDP-safe vfsmount access.
           # ----------------------------------------------------------
-          cstart, cend = function_bounds(s, "static struct mount *clone_mnt(")
+          cstart, cend = function_region(
+              s,
+              "static struct mount *clone_mnt(",
+              "static void cleanup_mnt("
+          )
           cf = s[cstart:cend]
 
           if "susfs_clone_mnt_samsung419" not in cf:
@@ -563,7 +574,11 @@ jobs:
           # 6. copy_tree(): compensate mount IDs for zygote single-tree
           # cloning while leaving copy_mnt_ns() clones alone.
           # ----------------------------------------------------------
-          tstart, tend = function_bounds(s, "struct mount *copy_tree(")
+          tstart, tend = function_region(
+              s,
+              "struct mount *copy_tree(",
+              "/* Caller should check returned pointer for errors */"
+          )
           tf = s[tstart:tend]
 
           if "susfs_copy_tree_samsung419" not in tf:
@@ -620,7 +635,11 @@ jobs:
           # 7. copy_mnt_ns(): flag namespace clones and then create the
           # zygote-facing sequential fake ID view.
           # ----------------------------------------------------------
-          nstart, nend = function_bounds(s, "struct mnt_namespace *copy_mnt_ns(")
+          nstart, nend = function_region(
+              s,
+              "struct mnt_namespace *copy_mnt_ns(",
+              "/**\n * create_mnt_ns"
+          )
           nf = s[nstart:nend]
 
           if "susfs_copy_mnt_ns_samsung419" not in nf:
