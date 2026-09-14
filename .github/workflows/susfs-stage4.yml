@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 4 - Trial 6
+name: SUSFS Samsung 4.19 Stage 4 - Trial 7
 
 permissions:
   contents: write
@@ -297,6 +297,70 @@ jobs:
 
           p.write_text(s)
           PY
+
+      - name: Remove superseded generic namespace SUSFS variables
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          marker = "susfs_namespace_generic_cleanup_samsung419"
+          if marker in s:
+              print("generic namespace SUSFS cleanup already applied")
+              raise SystemExit(0)
+
+          removals = [
+              (
+                  "\t#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tbool is_current_zygote_domain = susfs_is_current_zygote_domain();\n"
+                  "\t#endif\n",
+                  ""
+              ),
+              (
+                  "\t\t#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\t\tint attach_mnt_count = 0;\n"
+                  "\t\t#endif\n",
+                  ""
+              ),
+              (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tbool is_zygote_pid = susfs_is_current_zygote_domain();\n"
+                  "\tint last_entry_mnt_id = 0;\n"
+                  "#endif\n",
+                  ""
+              ),
+          ]
+
+          for old, new in removals:
+              if old not in s:
+                  raise SystemExit(
+                      "expected superseded generic namespace block missing"
+                  )
+              s = s.replace(old, new, 1)
+
+          include_anchor = '#include "internal.h"\n'
+          if include_anchor not in s:
+              raise SystemExit("namespace internal include anchor missing")
+          s = s.replace(
+              include_anchor,
+              include_anchor
+              + "/* susfs_namespace_generic_cleanup_samsung419 */\n",
+              1,
+          )
+
+          p.write_text(s)
+          print("Removed superseded generic SUSFS namespace variables")
+          PY
+
+          ! grep -q 'bool is_current_zygote_domain =' fs/namespace.c
+          ! grep -q 'int attach_mnt_count = 0;' fs/namespace.c
+          ! grep -q 'bool is_zygote_pid =' fs/namespace.c
+          ! grep -q 'int last_entry_mnt_id = 0;' fs/namespace.c
+          grep -q 'susfs_namespace_generic_cleanup_samsung419' fs/namespace.c
 
       - name: Resolve Samsung KDP namespace rejects
         run: |
@@ -1500,6 +1564,11 @@ jobs:
           grep -q 'susfs_copy_mnt_ns_samsung419' fs/namespace.c
           grep -q 'fdinfo_susfs_samsung419' fs/notify/fdinfo.c
           grep -q 'susfs_statfs_kdp_samsung419' fs/statfs.c
+          grep -q 'susfs_namespace_generic_cleanup_samsung419' fs/namespace.c
+          ! grep -q 'bool is_current_zygote_domain =' fs/namespace.c
+          ! grep -q 'int attach_mnt_count = 0;' fs/namespace.c
+          ! grep -q 'bool is_zygote_pid =' fs/namespace.c
+          ! grep -q 'int last_entry_mnt_id = 0;' fs/namespace.c
           grep -q '^\s*u32 mask;$' fs/notify/fdinfo.c
           grep -q '^\s*mask = mark->mask & IN_ALL_EVENTS;$' fs/notify/fdinfo.c
           ! grep -q '^\s*u32 mask = mark->mask & IN_ALL_EVENTS;$' fs/notify/fdinfo.c
@@ -1515,7 +1584,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage4-trial6-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage4-trial7-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1540,7 +1609,7 @@ jobs:
             .ci/stage4/build-ksun-stage4.yml
 
           git status --short
-          git commit -m "CI: SUSFS Stage 4 Trial 6 Samsung 4.19 compile probe"
+          git commit -m "CI: SUSFS Stage 4 Trial 7 Samsung 4.19 compile probe"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -1569,7 +1638,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 4 Trial 6: {name} ====="',
+                  f'echo "===== Stage 4 Trial 7: {name} ====="',
                   script,
                   "",
               ]
@@ -1580,14 +1649,14 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 4 Trial 6 compile recipe completed."
+          echo "Stage 4 Trial 7 compile recipe completed."
           echo "Compile probe only — do not flash."
 
-      - name: Upload Stage 4 Trial 6 compile outputs
+      - name: Upload Stage 4 Trial 7 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage4-trial6
+          name: m127f-susfs-stage4-trial7
           if-no-files-found: warn
           path: |
             Image
