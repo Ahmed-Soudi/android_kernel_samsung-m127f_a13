@@ -1,0 +1,1965 @@
+name: SUSFS Samsung 4.19 Stage 5 - Trial 5
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ksun-3.3.0-ps5-susfs230
+    paths:
+      - '.github/workflows/susfs-stage4.yml'
+
+jobs:
+  stage2:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout exact kernel
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Verify baseline
+        run: |
+          set -euxo pipefail
+
+          echo "HEAD:"
+          git rev-parse HEAD
+
+          echo "KernelSU:"
+          git submodule status KernelSU-Next
+
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = \
+            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+
+      - name: Fetch SUSFS 4.19 compatibility reference
+        run: |
+          set -euxo pipefail
+
+          BASE="https://raw.githubusercontent.com/sch-lda/susfs4ksu-4.19-1.5.7/Branch_a/kernel_patches"
+
+          curl -fL --retry 5 \
+            "$BASE/50_add_susfs_in_kernel-4.19.patch" \
+            -o /tmp/susfs419.patch
+
+          curl -fL --retry 5 \
+            "$BASE/fs/susfs.c" \
+            -o /tmp/susfs.c
+
+          curl -fL --retry 5 \
+            "$BASE/fs/sus_su.c" \
+            -o /tmp/sus_su.c
+
+          curl -fL --retry 5 \
+            "$BASE/include/linux/susfs.h" \
+            -o /tmp/susfs.h
+
+          curl -fL --retry 5 \
+            "$BASE/include/linux/susfs_def.h" \
+            -o /tmp/susfs_def.h
+
+          curl -fL --retry 5 \
+            "$BASE/include/linux/sus_su.h" \
+            -o /tmp/sus_su.h
+
+      - name: Recreate Stage 1 reference application
+        run: |
+          set -euxo pipefail
+
+          set +e
+
+          git apply \
+            --reject \
+            --whitespace=nowarn \
+            /tmp/susfs419.patch
+
+          RC=$?
+
+          set -e
+
+          echo "reference patch rc=$RC"
+
+          cp /tmp/susfs.c fs/susfs.c
+          cp /tmp/sus_su.c fs/sus_su.c
+
+          cp /tmp/susfs.h include/linux/susfs.h
+          cp /tmp/susfs_def.h include/linux/susfs_def.h
+          cp /tmp/sus_su.h include/linux/sus_su.h
+
+      - name: Recreate Samsung task_struct adaptation
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("include/linux/sched.h")
+          s = p.read_text()
+
+          if "u64 susfs_task_state;" not in s:
+              marker = "randomized_struct_fields_end"
+
+              idx = s.find(marker)
+
+              if idx == -1:
+                  raise SystemExit(
+                      "randomized_struct_fields_end not found"
+                  )
+
+              insert = (
+                  "#ifdef CONFIG_KSU_SUSFS\n"
+                  "\tu64\t\t\t\tsusfs_task_state;\n"
+                  "\tu64\t\t\t\tsusfs_last_fake_mnt_id;\n"
+                  "#endif\n\n"
+              )
+
+              s = s[:idx] + insert + s[idx:]
+
+              p.write_text(s)
+
+          print("Samsung task_struct adaptation ready")
+          PY
+
+      - name: Recreate Samsung vfsmount adaptation
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("include/linux/mount.h")
+          s = p.read_text()
+
+          if "susfs_mnt_id_backup" not in s:
+              marker = "\tint mnt_flags;\n"
+
+              idx = s.find(marker)
+
+              if idx == -1:
+                  raise SystemExit(
+                      "vfsmount mnt_flags marker not found"
+                  )
+
+              insert_at = idx + len(marker)
+
+              insert = (
+                  "#ifdef CONFIG_KSU_SUSFS\n"
+                  "\tu64 susfs_mnt_id_backup;\n"
+                  "#endif\n"
+              )
+
+              s = s[:insert_at] + insert + s[insert_at:]
+
+              p.write_text(s)
+
+          print("Samsung vfsmount adaptation ready")
+          PY
+
+      - name: Recreate include-only adaptations
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def add_after(path, anchor, block):
+              p = Path(path)
+              s = p.read_text()
+
+              if "#include <linux/susfs_def.h>" in s:
+                  return
+
+              if anchor not in s:
+                  raise SystemExit(
+                      f"{path}: anchor missing: {anchor!r}"
+                  )
+
+              s = s.replace(
+                  anchor,
+                  anchor + "\n" + block,
+                  1
+              )
+
+              p.write_text(s)
+
+          add_after(
+              "fs/dcache.c",
+              "#include <linux/list_lru.h>",
+              (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
+                  "#include <linux/susfs_def.h>\n"
+                  "#endif"
+              )
+          )
+
+          add_after(
+              "fs/namei.c",
+              "#include <linux/build_bug.h>",
+              (
+                  "#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || "
+                  "defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n"
+                  "#include <linux/susfs_def.h>\n"
+                  "#endif"
+              )
+          )
+
+          add_after(
+              "fs/proc/task_mmu.c",
+              "#include <linux/mm_inline.h>",
+              (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+                  "#include <linux/susfs_def.h>\n"
+                  "#endif"
+              )
+          )
+          PY
+
+      - name: Recreate Samsung namespace declarations
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          if "#include <linux/susfs_def.h>" not in s:
+              anchor = "#include <linux/sched/task.h>\n"
+
+              if anchor not in s:
+                  raise SystemExit(
+                      "namespace include anchor missing"
+                  )
+
+              block = (
+                  "#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || "
+                  "defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)\n"
+                  "#include <linux/susfs_def.h>\n"
+                  "#endif\n"
+              )
+
+              s = s.replace(
+                  anchor,
+                  anchor + block,
+                  1
+              )
+
+          if "static DEFINE_IDA(susfs_mnt_id_ida)" not in s:
+              anchor = '#include "internal.h"\n'
+
+              if anchor not in s:
+                  raise SystemExit(
+                      "namespace internal.h anchor missing"
+                  )
+
+              block = (
+                  "\n"
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "extern bool susfs_is_current_ksu_domain(void);\n"
+                  "extern bool susfs_is_current_zygote_domain(void);\n"
+                  "\n"
+                  "static DEFINE_IDA(susfs_mnt_id_ida);\n"
+                  "static DEFINE_IDA(susfs_mnt_group_ida);\n"
+                  "\n"
+                  "#define CL_COPY_MNT_NS BIT(25)\n"
+                  "#endif\n"
+                  "\n"
+                  "#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT\n"
+                  "extern void susfs_auto_add_sus_ksu_default_mount(\n"
+                  "    const char __user *to_pathname);\n"
+                  "bool susfs_is_auto_add_sus_ksu_default_mount_enabled = true;\n"
+                  "#endif\n"
+                  "\n"
+                  "#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT\n"
+                  "extern int susfs_auto_add_sus_bind_mount(\n"
+                  "    const char *pathname,\n"
+                  "    struct path *path_target);\n"
+                  "bool susfs_is_auto_add_sus_bind_mount_enabled = true;\n"
+                  "#endif\n"
+                  "\n"
+                  "#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT\n"
+                  "extern void susfs_auto_add_try_umount_for_bind_mount(\n"
+                  "    struct path *path);\n"
+                  "bool susfs_is_auto_add_try_umount_for_bind_mount_enabled = true;\n"
+                  "#endif\n"
+              )
+
+              s = s.replace(
+                  anchor,
+                  anchor + block,
+                  1
+              )
+
+          p.write_text(s)
+          PY
+
+      - name: Remove superseded generic namespace SUSFS variables
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          marker = "susfs_namespace_generic_cleanup_samsung419"
+          if marker in s:
+              print("generic namespace SUSFS cleanup already applied")
+              raise SystemExit(0)
+
+          removals = [
+              (
+                  "\t#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tbool is_current_zygote_domain = susfs_is_current_zygote_domain();\n"
+                  "\t#endif\n",
+                  ""
+              ),
+              (
+                  "\t\t#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\t\tint attach_mnt_count = 0;\n"
+                  "\t\t#endif\n",
+                  ""
+              ),
+              (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tbool is_zygote_pid = susfs_is_current_zygote_domain();\n"
+                  "\tint last_entry_mnt_id = 0;\n"
+                  "#endif\n",
+                  ""
+              ),
+          ]
+
+          for old, new in removals:
+              if old not in s:
+                  raise SystemExit(
+                      "expected superseded generic namespace block missing"
+                  )
+              s = s.replace(old, new, 1)
+
+          include_anchor = '#include "internal.h"\n'
+          if include_anchor not in s:
+              raise SystemExit("namespace internal include anchor missing")
+          s = s.replace(
+              include_anchor,
+              include_anchor
+              + "/* susfs_namespace_generic_cleanup_samsung419 */\n",
+              1,
+          )
+
+          p.write_text(s)
+          print("Removed superseded generic SUSFS namespace variables")
+          PY
+
+          ! grep -q 'bool is_current_zygote_domain =' fs/namespace.c
+          ! grep -q 'int attach_mnt_count = 0;' fs/namespace.c
+          ! grep -q 'bool is_zygote_pid =' fs/namespace.c
+          ! grep -q 'int last_entry_mnt_id = 0;' fs/namespace.c
+          grep -q 'susfs_namespace_generic_cleanup_samsung419' fs/namespace.c
+
+      - name: Resolve Samsung KDP namespace rejects
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("fs/namespace.c")
+          s = p.read_text()
+
+          # ----------------------------------------------------------
+          # 1. KDP-safe accessor for vfsmount SUSFS backup mount ID.
+          # The generic 4.19 SUSFS patch assumes:
+          #     struct mount { struct vfsmount mnt; }
+          # Samsung CONFIG_KDP_NS uses:
+          #     struct mount { struct vfsmount *mnt; }
+          # ----------------------------------------------------------
+          if "SUSFS_MNT_ID_BACKUP(" not in s:
+              anchor = '#include "internal.h"\n'
+              if anchor not in s:
+                  raise SystemExit("namespace internal.h anchor missing")
+
+              block = (
+                  "\n"
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "#ifdef CONFIG_KDP_NS\n"
+                  "#define SUSFS_MNT_ID_BACKUP(m) ((m)->mnt->susfs_mnt_id_backup)\n"
+                  "#else\n"
+                  "#define SUSFS_MNT_ID_BACKUP(m) ((m)->mnt.susfs_mnt_id_backup)\n"
+                  "#endif\n"
+                  "#endif\n"
+              )
+
+              s = s.replace(anchor, anchor + block, 1)
+
+          # Convert generic SUSFS backup field uses that may have applied
+          # cleanly into the Samsung/KDP-safe accessor.
+          s = re.sub(
+              r'([A-Za-z_][A-Za-z0-9_]*)->mnt\.susfs_mnt_id_backup',
+              r'SUSFS_MNT_ID_BACKUP(\1)',
+              s
+          )
+
+          # ----------------------------------------------------------
+          # 2. alloc_vfsmnt(): support normal IDs, SUSFS IDs and
+          # custom IDs while preserving Samsung's KDP allocation.
+          # ----------------------------------------------------------
+          old_sig = "static struct mount *alloc_vfsmnt(const char *name)\n{"
+          new_sig = (
+              "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+              "static struct mount *alloc_vfsmnt(const char *name,\n"
+              "\t\t\t\t bool should_spoof, int custom_mnt_id)\n"
+              "#else\n"
+              "static struct mount *alloc_vfsmnt(const char *name)\n"
+              "#endif\n"
+              "{"
+          )
+
+          if "bool should_spoof, int custom_mnt_id" not in s:
+              if old_sig not in s:
+                  raise SystemExit("alloc_vfsmnt signature anchor missing")
+              s = s.replace(old_sig, new_sig, 1)
+
+          normal_alloc = "\t\terr = mnt_alloc_id(mnt);\n"
+          if "susfs_alloc_vfsmnt_samsung419" not in s:
+              idx = s.find(normal_alloc, s.find("static struct mount *alloc_vfsmnt"))
+              if idx == -1:
+                  raise SystemExit("alloc_vfsmnt mnt_alloc_id anchor missing")
+
+              replacement = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\t\t/* susfs_alloc_vfsmnt_samsung419 */\n"
+                  "\t\tif (should_spoof) {\n"
+                  "\t\t\tif (custom_mnt_id) {\n"
+                  "\t\t\t\tmnt->mnt_id = custom_mnt_id;\n"
+                  "\t\t\t\terr = 0;\n"
+                  "\t\t\t} else {\n"
+                  "\t\t\t\terr = susfs_mnt_alloc_id(mnt);\n"
+                  "\t\t\t}\n"
+                  "\t\t} else {\n"
+                  "\t\t\terr = mnt_alloc_id(mnt);\n"
+                  "\t\t}\n"
+                  "#else\n"
+                  "\t\terr = mnt_alloc_id(mnt);\n"
+                  "#endif\n"
+              )
+              s = s[:idx] + replacement + s[idx + len(normal_alloc):]
+
+          # ----------------------------------------------------------
+          # 3. Update all ordinary alloc_vfsmnt() call sites.
+          # clone_mnt() and vfs_kern_mount() are handled specially below.
+          # ----------------------------------------------------------
+          # mnt_clone_internal etc do not call alloc_vfsmnt directly.
+          # Any still-generic direct calls outside our target functions
+          # should remain normal allocations.
+          def function_region(text, signature, end_marker):
+              """
+              Return a stable source slice without trying to count C braces.
+
+              Samsung namespace.c has CONFIG_KDP_NS / #else alternatives
+              that each contain their own opening braces but share closing
+              braces after #endif. A raw lexical brace counter therefore
+              sees both mutually-exclusive branches and cannot determine
+              function boundaries correctly.
+              """
+              start = text.find(signature)
+              if start == -1:
+                  raise SystemExit(f"function missing: {signature}")
+
+              end = text.find(end_marker, start)
+              if end == -1:
+                  raise SystemExit(
+                      f"function end marker missing: {signature} -> {end_marker}"
+                  )
+
+              return start, end
+
+          # ----------------------------------------------------------
+          # 4. vfs_kern_mount(): KSU-created mounts get SUSFS IDs.
+          # Preserve KDP mount object allocation and root setup.
+          # ----------------------------------------------------------
+          vstart, vend = function_region(
+              s,
+              "struct vfsmount *\nvfs_kern_mount(",
+              "EXPORT_SYMBOL_GPL(vfs_kern_mount);"
+          )
+          vf = s[vstart:vend]
+
+          if "susfs_vfs_kern_mount_samsung419" not in vf:
+              decl_anchor = "\tstruct mount *mnt;\n"
+              if decl_anchor not in vf:
+                  raise SystemExit("vfs_kern_mount mnt declaration missing")
+              decl_block = (
+                  decl_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\t/* susfs_vfs_kern_mount_samsung419 */\n"
+                  + "\tstruct mount *susfs_iter;\n"
+                  + "\tstruct mnt_namespace *susfs_ns;\n"
+                  + "\tint susfs_fake_mnt_id;\n"
+                  + "#endif\n"
+              )
+              vf = vf.replace(decl_anchor, decl_block, 1)
+
+              alloc_anchor = "\tmnt = alloc_vfsmnt(name);\n"
+              if alloc_anchor not in vf:
+                  raise SystemExit("vfs_kern_mount alloc_vfsmnt anchor missing")
+              alloc_block = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tif (unlikely(susfs_is_current_ksu_domain()))\n"
+                  "\t\tmnt = alloc_vfsmnt(name, true, 0);\n"
+                  "\telse\n"
+                  "\t\tmnt = alloc_vfsmnt(name, false, 0);\n"
+                  "#else\n"
+                  "\tmnt = alloc_vfsmnt(name);\n"
+                  "#endif\n"
+              )
+              vf = vf.replace(alloc_anchor, alloc_block, 1)
+
+              parent_anchor = "\tmnt->mnt_parent = mnt;\n"
+              if parent_anchor not in vf:
+                  raise SystemExit("vfs_kern_mount parent anchor missing")
+              fake_block = (
+                  parent_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\tif (susfs_is_current_zygote_domain()) {\n"
+                  + "\t\tsusfs_ns = current->nsproxy->mnt_ns;\n"
+                  + "\t\tif (susfs_ns) {\n"
+                  + "\t\t\tget_mnt_ns(susfs_ns);\n"
+                  + "\t\t\trcu_read_lock();\n"
+                  + "\t\t\tsusfs_fake_mnt_id = list_first_entry(\n"
+                  + "\t\t\t\t&susfs_ns->list, struct mount, mnt_list)->mnt_id;\n"
+                  + "\t\t\tlist_for_each_entry_rcu(susfs_iter,\n"
+                  + "\t\t\t\t&susfs_ns->list, mnt_list) {\n"
+                  + "\t\t\t\tif (susfs_iter->mnt_id < DEFAULT_SUS_MNT_ID)\n"
+                  + "\t\t\t\t\tsusfs_fake_mnt_id++;\n"
+                  + "\t\t\t}\n"
+                  + "\t\t\tSUSFS_MNT_ID_BACKUP(mnt) = READ_ONCE(mnt->mnt_id);\n"
+                  + "\t\t\tWRITE_ONCE(mnt->mnt_id, susfs_fake_mnt_id);\n"
+                  + "\t\t\trcu_read_unlock();\n"
+                  + "\t\t\tput_mnt_ns(susfs_ns);\n"
+                  + "\t\t}\n"
+                  + "\t}\n"
+                  + "#endif\n"
+              )
+              vf = vf.replace(parent_anchor, fake_block, 1)
+
+              s = s[:vstart] + vf + s[vend:]
+
+          # ----------------------------------------------------------
+          # 5. clone_mnt(): distinguish namespace-copy clones from
+          # single clones and use KDP-safe vfsmount access.
+          # ----------------------------------------------------------
+          cstart, cend = function_region(
+              s,
+              "static struct mount *clone_mnt(",
+              "static void cleanup_mnt("
+          )
+          cf = s[cstart:cend]
+
+          if "susfs_clone_mnt_samsung419" not in cf:
+              decl_anchor = "\tstruct mount *mnt;\n\tint err;\n"
+              if decl_anchor not in cf:
+                  raise SystemExit("clone_mnt declarations anchor missing")
+
+              decl_block = (
+                  "\tstruct mount *mnt;\n"
+                  "\tint err;\n"
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\t/* susfs_clone_mnt_samsung419 */\n"
+                  "\tstruct mount *susfs_iter;\n"
+                  "\tstruct mnt_namespace *susfs_ns;\n"
+                  "\tint susfs_fake_mnt_id;\n"
+                  "\tbool susfs_ksu = susfs_is_current_ksu_domain();\n"
+                  "\tbool susfs_zygote = susfs_is_current_zygote_domain();\n"
+                  "#endif\n"
+              )
+              cf = cf.replace(decl_anchor, decl_block, 1)
+
+              alloc_anchor = "\tmnt = alloc_vfsmnt(old->mnt_devname);\n"
+              if alloc_anchor not in cf:
+                  raise SystemExit("clone_mnt alloc_vfsmnt anchor missing")
+
+              alloc_block = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tif (unlikely(susfs_ksu)) {\n"
+                  "\t\tif (!(flag & CL_COPY_MNT_NS)) {\n"
+                  "\t\t\tmnt = alloc_vfsmnt(old->mnt_devname, true, 0);\n"
+                  "\t\t} else {\n"
+                  "\t\t\tmnt = alloc_vfsmnt(old->mnt_devname, true, old->mnt_id);\n"
+                  "\t\t\tif (mnt)\n"
+                  "\t\t\t\tSUSFS_MNT_ID_BACKUP(mnt) =\n"
+                  "\t\t\t\t\tDEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE;\n"
+                  "\t\t}\n"
+                  "\t} else if (old->mnt_id >= DEFAULT_SUS_MNT_ID) {\n"
+                  "\t\tmnt = alloc_vfsmnt(old->mnt_devname, true, 0);\n"
+                  "\t} else {\n"
+                  "\t\tmnt = alloc_vfsmnt(old->mnt_devname, false, 0);\n"
+                  "\t}\n"
+                  "#else\n"
+                  "\tmnt = alloc_vfsmnt(old->mnt_devname);\n"
+                  "#endif\n"
+              )
+              cf = cf.replace(alloc_anchor, alloc_block, 1)
+
+              parent_anchor = "\tmnt->mnt_parent = mnt;\n"
+              if parent_anchor not in cf:
+                  raise SystemExit("clone_mnt parent anchor missing")
+
+              fake_block = (
+                  parent_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\tif (likely(susfs_zygote) && !(flag & CL_COPY_MNT_NS)) {\n"
+                  + "\t\tsusfs_ns = current->nsproxy->mnt_ns;\n"
+                  + "\t\tif (susfs_ns) {\n"
+                  + "\t\t\tget_mnt_ns(susfs_ns);\n"
+                  + "\t\t\trcu_read_lock();\n"
+                  + "\t\t\tsusfs_fake_mnt_id = list_first_entry(\n"
+                  + "\t\t\t\t&susfs_ns->list, struct mount, mnt_list)->mnt_id;\n"
+                  + "\t\t\tlist_for_each_entry_rcu(susfs_iter,\n"
+                  + "\t\t\t\t&susfs_ns->list, mnt_list) {\n"
+                  + "\t\t\t\tif (susfs_iter->mnt_id < DEFAULT_SUS_MNT_ID)\n"
+                  + "\t\t\t\t\tsusfs_fake_mnt_id++;\n"
+                  + "\t\t\t}\n"
+                  + "\t\t\tSUSFS_MNT_ID_BACKUP(mnt) = READ_ONCE(mnt->mnt_id);\n"
+                  + "\t\t\tWRITE_ONCE(mnt->mnt_id, susfs_fake_mnt_id);\n"
+                  + "\t\t\trcu_read_unlock();\n"
+                  + "\t\t\tput_mnt_ns(susfs_ns);\n"
+                  + "\t\t}\n"
+                  + "\t}\n"
+                  + "#endif\n"
+              )
+              cf = cf.replace(parent_anchor, fake_block, 1)
+
+              s = s[:cstart] + cf + s[cend:]
+
+          # ----------------------------------------------------------
+          # 6. copy_tree(): compensate mount IDs for zygote single-tree
+          # cloning while leaving copy_mnt_ns() clones alone.
+          # ----------------------------------------------------------
+          tstart, tend = function_region(
+              s,
+              "struct mount *copy_tree(",
+              "/* Caller should check returned pointer for errors */"
+          )
+          tf = s[tstart:tend]
+
+          if "susfs_copy_tree_samsung419" not in tf:
+              decl_anchor = "\tstruct mount *res, *p, *q, *r, *parent;\n"
+              if decl_anchor not in tf:
+                  raise SystemExit("copy_tree declarations anchor missing")
+              decl_block = (
+                  decl_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\t/* susfs_copy_tree_samsung419 */\n"
+                  + "\tbool susfs_zygote = susfs_is_current_zygote_domain();\n"
+                  + "#endif\n"
+              )
+              tf = tf.replace(decl_anchor, decl_block, 1)
+
+              loop_anchor = (
+                  "\tlist_for_each_entry(r, &mnt->mnt_mounts, mnt_child) {\n"
+                  "\t\tstruct mount *s;\n"
+              )
+              if loop_anchor not in tf:
+                  raise SystemExit("copy_tree outer loop anchor missing")
+              loop_block = (
+                  loop_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\t\tint susfs_attach_mnt_count = 0;\n"
+                  + "#endif\n"
+              )
+              tf = tf.replace(loop_anchor, loop_block, 1)
+
+              attach_anchor = (
+                  "\t\t\tattach_mnt(q, parent, p->mnt_mp);\n"
+                  "\t\t\tunlock_mount_hash();\n"
+              )
+              if attach_anchor not in tf:
+                  raise SystemExit("copy_tree attach anchor missing")
+
+              attach_block = (
+                  "\t\t\tattach_mnt(q, parent, p->mnt_mp);\n"
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\t\t\tif (susfs_zygote &&\n"
+                  "\t\t\t    !(flag & CL_COPY_MNT_NS) &&\n"
+                  "\t\t\t    q->mnt_id < DEFAULT_SUS_MNT_ID) {\n"
+                  "\t\t\t\tsusfs_attach_mnt_count++;\n"
+                  "\t\t\t\tq->mnt_id += susfs_attach_mnt_count;\n"
+                  "\t\t\t}\n"
+                  "#endif\n"
+                  "\t\t\tunlock_mount_hash();\n"
+              )
+              tf = tf.replace(attach_anchor, attach_block, 1)
+
+              s = s[:tstart] + tf + s[tend:]
+
+          # ----------------------------------------------------------
+          # 7. copy_mnt_ns(): flag namespace clones and then create the
+          # zygote-facing sequential fake ID view.
+          # ----------------------------------------------------------
+          nstart, nend = function_region(
+              s,
+              "struct mnt_namespace *copy_mnt_ns(",
+              "/**\n * create_mnt_ns"
+          )
+          nf = s[nstart:nend]
+
+          if "susfs_copy_mnt_ns_samsung419" not in nf:
+              decl_anchor = "\tint copy_flags;\n"
+              if decl_anchor not in nf:
+                  raise SystemExit("copy_mnt_ns declarations anchor missing")
+
+              decl_block = (
+                  decl_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\t/* susfs_copy_mnt_ns_samsung419 */\n"
+                  + "\tbool susfs_zygote = susfs_is_current_zygote_domain();\n"
+                  + "\tint susfs_last_mnt_id = 0;\n"
+                  + "#endif\n"
+              )
+              nf = nf.replace(decl_anchor, decl_block, 1)
+
+              flag_anchor = (
+                  "\tif (user_ns != ns->user_ns)\n"
+                  "\t\tcopy_flags |= CL_SHARED_TO_SLAVE | CL_UNPRIVILEGED;\n"
+              )
+              if flag_anchor not in nf:
+                  raise SystemExit("copy_mnt_ns copy_flags anchor missing")
+              flag_block = (
+                  flag_anchor
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  + "\tcopy_flags |= CL_COPY_MNT_NS;\n"
+                  + "#endif\n"
+              )
+              nf = nf.replace(flag_anchor, flag_block, 1)
+
+              unlock_anchor = "\tnamespace_unlock();\n"
+              # We need the final namespace_unlock(), after the second pass.
+              idx = nf.rfind(unlock_anchor)
+              if idx == -1:
+                  raise SystemExit("copy_mnt_ns final namespace_unlock missing")
+
+              before_unlock = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "\tif (susfs_zygote && !list_empty(&new_ns->list)) {\n"
+                  "\t\tsusfs_last_mnt_id = list_first_entry(\n"
+                  "\t\t\t&new_ns->list, struct mount, mnt_list)->mnt_id;\n"
+                  "\t\tlist_for_each_entry(q, &new_ns->list, mnt_list) {\n"
+                  "\t\t\tif (unlikely(q->mnt_id >= DEFAULT_SUS_MNT_ID))\n"
+                  "\t\t\t\tcontinue;\n"
+                  "\t\t\tSUSFS_MNT_ID_BACKUP(q) = q->mnt_id;\n"
+                  "\t\t\tq->mnt_id = susfs_last_mnt_id++;\n"
+                  "\t\t}\n"
+                  "\t}\n"
+                  "#endif\n"
+              )
+              nf = nf[:idx] + before_unlock + nf[idx:]
+
+              s = s[:nstart] + nf + s[nend:]
+
+          # ----------------------------------------------------------
+          # 8. Any remaining normal alloc_vfsmnt call sites introduced
+          # by Samsung outside the special functions need the new normal
+          # arguments when SUSFS is enabled.  The only expected direct
+          # callers in this tree are vfs_kern_mount() and clone_mnt().
+          # ----------------------------------------------------------
+          leftovers = [
+              line for line in s.splitlines()
+              if "alloc_vfsmnt(" in line
+              and "static struct mount *alloc_vfsmnt" not in line
+              and "mnt = alloc_vfsmnt(name," not in line
+              and "mnt = alloc_vfsmnt(old->mnt_devname," not in line
+              and "mnt = alloc_vfsmnt(name);" not in line
+              and "mnt = alloc_vfsmnt(old->mnt_devname);" not in line
+          ]
+
+          if leftovers:
+              print("Unexpected alloc_vfsmnt call sites:")
+              for line in leftovers:
+                  print(line)
+              raise SystemExit("Unexpected alloc_vfsmnt call site")
+
+          p.write_text(s)
+
+          print("Resolved Samsung/KDP namespace SUSFS rejects")
+          PY
+
+      - name: Verify Samsung KDP namespace adaptation
+        run: |
+          set -euxo pipefail
+
+          grep -n "susfs_alloc_vfsmnt_samsung419" fs/namespace.c
+          grep -n "susfs_vfs_kern_mount_samsung419" fs/namespace.c
+          grep -n "susfs_clone_mnt_samsung419" fs/namespace.c
+          grep -n "susfs_copy_tree_samsung419" fs/namespace.c
+          grep -n "susfs_copy_mnt_ns_samsung419" fs/namespace.c
+          grep -n "SUSFS_MNT_ID_BACKUP" fs/namespace.c
+
+          # Generic 4.19 syntax must not survive outside the helper macro.
+          #
+          # The non-KDP definition of SUSFS_MNT_ID_BACKUP intentionally
+          # contains ->mnt.susfs_mnt_id_backup, so exclude that one
+          # preprocessor line from the verification.
+          BAD_SUSFS_MNT_ACCESS="$(
+            grep -n -- '->mnt\.susfs_mnt_id_backup' fs/namespace.c \
+              | grep -v '#define SUSFS_MNT_ID_BACKUP' \
+              || true
+          )"
+
+          if [ -n "$BAD_SUSFS_MNT_ACCESS" ]; then
+            echo "$BAD_SUSFS_MNT_ACCESS"
+            echo "Found non-KDP-safe SUSFS vfsmount field access"
+            exit 1
+          fi
+
+      - name: Resolve Samsung namei rejects
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namei.c")
+          s = p.read_text()
+
+          if "#include <linux/susfs_def.h>" not in s:
+              anchor = "#include <linux/build_bug.h>\n"
+
+              if anchor not in s:
+                  raise SystemExit(
+                      "namei SUSFS include anchor missing"
+                  )
+
+              block = (
+                  "#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || "
+                  "defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n"
+                  "#include <linux/susfs_def.h>\n"
+                  "#endif\n"
+              )
+
+              s = s.replace(
+                  anchor,
+                  anchor + block,
+                  1
+              )
+
+          marker = (
+              "static inline int may_create("
+              "struct vfsmount *mnt, struct inode *dir, "
+              "struct dentry *child)\n"
+              "{\n"
+          )
+
+          if marker not in s:
+              raise SystemExit(
+                  "Samsung may_create(mnt, dir, child) anchor missing"
+              )
+
+          if "may_create_susfs_samsung419" not in s:
+              replacement = (
+                  marker
+                  + "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
+                  + "\t/* may_create_susfs_samsung419 */\n"
+                  + "\tint susfs_error;\n"
+                  + "#endif\n"
+              )
+
+              s = s.replace(
+                  marker,
+                  replacement,
+                  1
+              )
+
+          audit_anchor = (
+              "\taudit_inode_child("
+              "dir, child, AUDIT_TYPE_CHILD_CREATE);\n"
+          )
+
+          if audit_anchor not in s:
+              raise SystemExit(
+                  "may_create audit anchor missing"
+              )
+
+          if "susfs_error = inode_permission2" not in s:
+              block = (
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
+                  "\tif (child->d_inode &&\n"
+                  "\t    unlikely(child->d_inode->i_state & "
+                  "INODE_STATE_SUS_PATH) &&\n"
+                  "\t    likely(current->susfs_task_state & "
+                  "TASK_STRUCT_NON_ROOT_USER_APP_PROC)) {\n"
+                  "\t\tsusfs_error = inode_permission2("
+                  "mnt, dir, MAY_WRITE | MAY_EXEC);\n"
+                  "\t\tif (susfs_error)\n"
+                  "\t\t\treturn susfs_error;\n"
+                  "\n"
+                  "\t\treturn -ENOENT;\n"
+                  "\t}\n"
+                  "#endif\n"
+              )
+
+              s = s.replace(
+                  audit_anchor,
+                  audit_anchor + block,
+                  1
+              )
+
+          p.write_text(s)
+
+          print("Resolved Samsung namei rejects")
+          PY
+
+      - name: Resolve Samsung inotify fdinfo reject
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/notify/fdinfo.c")
+          s = p.read_text()
+
+          if "fdinfo_susfs_samsung419" in s:
+              print("fdinfo SUSFS adaptation already present")
+              raise SystemExit(0)
+
+          # Stage 1 successfully applies the SUSFS callback plumbing:
+          # under CONFIG_KSU_SUSFS_SUS_MOUNT the callback order is
+          #   inotify_fdinfo(m, mark, file)
+          # Only the Samsung-specific function-body hunk rejects.
+          signature = (
+              "static void inotify_fdinfo("
+              "struct seq_file *m, struct fsnotify_mark *mark, "
+              "struct file *file)"
+          )
+
+          start = s.find(signature)
+
+          if start == -1:
+              raise SystemExit(
+                  "Expected Stage-1 inotify (m, mark, file) signature missing"
+              )
+
+          anchor = "\tif (inode) {\n"
+          idx = s.find(anchor, start)
+
+          if idx == -1:
+              raise SystemExit(
+                  "inotify inode block missing"
+              )
+
+          insert_at = idx + len(anchor)
+
+          block = (
+              "\t\tu32 mask;\n"
+              "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+              "\t\t/* fdinfo_susfs_samsung419 */\n"
+              "\t\tif (likely(current->susfs_task_state & "
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&\n"
+              "\t\t    unlikely(inode->i_state & "
+              "INODE_STATE_SUS_KSTAT)) {\n"
+              "\t\t\tstruct path susfs_path;\n"
+              "\t\t\tchar *pathname;\n"
+              "\t\t\tchar *dpath;\n"
+              "\n"
+              "\t\t\tpathname = kmalloc(PAGE_SIZE, GFP_KERNEL);\n"
+              "\t\t\tif (!pathname)\n"
+              "\t\t\t\tgoto susfs_fdinfo_fallback;\n"
+              "\n"
+              "\t\t\tdpath = d_path("
+              "&file->f_path, pathname, PAGE_SIZE);\n"
+              "\t\t\tif (IS_ERR(dpath)) {\n"
+              "\t\t\t\tkfree(pathname);\n"
+              "\t\t\t\tgoto susfs_fdinfo_fallback;\n"
+              "\t\t\t}\n"
+              "\n"
+              "\t\t\tif (!kern_path(dpath, 0, &susfs_path)) {\n"
+              "\t\t\t\tu32 susfs_mask = "
+              "mark->mask & IN_ALL_EVENTS;\n"
+              "\n"
+              "\t\t\t\tseq_printf(m,\n"
+              "\t\t\t\t\t\"inotify wd:%x ino:%lx "
+              "sdev:%x mask:%x ignored_mask:%x \",\n"
+              "\t\t\t\t\tinode_mark->wd,\n"
+              "\t\t\t\t\tsusfs_path.dentry->d_inode->i_ino,\n"
+              "\t\t\t\t\tsusfs_path.dentry->d_inode->"
+              "i_sb->s_dev,\n"
+              "\t\t\t\t\tsusfs_mask,\n"
+              "\t\t\t\t\tmark->ignored_mask);\n"
+              "\n"
+              "\t\t\t\tshow_mark_fhandle(\n"
+              "\t\t\t\t\tm,\n"
+              "\t\t\t\t\tsusfs_path.dentry->d_inode);\n"
+              "\t\t\t\tseq_putc(m, '\\n');\n"
+              "\t\t\t\tpath_put(&susfs_path);\n"
+              "\t\t\t\tkfree(pathname);\n"
+              "\t\t\t\tiput(inode);\n"
+              "\t\t\t\treturn;\n"
+              "\t\t\t}\n"
+              "\n"
+              "\t\t\tkfree(pathname);\n"
+              "\t\t}\n"
+              "susfs_fdinfo_fallback:\n"
+              "#endif\n"
+          )
+
+          s = s[:insert_at] + block + s[insert_at:]
+
+          # Samsung's original declaration used to be the first item in
+          # the inode block.  SUSFS now executes before it, so leaving it
+          # there violates the kernel's C90 declaration-before-statements
+          # rule.  Convert only that original declaration to assignment.
+          original_mask = (
+              "\t\tu32 mask = mark->mask & IN_ALL_EVENTS;\n"
+          )
+          mask_pos = s.find(
+              original_mask,
+              insert_at + len(block)
+          )
+          if mask_pos == -1:
+              raise SystemExit(
+                  "Samsung fdinfo original mask declaration missing"
+              )
+
+          replacement_mask = (
+              "\t\tmask = mark->mask & IN_ALL_EVENTS;\n"
+          )
+          s = (
+              s[:mask_pos]
+              + replacement_mask
+              + s[mask_pos + len(original_mask):]
+          )
+
+          p.write_text(s)
+
+          print("Resolved Samsung fdinfo reject")
+          PY
+
+      - name: Adapt SUSFS statfs for Samsung KDP namespace
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/statfs.c")
+          s = p.read_text()
+
+          marker = "susfs_statfs_kdp_samsung419"
+
+          if marker in s:
+              print("Samsung KDP statfs adaptation already present")
+              raise SystemExit(0)
+
+          old = (
+              "\terror = statfs_by_dentry(mnt->mnt.mnt_root, buf);\n"
+              "\tif (!error)\n"
+              "\t\tbuf->f_flags = calculate_f_flags(&mnt->mnt);\n"
+              "\treturn error;\n"
+          )
+
+          if old not in s:
+              raise SystemExit(
+                  "generic SUSFS statfs mount-access block missing"
+              )
+
+          new = (
+              "\t/* susfs_statfs_kdp_samsung419 */\n"
+              "#ifdef CONFIG_KDP_NS\n"
+              "\terror = statfs_by_dentry(mnt->mnt->mnt_root, buf);\n"
+              "\tif (!error)\n"
+              "\t\tbuf->f_flags = calculate_f_flags(mnt->mnt);\n"
+              "#else\n"
+              "\terror = statfs_by_dentry(mnt->mnt.mnt_root, buf);\n"
+              "\tif (!error)\n"
+              "\t\tbuf->f_flags = calculate_f_flags(&mnt->mnt);\n"
+              "#endif\n"
+              "\treturn error;\n"
+          )
+
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          print("Adapted SUSFS statfs for Samsung CONFIG_KDP_NS")
+          PY
+
+          grep -n -A14 -B5 'susfs_statfs_kdp_samsung419' fs/statfs.c
+
+      - name: Resolve Samsung overlayfs readdir reject
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/overlayfs/readdir.c")
+          s = p.read_text()
+
+          if "ovl_susfs_samsung419" in s:
+              print("overlayfs adaptation already present")
+              raise SystemExit(0)
+
+          function = "static int ovl_dir_open("
+
+          start = s.find(function)
+
+          if start == -1:
+              raise SystemExit(
+                  "ovl_dir_open not found"
+              )
+
+          anchor = (
+              "\ttype = ovl_path_real("
+              "file->f_path.dentry, &realpath);\n"
+          )
+
+          idx = s.find(anchor, start)
+
+          if idx == -1:
+              raise SystemExit(
+                  "ovl_path_real anchor missing"
+              )
+
+          block = (
+              "#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS\n"
+              "\t/* ovl_susfs_samsung419 */\n"
+              "\tovl_path_lowerdata("
+              "file->f_path.dentry, &realpath);\n"
+              "\tif (likely(realpath.mnt && realpath.dentry)) {\n"
+              "\t\ttype = __OVL_PATH_UPPER;\n"
+              "\t\tgoto susfs_ovl_open_real;\n"
+              "\t}\n"
+              "#endif\n"
+              "\n"
+          )
+
+          s = s[:idx] + block + s[idx:]
+
+          anchor2 = anchor
+
+          idx2 = s.find(anchor2, idx + len(block))
+
+          if idx2 == -1:
+              raise SystemExit(
+                  "second ovl path anchor missing"
+              )
+
+          insert_at = idx2 + len(anchor2)
+
+          label = (
+              "#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS\n"
+              "susfs_ovl_open_real:\n"
+              "#endif\n"
+          )
+
+          s = s[:insert_at] + label + s[insert_at:]
+
+          p.write_text(s)
+
+          print("Resolved Samsung overlayfs reject")
+          PY
+
+      - name: Resolve Samsung compat readdir reject
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/readdir.c")
+          s = p.read_text()
+
+          if "compat_fillonedir_susfs_samsung419" in s:
+              print("compat readdir adaptation already present")
+              raise SystemExit(0)
+
+          function = "static int compat_fillonedir("
+
+          start = s.find(function)
+
+          if start == -1:
+              raise SystemExit(
+                  "compat_fillonedir not found"
+              )
+
+          anchor = (
+              "\tif (buf->result)\n"
+              "\t\treturn -EINVAL;\n"
+          )
+
+          idx = s.find(anchor, start)
+
+          if idx == -1:
+              raise SystemExit(
+                  "compat_fillonedir result anchor missing"
+              )
+
+          insert_at = idx + len(anchor)
+
+          block = (
+              "#ifdef CONFIG_KSU_SUSFS_SUS_PATH\n"
+              "\t/* compat_fillonedir_susfs_samsung419 */\n"
+              "\tif (likely(current->susfs_task_state & "
+              "TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&\n"
+              "\t    susfs_sus_ino_for_filldir64(ino))\n"
+              "\t\treturn 0;\n"
+              "#endif\n"
+          )
+
+          s = s[:insert_at] + block + s[insert_at:]
+
+          p.write_text(s)
+
+          print("Resolved Samsung compat readdir reject")
+          PY
+
+      - name: Remove Stage 2 handled reject files
+        run: |
+          set -euxo pipefail
+
+          rm -f \
+            include/linux/sched.h.rej \
+            include/linux/mount.h.rej \
+            fs/dcache.c.rej \
+            fs/proc/task_mmu.c.rej \
+            fs/namei.c.rej \
+            fs/notify/fdinfo.c.rej \
+            fs/overlayfs/readdir.c.rej \
+            fs/readdir.c.rej \
+            fs/namespace.c.rej
+
+          echo "=== REMAINING REJECT FILES ==="
+
+          find . \
+            -name '*.rej' \
+            -print \
+            | sort
+
+      - name: Verify Stage 2 adaptations
+        run: |
+          set -euxo pipefail
+
+          grep -n \
+            "may_create_susfs_samsung419" \
+            fs/namei.c
+
+          grep -n \
+            "fdinfo_susfs_samsung419" \
+            fs/notify/fdinfo.c
+
+          grep -n \
+            "ovl_susfs_samsung419" \
+            fs/overlayfs/readdir.c
+
+          grep -n \
+            "compat_fillonedir_susfs_samsung419" \
+            fs/readdir.c
+
+          grep -n \
+            "susfs_task_state" \
+            include/linux/sched.h
+
+          grep -n \
+            "susfs_mnt_id_backup" \
+            include/linux/mount.h
+
+          REJECT_COUNT="$(
+            find . \
+              -name '*.rej' \
+              -type f \
+              | wc -l
+          )"
+
+          echo "Remaining reject count: $REJECT_COUNT"
+
+          test "$REJECT_COUNT" -eq 0
+
+          git diff --check
+
+      - name: Generate Stage 2 patch
+        run: |
+          set -euxo pipefail
+
+          git diff --binary \
+            > /tmp/M127F-SUSFS-Stage3-SamsungKDP.patch
+
+          git status --short \
+            > /tmp/M127F-SUSFS-Stage3-status.txt
+
+          find . \
+            -name '*.rej' \
+            -print \
+            -exec cat {} \; \
+            > /tmp/M127F-SUSFS-Stage3-remaining-rejects.txt
+
+          git diff --stat \
+            > /tmp/M127F-SUSFS-Stage3-diff-stat.txt
+
+          echo "=== STAGE 3 DIFF STAT ==="
+          cat /tmp/M127F-SUSFS-Stage3-diff-stat.txt
+
+          echo
+          echo "=== REMAINING REJECT ==="
+          cat /tmp/M127F-SUSFS-Stage3-remaining-rejects.txt
+
+      - name: Upload Stage 2 result
+        uses: actions/upload-artifact@v4
+        with:
+          name: m127f-susfs-stage3-samsung-kdp
+          path: |
+            /tmp/M127F-SUSFS-Stage3-SamsungKDP.patch
+            /tmp/M127F-SUSFS-Stage3-status.txt
+            /tmp/M127F-SUSFS-Stage3-remaining-rejects.txt
+            /tmp/M127F-SUSFS-Stage3-diff-stat.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Stage 5 Trial 5 import official SUSFS 2.3.0 core
+        run: |
+          set -euxo pipefail
+
+          # Stage 4 proved that our Samsung 4.19 VFS adaptation compiles.
+          # Stage 5 now replaces the old 1.5.7 SUSFS implementation/header
+          # payload with the current official 2.3.0 implementation.  We do
+          # NOT apply the modern 5.15 kernel patch wholesale: Samsung 4.19
+          # keeps the already-adapted VFS hooks from Stage 3/4.
+          BASE="https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android13-5.15/kernel_patches"
+
+          curl --fail --location --retry 3 \
+            "$BASE/fs/susfs.c" \
+            --output /tmp/susfs-230.c
+
+          curl --fail --location --retry 3 \
+            "$BASE/include/linux/susfs.h" \
+            --output /tmp/susfs-230.h
+
+          curl --fail --location --retry 3 \
+            "$BASE/include/linux/susfs_def.h" \
+            --output /tmp/susfs_def-230.h
+
+          test -s /tmp/susfs-230.c
+          test -s /tmp/susfs-230.h
+          test -s /tmp/susfs_def-230.h
+
+          if ! grep -Eq 'SUSFS_VERSION.*2\.3\.0|2\.3\.0.*SUSFS_VERSION' \
+              /tmp/susfs-230.h /tmp/susfs_def-230.h /tmp/susfs-230.c; then
+            echo "::error::Downloaded official source does not identify itself as SUSFS 2.3.0"
+            grep -nE 'SUSFS_VERSION|2\.3\.0' \
+              /tmp/susfs-230.h /tmp/susfs_def-230.h /tmp/susfs-230.c || true
+            exit 1
+          fi
+
+          mkdir -p .ci/stage5
+          cp fs/susfs.c .ci/stage5/susfs-1.5.7-reference.c
+          cp include/linux/susfs.h .ci/stage5/susfs-1.5.7-reference.h
+          cp include/linux/susfs_def.h .ci/stage5/susfs_def-1.5.7-reference.h
+
+          cp /tmp/susfs-230.c fs/susfs.c
+          cp /tmp/susfs-230.h include/linux/susfs.h
+          cp /tmp/susfs_def-230.h include/linux/susfs_def.h
+
+          # Save the exact upstream delta used by this trial.  This makes the
+          # next 4.19 backport pass deterministic from the Actions artifact.
+          diff -u \
+            .ci/stage5/susfs-1.5.7-reference.c \
+            fs/susfs.c \
+            > .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff || true
+
+          diff -u \
+            .ci/stage5/susfs-1.5.7-reference.h \
+            include/linux/susfs.h \
+            > .ci/stage5/susfs-header-1.5.7-to-2.3.0.diff || true
+
+          diff -u \
+            .ci/stage5/susfs_def-1.5.7-reference.h \
+            include/linux/susfs_def.h \
+            > .ci/stage5/susfs-def-1.5.7-to-2.3.0.diff || true
+
+          {
+            echo "Stage 5 Trial 5"
+            echo "Official branch: gki-android13-5.15"
+            grep -E '^#define[[:space:]]+SUSFS_VERSION' include/linux/susfs.h
+            sha256sum \
+              fs/susfs.c \
+              include/linux/susfs.h \
+              include/linux/susfs_def.h
+          } | tee .ci/stage5/official-230-source.txt
+
+          grep -Eq 'SUSFS_VERSION.*2\.3\.0|2\.3\.0.*SUSFS_VERSION' \
+            fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+          test -s .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff
+
+          echo "Official SUSFS 2.3.0 core imported and verified."
+
+      - name: Backport official 2.3.0 core interfaces to Samsung 4.19
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("include/linux/susfs_def.h")
+          x = p.read_text()
+          cred_anchor = "#include <linux/bits.h>\n"
+          if "#include <linux/cred.h>" not in x:
+              if cred_anchor not in x:
+                  raise SystemExit("susfs_def bits include anchor missing")
+              x = x.replace(cred_anchor, cred_anchor + "#include <linux/cred.h>\n", 1)
+
+          compat_anchor = "#define DEFAULT_KSU_MNT_MINOR_DEV (1 << 12)"
+          compat = "\n".join([
+              "",
+              "/* Samsung 4.19 Stage 5 compile bridge. */",
+              "#define DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID",
+              "#define DEFAULT_SUS_MNT_GROUP_ID DEFAULT_KSU_MNT_GROUP_ID",
+              "#define DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE DEFAULT_KSU_MNT_ID",
+              "",
+          ])
+          if "DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE" not in x:
+              pos = x.find(compat_anchor)
+              if pos < 0:
+                  raise SystemExit("2.3.0 KSU mount ID anchor missing")
+              eol = x.find("\n", pos)
+              x = x[:eol + 1] + compat + x[eol + 1:]
+          p.write_text(x)
+
+          p = Path("fs/susfs.c")
+          x = p.read_text()
+          fs_anchor = "#include <linux/fs.h>\n"
+          if "#include <linux/security.h>" not in x:
+              if fs_anchor not in x:
+                  raise SystemExit("susfs.c fs include anchor missing")
+              x = x.replace(fs_anchor, fs_anchor + "#include <linux/security.h>\n", 1)
+
+          modern_handler = "\n".join([
+              "static const struct fsnotify_ops fsnotify_ops = {",
+              "\t.handle_inode_event = susfs_handle_sdcard_inode_event,",
+              "};",
+          ])
+          old_handler = "\n".join([
+              "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)",
+              "static const struct fsnotify_ops fsnotify_ops = {",
+              "\t.handle_inode_event = susfs_handle_sdcard_inode_event,",
+              "};",
+              "#else",
+              "static int susfs_handle_sdcard_event_419(struct fsnotify_group *group,",
+              "\t\tstruct inode *inode, u32 mask, const void *data, int data_type,",
+              "\t\tconst unsigned char *file_name, u32 cookie,",
+              "\t\tstruct fsnotify_iter_info *iter_info)",
+              "{",
+              "\tif (!file_name || memcmp(file_name, \"Android\", 7) || file_name[7] != '\\0')",
+              "\t\treturn 0;",
+              "",
+              "\tif (test_and_set_bit(0, &sdcard_cleanup_scheduled))",
+              "\t\treturn 0;",
+              "",
+              "\tSUSFS_LOGI(\"'%s' detected, mask: 0x%x\\\\n\", SDCARD_ANDROID_PATH, mask);",
+              "\tSUSFS_LOGI(\"deferring cleanup for 5 seconds\\\\n\");",
+              "\tqueue_delayed_work(system_unbound_wq, &sdcard_cleanup_dwork, 5 * HZ);",
+              "\treturn 0;",
+              "}",
+              "",
+              "static const struct fsnotify_ops fsnotify_ops = {",
+              "\t.handle_event = susfs_handle_sdcard_event_419,",
+              "};",
+              "#endif",
+          ])
+          if modern_handler not in x:
+              raise SystemExit("2.3.0 fsnotify_ops block missing")
+          x = x.replace(modern_handler, old_handler, 1)
+          p.write_text(x)
+
+          for p in [
+              Path("fs/readdir.c"),
+              Path("fs/dcache.c"),
+              Path("fs/namei.c"),
+              Path("fs/notify/fdinfo.c"),
+              Path("fs/proc/fd.c"),
+              Path("fs/proc/task_mmu.c"),
+              Path("fs/stat.c"),
+              Path("fs/statfs.c"),
+          ]:
+              x = p.read_text()
+              x = x.replace(
+                  "current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC",
+                  "susfs_is_current_proc_umounted_app()",
+              )
+              x = x.replace(
+                  "dentry->d_inode->i_state & INODE_STATE_SUS_PATH",
+                  "dentry->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &dentry->d_inode->i_mapping->flags)",
+              )
+              x = x.replace(
+                  "inode->i_state & INODE_STATE_SUS_PATH",
+                  "inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags)",
+              )
+              x = x.replace(
+                  "inode->i_state & INODE_STATE_SUS_MOUNT",
+                  "inode->i_mapping && test_bit(AS_FLAGS_SUS_MOUNT, &inode->i_mapping->flags)",
+              )
+              x = x.replace(
+                  "inode->i_state & INODE_STATE_SUS_KSTAT",
+                  "inode->i_mapping && test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags)",
+              )
+              # Generic text conversion cannot infer the local variable in
+              # statfs.c.  Its original expression is rooted at s->s_root.
+              x = x.replace(
+                  "s->s_root->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_MOUNT, &inode->i_mapping->flags)",
+                  "s->s_root->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_MOUNT, &s->s_root->d_inode->i_mapping->flags)",
+              )
+              p.write_text(x)
+
+          # Trial 4 showed that generic replacement correctly changed the
+          # state model but could not infer four local object roots in
+          # namei.c. Repair those exact Samsung 4.19 contexts.
+          p = Path("fs/namei.c")
+          x = p.read_text()
+          x = x.replace(
+              "link->dentry->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &dentry->d_inode->i_mapping->flags)",
+              "link->dentry->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &link->dentry->d_inode->i_mapping->flags)",
+          )
+          x = x.replace(
+              "nd->inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags)",
+              "nd->inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &nd->inode->i_mapping->flags)",
+          )
+          x = x.replace(
+              "path->dentry->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &dentry->d_inode->i_mapping->flags)",
+              "path->dentry->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &path->dentry->d_inode->i_mapping->flags)",
+          )
+          x = x.replace(
+              "child->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &inode->i_mapping->flags)",
+              "child->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_PATH, &child->d_inode->i_mapping->flags)",
+          )
+
+          # OPEN_REDIRECT also moved from inode->i_state to
+          # inode->i_mapping->flags in 2.3.0.
+          x = x.replace(
+              "filp->f_inode->i_state & INODE_STATE_OPEN_REDIRECT",
+              "filp->f_inode->i_mapping && test_bit(AS_FLAGS_OPEN_REDIRECT, &filp->f_inode->i_mapping->flags)",
+          )
+          p.write_text(x)
+
+          # On 4.19 only the handle_event adapter is referenced. Keep the
+          # modern handler compiled only on kernels whose fsnotify_ops has
+          # handle_inode_event, avoiding -Werror=unused-function.
+          p = Path("fs/susfs.c")
+          x = p.read_text()
+          sig = "static int susfs_handle_sdcard_inode_event(struct fsnotify_mark *mark, u32 mask,"
+          if sig not in x:
+              raise SystemExit("modern sdcard handler signature missing")
+          start = x.index(sig)
+          ops_guard = "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\nstatic const struct fsnotify_ops fsnotify_ops = {"
+          guardpos = x.index(ops_guard, start)
+          x = x[:start] + "#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)\n" + x[start:guardpos] + x[guardpos:].replace(
+              ops_guard,
+              "static const struct fsnotify_ops fsnotify_ops = {",
+              1,
+          )
+          # The existing adapter block's #else now pairs with this guard.
+          p.write_text(x)
+
+          print("Applied Samsung 4.19 interfaces for official SUSFS 2.3.0")
+          PY
+
+          grep -q '#include <linux/cred.h>' include/linux/susfs_def.h
+          grep -q '#include <linux/security.h>' fs/susfs.c
+          grep -q 'handle_event = susfs_handle_sdcard_event_419' fs/susfs.c
+          grep -q 'DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID' include/linux/susfs_def.h
+          legacy_scan=(
+            fs/dcache.c
+            fs/namei.c
+            fs/notify/fdinfo.c
+            fs/proc/fd.c
+            fs/proc/task_mmu.c
+            fs/readdir.c
+            fs/stat.c
+            fs/statfs.c
+          )
+          ! grep -n 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "${legacy_scan[@]}"
+          ! grep -n 'INODE_STATE_SUS_PATH' "${legacy_scan[@]}"
+          ! grep -n 'INODE_STATE_SUS_MOUNT' "${legacy_scan[@]}"
+          ! grep -n 'INODE_STATE_SUS_KSTAT' "${legacy_scan[@]}"
+          grep -q 'AS_FLAGS_SUS_KSTAT' fs/notify/fdinfo.c
+          grep -q 'AS_FLAGS_SUS_KSTAT' fs/proc/task_mmu.c
+          grep -q 'AS_FLAGS_SUS_KSTAT' fs/stat.c
+          grep -q '&s->s_root->d_inode->i_mapping->flags' fs/statfs.c
+          ! grep -nE '&dentry->d_inode->i_mapping->flags|&inode->i_mapping->flags' fs/namei.c
+          ! grep -n 'INODE_STATE_OPEN_REDIRECT' fs/namei.c
+          grep -q 'AS_FLAGS_OPEN_REDIRECT' fs/namei.c
+          grep -q 'test_bit(AS_FLAGS_SUS_PATH, &link->dentry->d_inode->i_mapping->flags)' fs/namei.c
+          grep -q 'test_bit(AS_FLAGS_SUS_PATH, &nd->inode->i_mapping->flags)' fs/namei.c
+          grep -q 'test_bit(AS_FLAGS_SUS_PATH, &path->dentry->d_inode->i_mapping->flags)' fs/namei.c
+          grep -q 'test_bit(AS_FLAGS_SUS_PATH, &child->d_inode->i_mapping->flags)' fs/namei.c
+
+          mkdir -p .ci/stage5
+          {
+            echo "Stage 5 Trial 5 Samsung 4.19 compatibility bridge"
+            echo "cred include: yes"
+            echo "security include: yes"
+            echo "4.19 fsnotify handle_event adapter: yes"
+            echo "legacy task/inode SUSFS state converted: yes"
+            echo "legacy mount-ID names bridged to 2.3.0 KSU IDs: yes"
+          } > .ci/stage5/trial5-samsung419-bridge.txt
+
+      - name: Verify Stage 5 official 2.3.0 import ordering
+        run: |
+          set -euxo pipefail
+
+          test -s .ci/stage5/official-230-source.txt
+          test -s .ci/stage5/susfs-core-1.5.7-to-2.3.0.diff
+          grep -Eq 'SUSFS_VERSION.*2\.3\.0|2\.3\.0.*SUSFS_VERSION' \
+            fs/susfs.c include/linux/susfs.h include/linux/susfs_def.h
+
+          echo "Stage 5 source ordering verified: official 2.3.0 is active."
+
+      - name: Prepare Stage 5 KSUN SUSFS 2.3.0 compile-probe integration
+        run: |
+          set -euxo pipefail
+
+          mkdir -p .github/patches
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/Kconfig")
+          k = p.read_text()
+          marker = "endmenu\n"
+          if marker not in k:
+              raise SystemExit("KernelSU Kconfig endmenu anchor missing")
+
+          if 'menu "KernelSU - SUSFS Stage4 compile probe"' not in k:
+              block = '''
+          menu "KernelSU - SUSFS Stage4 compile probe"
+
+          config KSU_SUSFS
+              bool "SUSFS Stage4 compile probe"
+              depends on KSU
+              default y
+
+          config KSU_SUSFS_SUS_PATH
+              bool "SUS path"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_SUS_MOUNT
+              bool "SUS mount"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
+              bool "Auto add KSU default mounts"
+              depends on KSU_SUSFS_SUS_MOUNT
+              default y
+
+          config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
+              bool "Auto add bind mounts"
+              depends on KSU_SUSFS_SUS_MOUNT
+              default y
+
+          config KSU_SUSFS_SUS_KSTAT
+              bool "SUS kstat"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_SUS_OVERLAYFS
+              bool "SUS overlayfs"
+              depends on KSU_SUSFS
+              default n
+
+          config KSU_SUSFS_TRY_UMOUNT
+              bool "TRY_UMOUNT"
+              depends on KSU_SUSFS
+              default n
+
+          config KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+              bool "Auto add bind mounts to TRY_UMOUNT"
+              depends on KSU_SUSFS_TRY_UMOUNT
+              default n
+
+          config KSU_SUSFS_SPOOF_UNAME
+              bool "Spoof uname"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_ENABLE_LOG
+              bool "SUSFS log"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
+              bool "Hide KSU/SUSFS kallsyms"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+              bool "Spoof cmdline/bootconfig"
+              depends on KSU_SUSFS
+              default y
+
+          config KSU_SUSFS_OPEN_REDIRECT
+              bool "Open redirect"
+              depends on KSU_SUSFS
+              default y
+
+          endmenu
+
+          '''
+              pos = k.rfind(marker)
+              k = k[:pos] + block + k[pos:]
+              p.write_text(k)
+
+          p = Path("KernelSU-Next/kernel/selinux/selinux.c")
+          c = p.read_text()
+          wrapper = '''
+
+          #ifdef CONFIG_KSU_SUSFS
+          /* Stage 5 2.3.0 compile-probe adapters for Samsung 4.19. */
+          bool susfs_is_current_ksu_domain(void)
+          {
+              return is_ksu_domain();
+          }
+
+          bool susfs_is_current_zygote_domain(void)
+          {
+              return is_zygote(current_cred());
+          }
+          #endif
+          '''
+          if "bool susfs_is_current_ksu_domain(void)" not in c:
+              p.write_text(c + wrapper)
+
+          p = Path("arch/arm64/configs/exynos850-m12nsxx_defconfig")
+          d = p.read_text()
+          symbols = [
+              "CONFIG_KSU_SUSFS=y",
+              "CONFIG_KSU_SUSFS_SUS_PATH=y",
+              "CONFIG_KSU_SUSFS_SUS_MOUNT=y",
+              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y",
+              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y",
+              "CONFIG_KSU_SUSFS_SUS_KSTAT=y",
+              "# CONFIG_KSU_SUSFS_SUS_OVERLAYFS is not set",
+              "# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set",
+              "# CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT is not set",
+              "CONFIG_KSU_SUSFS_SPOOF_UNAME=y",
+              "CONFIG_KSU_SUSFS_ENABLE_LOG=y",
+              "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y",
+              "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y",
+              "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y",
+          ]
+          for sym in symbols:
+              name = sym.replace("# ", "").split("=", 1)[0].split(" is not set", 1)[0]
+              lines = [line for line in d.splitlines()
+                       if not (line.startswith(name + "=") or line == f"# {name} is not set")]
+              lines.append(sym)
+              d = "\n".join(lines) + "\n"
+          p.write_text(d)
+
+          print("Stage 4 minimal KSUN SUSFS compile-probe glue prepared")
+          PY
+
+          git -C KernelSU-Next diff --binary \
+            > .github/patches/stage5-ksun-susfs-compile-probe.patch
+
+          test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
+          git -C KernelSU-Next diff --stat
+
+          git -C KernelSU-Next reset --hard
+          git -C KernelSU-Next clean -fd
+
+      - name: Prepare disposable Stage 4 build workflow
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path(".github/workflows/build-ksun.yml")
+          s = p.read_text()
+
+          anchor = "      - name: Patch KSUN file wrapper for Samsung 4.19\n"
+          if anchor not in s:
+              raise SystemExit("build workflow KSUN patch anchor missing")
+
+          step = "\n".join([
+              "      - name: Stage 4 apply SUSFS KSUN compile-probe glue",
+              "        run: |",
+              "          set -euxo pipefail",
+              "          test -s .github/patches/stage5-ksun-susfs-compile-probe.patch",
+              "          git -C KernelSU-Next apply ../.github/patches/stage5-ksun-susfs-compile-probe.patch",
+              "          grep -n 'KernelSU - SUSFS Stage4 compile probe' KernelSU-Next/kernel/Kconfig",
+              "          grep -n 'susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c",
+              "          grep -n 'susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c",
+              "",
+              "",
+          ])
+          if "Stage 4 apply SUSFS KSUN compile-probe glue" not in s:
+              s = s.replace(anchor, step + anchor, 1)
+
+          verify_anchor = "      - name: Prepare AnyKernel package\n"
+          if verify_anchor not in s:
+              raise SystemExit("build workflow package anchor missing")
+
+          verify = "\n".join([
+              "      - name: Verify Stage 4 SUSFS compile probe",
+              "        run: |",
+              "          set -euxo pipefail",
+              "          grep -E '^CONFIG_KSU_SUSFS(=|_)' .config || true",
+              "          grep -q '^CONFIG_KSU_SUSFS=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' .config",
+              "          test -s fs/susfs.o",
+              "          if ! grep -Eq '(^|[[:space:]])susfs_' System.map; then",
+              '            echo "ERROR: SUSFS symbols not linked into final kernel"',
+              "            exit 1",
+              "          fi",
+              "          ls -lh fs/susfs.o",
+              "          grep -E '(^|[[:space:]])susfs_' System.map | head -40",
+              '          echo "Stage 4 compile probe passed."',
+              "",
+              "",
+          ])
+          if "Verify Stage 4 SUSFS compile probe" not in s:
+              s = s.replace(verify_anchor, verify + verify_anchor, 1)
+
+          # Compile-probe mode: keep building independent objects after an
+          # error so one trial exposes multiple Samsung-4.19 incompatibilities.
+          make_parallel = '            -j"$(nproc)"\n'
+          if s.count(make_parallel) != 1:
+              raise SystemExit(
+                  "expected exactly one kernel parallel make line"
+              )
+          s = s.replace(
+              make_parallel,
+              '            -k -j"$(nproc)"\n',
+              1
+          )
+
+          s = s.replace(
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-STAGE4-COMPILE-PROBE.zip"
+          )
+          s = s.replace(
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-STAGE4-COMPILE-PROBE\n"
+          )
+          p.write_text(s)
+          PY
+
+          grep -n 'Stage 4 apply SUSFS KSUN compile-probe glue' .github/workflows/build-ksun.yml
+          grep -n 'Verify Stage 4 SUSFS compile probe' .github/workflows/build-ksun.yml
+
+      - name: Verify disposable Stage 4 source tree
+        run: |
+          set -euxo pipefail
+          test -s fs/susfs.c
+          test -s include/linux/susfs.h
+          grep -q 'susfs_copy_mnt_ns_samsung419' fs/namespace.c
+          grep -q 'fdinfo_susfs_samsung419' fs/notify/fdinfo.c
+          grep -q 'susfs_statfs_kdp_samsung419' fs/statfs.c
+          grep -q 'susfs_namespace_generic_cleanup_samsung419' fs/namespace.c
+          ! grep -q 'bool is_current_zygote_domain =' fs/namespace.c
+          ! grep -q 'int attach_mnt_count = 0;' fs/namespace.c
+          ! grep -q 'bool is_zygote_pid =' fs/namespace.c
+          ! grep -q 'int last_entry_mnt_id = 0;' fs/namespace.c
+          grep -q '^\s*u32 mask;$' fs/notify/fdinfo.c
+          grep -q '^\s*mask = mark->mask & IN_ALL_EVENTS;$' fs/notify/fdinfo.c
+          ! grep -q '^\s*u32 mask = mark->mask & IN_ALL_EVENTS;$' fs/notify/fdinfo.c
+          grep -q 'may_create_susfs_samsung419' fs/namei.c
+          grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
+          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
+          test -z "$(git -C KernelSU-Next status --porcelain)"
+          test "$(find . -name '*.rej' -type f | wc -l)" -eq 0
+          git diff --check
+
+      - name: Push disposable Stage 4 source branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          BRANCH="ci-susfs-stage5-trial5-${GITHUB_RUN_ID}"
+          echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+
+          git add \
+            fs \
+            include/linux \
+            kernel \
+            arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+          # GitHub Actions' repository token cannot push a modified workflow
+          # without the separate workflows permission. Keep the generated
+          # Stage-4 build recipe as ordinary data instead.
+          mkdir -p .ci/stage4
+          cp .github/workflows/build-ksun.yml .ci/stage5/build-ksun-stage5.yml
+          git checkout -- .github/workflows/build-ksun.yml
+
+          git add -f \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch \
+            .ci/stage5/build-ksun-stage5.yml \
+            .ci/stage5
+
+          git status --short
+          git commit -m "CI: SUSFS Stage 5 Trial 5 fix namei object roots and open redirect"
+          git push origin "$BRANCH"
+          echo "Disposable Stage 4 branch pushed: $BRANCH"
+
+      - name: Execute Stage 4 build recipe
+        run: |
+          set -euxo pipefail
+
+          # Execute shell steps from the generated build recipe in this runner.
+          # Action-only steps (checkout/setup/upload) are skipped.
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          wf = yaml.safe_load(Path(".ci/stage5/build-ksun-stage5.yml").read_text())
+          jobs = wf.get("jobs", {})
+          if len(jobs) != 1:
+              raise SystemExit(f"expected one build job, got {list(jobs)}")
+
+          steps = next(iter(jobs.values())).get("steps", [])
+          chunks = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
+
+          for idx, step in enumerate(steps, 1):
+              name = step.get("name", f"step-{idx}")
+              script = step.get("run")
+              if script is None:
+                  print(f"skip action-only step: {name}")
+                  continue
+              chunks += [
+                  f'echo "===== Stage 5 Trial 5: {name} ====="',
+                  script,
+                  "",
+              ]
+
+          Path("/tmp/stage4-build-recipe.sh").write_text("\n".join(chunks))
+          PY
+
+          chmod +x /tmp/stage4-build-recipe.sh
+          bash /tmp/stage4-build-recipe.sh
+
+          echo "Stage 5 Trial 5 compile recipe completed."
+          echo "Compile probe only — do not flash."
+
+      - name: Upload Stage 5 Trial 5 compile outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m127f-susfs-stage5-trial5
+          if-no-files-found: warn
+          path: |
+            Image
+            System.map
+            .config
+            .ci/stage5/
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-STAGE4-COMPILE-PROBE.zip
+
