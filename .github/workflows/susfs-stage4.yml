@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 3
+name: SUSFS Samsung 4.19 Stage 5 - Trial 4
 
 permissions:
   contents: write
@@ -1319,7 +1319,7 @@ jobs:
             /tmp/M127F-SUSFS-Stage3-diff-stat.txt
           if-no-files-found: error
           retention-days: 7
-      - name: Stage 5 Trial 3 import official SUSFS 2.3.0 core
+      - name: Stage 5 Trial 4 import official SUSFS 2.3.0 core
         run: |
           set -euxo pipefail
 
@@ -1381,7 +1381,7 @@ jobs:
             > .ci/stage5/susfs-def-1.5.7-to-2.3.0.diff || true
 
           {
-            echo "Stage 5 Trial 3"
+            echo "Stage 5 Trial 4"
             echo "Official branch: gki-android13-5.15"
             grep -E '^#define[[:space:]]+SUSFS_VERSION' include/linux/susfs.h
             sha256sum \
@@ -1452,7 +1452,7 @@ jobs:
               "\t\tconst unsigned char *file_name, u32 cookie,",
               "\t\tstruct fsnotify_iter_info *iter_info)",
               "{",
-              "\tif (!file_name || memcmp(file_name, \"Android\", 7) || file_name[7] != '\\\\0')",
+              "\tif (!file_name || memcmp(file_name, \"Android\", 7) || file_name[7] != '\\0')",
               "\t\treturn 0;",
               "",
               "\tif (test_and_set_bit(0, &sdcard_cleanup_scheduled))",
@@ -1474,7 +1474,16 @@ jobs:
           x = x.replace(modern_handler, old_handler, 1)
           p.write_text(x)
 
-          for p in [Path("fs/readdir.c"), Path("fs/dcache.c"), Path("fs/statfs.c")]:
+          for p in [
+              Path("fs/readdir.c"),
+              Path("fs/dcache.c"),
+              Path("fs/namei.c"),
+              Path("fs/notify/fdinfo.c"),
+              Path("fs/proc/fd.c"),
+              Path("fs/proc/task_mmu.c"),
+              Path("fs/stat.c"),
+              Path("fs/statfs.c"),
+          ]:
               x = p.read_text()
               x = x.replace(
                   "current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC",
@@ -1492,6 +1501,16 @@ jobs:
                   "inode->i_state & INODE_STATE_SUS_MOUNT",
                   "inode->i_mapping && test_bit(AS_FLAGS_SUS_MOUNT, &inode->i_mapping->flags)",
               )
+              x = x.replace(
+                  "inode->i_state & INODE_STATE_SUS_KSTAT",
+                  "inode->i_mapping && test_bit(AS_FLAGS_SUS_KSTAT, &inode->i_mapping->flags)",
+              )
+              # Generic text conversion cannot infer the local variable in
+              # statfs.c.  Its original expression is rooted at s->s_root.
+              x = x.replace(
+                  "s->s_root->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_MOUNT, &inode->i_mapping->flags)",
+                  "s->s_root->d_inode->i_mapping && test_bit(AS_FLAGS_SUS_MOUNT, &s->s_root->d_inode->i_mapping->flags)",
+              )
               p.write_text(x)
 
           print("Applied Samsung 4.19 interfaces for official SUSFS 2.3.0")
@@ -1501,19 +1520,34 @@ jobs:
           grep -q '#include <linux/security.h>' fs/susfs.c
           grep -q 'handle_event = susfs_handle_sdcard_event_419' fs/susfs.c
           grep -q 'DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID' include/linux/susfs_def.h
-          ! grep -R -n 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' fs/readdir.c fs/dcache.c fs/statfs.c
-          ! grep -R -n 'INODE_STATE_SUS_PATH' fs/readdir.c fs/dcache.c fs/statfs.c
-          ! grep -R -n 'INODE_STATE_SUS_MOUNT' fs/statfs.c
+          legacy_scan=(
+            fs/dcache.c
+            fs/namei.c
+            fs/notify/fdinfo.c
+            fs/proc/fd.c
+            fs/proc/task_mmu.c
+            fs/readdir.c
+            fs/stat.c
+            fs/statfs.c
+          )
+          ! grep -n 'TASK_STRUCT_NON_ROOT_USER_APP_PROC' "${legacy_scan[@]}"
+          ! grep -n 'INODE_STATE_SUS_PATH' "${legacy_scan[@]}"
+          ! grep -n 'INODE_STATE_SUS_MOUNT' "${legacy_scan[@]}"
+          ! grep -n 'INODE_STATE_SUS_KSTAT' "${legacy_scan[@]}"
+          grep -q 'AS_FLAGS_SUS_KSTAT' fs/notify/fdinfo.c
+          grep -q 'AS_FLAGS_SUS_KSTAT' fs/proc/task_mmu.c
+          grep -q 'AS_FLAGS_SUS_KSTAT' fs/stat.c
+          grep -q '&s->s_root->d_inode->i_mapping->flags' fs/statfs.c
 
           mkdir -p .ci/stage5
           {
-            echo "Stage 5 Trial 3 Samsung 4.19 compatibility bridge"
+            echo "Stage 5 Trial 4 Samsung 4.19 compatibility bridge"
             echo "cred include: yes"
             echo "security include: yes"
             echo "4.19 fsnotify handle_event adapter: yes"
             echo "legacy task/inode SUSFS state converted: yes"
             echo "legacy mount-ID names bridged to 2.3.0 KSU IDs: yes"
-          } > .ci/stage5/trial3-samsung419-bridge.txt
+          } > .ci/stage5/trial4-samsung419-bridge.txt
 
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
@@ -1791,7 +1825,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial3-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial4-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -1817,7 +1851,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 3 2.3.0 Samsung 4.19 compile bridge"
+          git commit -m "CI: SUSFS Stage 5 Trial 4 complete legacy-state conversion"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -1846,7 +1880,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 5 Trial 3: {name} ====="',
+                  f'echo "===== Stage 5 Trial 4: {name} ====="',
                   script,
                   "",
               ]
@@ -1857,14 +1891,14 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 5 Trial 3 compile recipe completed."
+          echo "Stage 5 Trial 4 compile recipe completed."
           echo "Compile probe only — do not flash."
 
-      - name: Upload Stage 5 Trial 3 compile outputs
+      - name: Upload Stage 5 Trial 4 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial3
+          name: m127f-susfs-stage5-trial4
           if-no-files-found: warn
           path: |
             Image
