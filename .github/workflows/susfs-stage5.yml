@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 6
+name: SUSFS Samsung 4.19 Stage 5 - Trial 7
 
 permissions:
   contents: write
@@ -1319,7 +1319,7 @@ jobs:
             /tmp/M127F-SUSFS-Stage3-diff-stat.txt
           if-no-files-found: error
           retention-days: 7
-      - name: Stage 5 Trial 6 import official SUSFS 2.3.0 core
+      - name: Stage 5 Trial 7 import official SUSFS 2.3.0 core
         run: |
           set -euxo pipefail
 
@@ -1381,7 +1381,7 @@ jobs:
             > .ci/stage5/susfs-def-1.5.7-to-2.3.0.diff || true
 
           {
-            echo "Stage 5 Trial 6"
+            echo "Stage 5 Trial 7"
             echo "Official branch: gki-android13-5.15"
             grep -E '^#define[[:space:]]+SUSFS_VERSION' include/linux/susfs.h
             sha256sum \
@@ -1597,13 +1597,13 @@ jobs:
 
           mkdir -p .ci/stage5
           {
-            echo "Stage 5 Trial 6 Samsung 4.19 compatibility bridge"
+            echo "Stage 5 Trial 7 Samsung 4.19 compatibility bridge"
             echo "cred include: yes"
             echo "security include: yes"
             echo "4.19 fsnotify handle_event adapter: yes"
             echo "legacy task/inode SUSFS state converted: yes"
             echo "legacy mount-ID names bridged to 2.3.0 KSU IDs: yes"
-          } > .ci/stage5/trial6-samsung419-bridge.txt
+          } > .ci/stage5/trial7-samsung419-bridge.txt
 
       - name: Retire obsolete 1.5.7 callsites exposed at Trial 5 link
         run: |
@@ -1701,6 +1701,41 @@ jobs:
             echo "2.3.0 non-SUS mount helpers use a conservative Samsung 4.19 compile bridge."
             echo "NOT A FLASH CANDIDATE: final 2.3.0 mount semantics still pending."
           } > .ci/stage5/trial6-link-bridge.txt
+
+      - name: Clean orphaned 1.5.7 labels and declarations
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/proc/task_mmu.c")
+          x = p.read_text()
+          x = x.replace("#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\nbypass_orig_flow:\n#endif\n", "")
+          p.write_text(x)
+
+          p = Path("fs/namei.c")
+          x = p.read_text()
+          x = x.replace("#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT\n\tstruct filename *fake_pathname;\n#endif\n", "")
+          p.write_text(x)
+
+          p = Path("fs/namespace.c")
+          x = p.read_text()
+          x = x.replace("#if defined(CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT)\norig_flow:\n#endif\n", "")
+          p.write_text(x)
+
+          print("Removed Trial-6 orphaned labels/declaration")
+          PY
+
+          ! grep -n 'bypass_orig_flow:' fs/proc/task_mmu.c
+          ! grep -n 'struct filename \*fake_pathname;' fs/namei.c
+          ! grep -n '^orig_flow:' fs/namespace.c
+
+          {
+            echo "Stage 5 Trial 7"
+            echo "Trial 6 exposed only three -Werror cleanup failures."
+            echo "Removed orphaned bypass_orig_flow, fake_pathname, and orig_flow scaffolding."
+            echo "NOT A FLASH CANDIDATE: final SUSFS 2.3.0 mount semantics remain pending."
+          } > .ci/stage5/trial7-cleanup.txt
 
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
@@ -1978,7 +2013,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial6-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial7-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2004,7 +2039,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 6 retire legacy 1.5.7 link hooks"
+          git commit -m "CI: SUSFS Stage 5 Trial 7 clean orphaned legacy labels"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2033,7 +2068,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 5 Trial 6: {name} ====="',
+                  f'echo "===== Stage 5 Trial 7: {name} ====="',
                   script,
                   "",
               ]
@@ -2044,14 +2079,14 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 5 Trial 6 compile recipe completed."
+          echo "Stage 5 Trial 7 compile recipe completed."
           echo "Compile probe only — do not flash."
 
-      - name: Upload Stage 5 Trial 6 compile outputs
+      - name: Upload Stage 5 Trial 7 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial6
+          name: m127f-susfs-stage5-trial7
           if-no-files-found: warn
           path: |
             Image
