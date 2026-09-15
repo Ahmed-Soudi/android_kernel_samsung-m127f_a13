@@ -10,7 +10,7 @@ on:
     branches:
       - ksun-3.3.0-ps5-susfs230
     paths:
-      - '.github/workflows/susfs-stage4.yml'
+      - '.github/workflows/susfs-stage5.yml'
 
 jobs:
   stage2:
