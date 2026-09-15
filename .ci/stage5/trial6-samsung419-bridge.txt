@@ -1,0 +1,6 @@
+Stage 5 Trial 6 Samsung 4.19 compatibility bridge
+cred include: yes
+security include: yes
+4.19 fsnotify handle_event adapter: yes
+legacy task/inode SUSFS state converted: yes
+legacy mount-ID names bridged to 2.3.0 KSU IDs: yes
