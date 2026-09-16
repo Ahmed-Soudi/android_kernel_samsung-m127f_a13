@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 16
+name: SUSFS Samsung 4.19 Stage 5 - Trial 17
 
 permissions:
   contents: write
@@ -2224,6 +2224,91 @@ jobs:
           } > .ci/stage5/trial16-zygote-lookup-semantics.txt
 
 
+      - name: Correct official 2.3.0 dedicated mount IDA ownership
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("fs/namespace.c")
+          x=p.read_text()
+
+          # Trial 14's normal-IDA assumption compiled, but the official 2.3.0 patch
+          # actually retains dedicated high-range SUSFS IDAs. Correct ownership now,
+          # while preserving the modern unshare flag and Trial 16 lookup semantics.
+          decl_anchor = "static DEFINE_IDA(mnt_id_ida);\n"
+          if "static DEFINE_IDA(susfs_mnt_id_ida);" not in x:
+              if decl_anchor not in x:
+                  raise SystemExit("mnt_id_ida declaration anchor missing")
+              x=x.replace(decl_anchor, decl_anchor +
+                  "#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT\n"
+                  "static DEFINE_IDA(susfs_mnt_id_ida);\n"
+                  "static DEFINE_IDA(susfs_mnt_group_ida);\n"
+                  "#endif\n", 1)
+
+          x=x.replace("ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL)",
+                      "ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL)")
+          x=x.replace("ida_alloc_min(&mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL)",
+                      "ida_alloc_min(&susfs_mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL)")
+
+          # Restore official high-ID ownership in free/release paths.
+          needle = """static void mnt_free_id(struct mount *mnt)
+          {
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          """
+          if needle not in x:
+              raise SystemExit("mnt_free_id SUSFS anchor missing")
+          high = """\tif (unlikely(mnt->mnt_id >= DEFAULT_KSU_MNT_ID)) {
+          \t\tida_free(&susfs_mnt_id_ida, mnt->mnt_id);
+          \t\treturn;
+          \t}
+
+          """
+          if high not in x:
+              x=x.replace(needle, needle+high, 1)
+
+          rel = """void mnt_release_group_id(struct mount *mnt)
+          {
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          """
+          if rel not in x:
+              raise SystemExit("mnt_release_group_id SUSFS anchor missing")
+          grp = """\tif (mnt->mnt_group_id >= DEFAULT_KSU_MNT_GROUP_ID) {
+          \t\tida_free(&susfs_mnt_group_ida, mnt->mnt_group_id);
+          \t\tmnt->mnt_group_id = 0;
+          \t\treturn;
+          \t}
+          """
+          if grp not in x:
+              x=x.replace(rel, rel+grp, 1)
+
+          p.write_text(x)
+          PY
+
+          grep -q 'static DEFINE_IDA(susfs_mnt_id_ida);' fs/namespace.c
+          grep -q 'static DEFINE_IDA(susfs_mnt_group_ida);' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'ida_free(&susfs_mnt_id_ida, mnt->mnt_id)' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID' fs/namespace.c
+          grep -q 'ida_free(&susfs_mnt_group_ida, mnt->mnt_group_id)' fs/namespace.c
+
+          # Preserve modern unshare + zygote lookup semantics.
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'p->mnt_id < DEFAULT_KSU_MNT_ID' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 17"
+           echo "Trial 16 green baseline retained."
+           echo "Corrected Trial 14 assumption after re-checking official SUSFS 2.3.0 patch."
+           echo "High-range mount IDs use dedicated susfs_mnt_id_ida."
+           echo "High-range group IDs use dedicated susfs_mnt_group_ida."
+           echo "Modern VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT behavior retained."
+           echo "Trial 16 zygote/zygote_next lookup semantics retained."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial17-official-ida-ownership.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2500,7 +2585,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial16-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial17-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2526,7 +2611,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 16 port 2.3.0 zygote mount lookup semantics"
+          git commit -m "CI: SUSFS Stage 5 Trial 17 correct 2.3.0 dedicated mount IDA ownership"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2573,7 +2658,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial16
+          name: m127f-susfs-stage5-trial17
           if-no-files-found: warn
           path: |
             Image
