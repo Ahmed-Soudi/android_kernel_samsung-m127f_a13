@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 24
+name: SUSFS Samsung 4.19 Stage 5 - Trial 25
 
 permissions:
   contents: write
@@ -2936,6 +2936,43 @@ jobs:
           fi
 
 
+      - name: Port SUS_MAP proc maps core semantics
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("fs/proc/task_mmu.c"); x=p.read_text()
+          x=x.replace("#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n#include <linux/susfs_def.h>\n#endif\n",
+          "#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n#include <linux/susfs_def.h>\n#endif\n",1)
+          needle="\tif (file) {\n\t\tstruct inode *inode = file_inode(vma->vm_file);\n"
+          repl=needle+"#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n\t\t/* susfs_stage5_trial25_sus_map_show_map */\n\t\tif (SUSFS_IS_INODE_SUS_MAP(inode))\n\t\t\treturn;\n#endif\n"
+          if "susfs_stage5_trial25_sus_map_show_map" not in x:
+              if needle not in x: raise SystemExit("show_map_vma anchor missing")
+              x=x.replace(needle,repl,1)
+          start=x.find("static int show_smap(struct seq_file *m, void *v)")
+          if start < 0: raise SystemExit("show_smap missing")
+          end=x.find("\n}\n",start); body=x[start:end]
+          if "susfs_stage5_trial25_sus_map_show_smap" not in body:
+              nd="\tstruct mem_size_stats mss;\n"
+              ins=nd+"#ifdef CONFIG_KSU_SUSFS_SUS_MAP\n\t/* susfs_stage5_trial25_sus_map_show_smap */\n\tif (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))\n\t\treturn 0;\n#endif\n"
+              if nd not in body: raise SystemExit("show_smap mss anchor missing")
+              body=body.replace(nd,ins,1); x=x[:start]+body+x[end:]
+          p.write_text(x)
+          PY
+          grep -q 'susfs_stage5_trial25_sus_map_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial25_sus_map_show_smap' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial19_inline_faccessat_no_su' fs/open.c
+          grep -q 'susfs_stage5_trial22_inline_stat_no_su' fs/stat.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          {
+           echo "Stage 5 Trial 25"
+           echo "Trial24 proved SUS_MAP/OPEN_REDIRECT core existed but proc callsites were absent."
+           echo "Ported SUS_MAP hiding for /proc/PID/maps and /proc/PID/smaps."
+           echo "Remaining before flash candidate: map_files/pagemap/smaps_rollup and OPEN_REDIRECT proc/maps spoof paths."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial25-sus-map-proc-core.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -3212,7 +3249,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial24-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial25-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3238,7 +3275,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 24 final 2.3 semantic parity audit"
+          git commit -m "CI: SUSFS Stage 5 Trial 25 port SUS_MAP proc maps core"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3285,7 +3322,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial24
+          name: m127f-susfs-stage5-trial25
           if-no-files-found: warn
           path: |
             Image
