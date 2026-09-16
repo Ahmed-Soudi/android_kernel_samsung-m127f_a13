@@ -1,0 +1,7 @@
+Stage 5 Trial 20
+Trial 19 failed at compile due two Samsung-4.19 adaptation issues, not SUSFS semantics.
+Moved fname declaration into the actual do_faccessat() scope.
+Made existing 4.19 filename_lookup() fs-internal so open.c can use the official 2.3.0 flow.
+No EXPORT_SYMBOL added.
+Trial 19 no-su/faccessat semantics retained.
+NOT A FLASH CANDIDATE.

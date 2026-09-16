@@ -1,0 +1,4 @@
+Stage 5 Trial 7
+Trial 6 exposed only three -Werror cleanup failures.
+Removed orphaned bypass_orig_flow, fake_pathname, and orig_flow scaffolding.
+NOT A FLASH CANDIDATE: final SUSFS 2.3.0 mount semantics remain pending.
