@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 23
+name: SUSFS Samsung 4.19 Stage 5 - Trial 24
 
 permissions:
   contents: write
@@ -2896,6 +2896,46 @@ jobs:
           } > .ci/stage5/trial23-stat-internal-header.txt
 
 
+      - name: Final SUSFS 2.3.0 semantic parity audit
+        run: |
+          set -euxo pipefail
+          mkdir -p .ci/stage5
+          {
+            echo "Stage 5 Trial 24"
+            echo "Trial 23 green baseline retained."
+            echo "Final focused semantic parity inventory before flash-candidate integration."
+            echo "NOT A FLASH CANDIDATE unless audit proves no required live hook gap."
+          } > .ci/stage5/trial24-status.txt
+
+          for term in SUS_MAP OPEN_REDIRECT susfs_is_current_proc_no_su hide_sus_mnts_for_non_su_procs ksu_handle_faccessat ksu_handle_stat zygote_next TIF_PROC_UMOUNTED TIF_PROC_NO_SU susfs_get_non_sus_mnt_id_from_mnt susfs_get_non_sus_vfsmnt_from_vfsmnt VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT DEFAULT_KSU_MNT_ID kernel_umount static_branch static_key; do
+            echo "===== $term =====" | tee -a .ci/stage5/trial24-live-semantic-inventory.txt
+            grep -R -n "$term" fs include KernelSU-Next/kernel --include='*.c' --include='*.h' 2>/dev/null | tee -a .ci/stage5/trial24-live-semantic-inventory.txt || true
+            echo | tee -a .ci/stage5/trial24-live-semantic-inventory.txt
+          done
+
+          {
+           echo "===== OPEN_REDIRECT focused ====="
+           grep -n -E 'OPEN_REDIRECT|susfs_.*redirect|redirect.*susfs' fs/namei.c fs/open.c fs/proc/base.c fs/proc/fd.c fs/proc/task_mmu.c 2>/dev/null || true
+           echo "===== SUS_MAP focused ====="
+           grep -n -E 'SUS_MAP|susfs_.*map|map.*susfs' fs/proc/task_mmu.c fs/proc/base.c fs/proc/fd.c 2>/dev/null || true
+          } | tee .ci/stage5/trial24-focused-hooks.txt
+
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+          grep -q 'susfs_stage5_trial19_inline_faccessat_no_su' fs/open.c
+          grep -q 'susfs_stage5_trial21_samsung419_vfs_facessat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'susfs_stage5_trial22_inline_stat_no_su' fs/stat.c
+          grep -q 'susfs_stage5_trial22_samsung419_vfs_stat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q '#include "internal.h"' fs/stat.c
+
+          if grep -R -n -E 'DEFAULT_SUS_MNT_ID|DEFAULT_SUS_MNT_GROUP_ID' fs include --include='*.c' --include='*.h'; then
+            echo "Obsolete SUSFS 1.5.x mount vocabulary remains" >&2
+            exit 1
+          fi
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -3172,7 +3212,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial23-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial24-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3198,7 +3238,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 23 expose fs-internal filename lookup to stat"
+          git commit -m "CI: SUSFS Stage 5 Trial 24 final 2.3 semantic parity audit"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3245,7 +3285,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial23
+          name: m127f-susfs-stage5-trial24
           if-no-files-found: warn
           path: |
             Image
