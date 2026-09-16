@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 22
+name: SUSFS Samsung 4.19 Stage 5 - Trial 23
 
 permissions:
   contents: write
@@ -2845,6 +2845,57 @@ jobs:
           } > .ci/stage5/trial22-stat-no-su.txt
 
 
+      - name: Fix Samsung 4.19 stat filename_lookup visibility
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p=Path("fs/stat.c")
+          x=p.read_text()
+
+          # Trial22's only compile failure: stat.c did not include fs/internal.h,
+          # where Trial20 intentionally declared the fs-private filename_lookup().
+          inc='#include <asm/unistd.h>\n'
+          rep='''#include <asm/unistd.h>
+
+          #include "internal.h"
+          '''
+          if '#include "internal.h"' not in x:
+              if inc not in x:
+                  raise SystemExit("fs/stat.c asm/unistd include anchor missing")
+              x=x.replace(inc,rep,1)
+          p.write_text(x)
+          PY
+
+          # Exact Trial22 failure fix.
+          grep -q '#include "internal.h"' fs/stat.c
+          grep -q 'int filename_lookup(int dfd, struct filename \*name, unsigned flags,' fs/internal.h
+          grep -q '^int filename_lookup(' fs/namei.c
+
+          # Trial22 semantics must remain untouched.
+          grep -q 'susfs_stage5_trial22_inline_stat_no_su' fs/stat.c
+          grep -q 'susfs_is_current_proc_no_su()' fs/stat.c
+          grep -q 'ksu_handle_stat_samsung419(&dfd, &susfs_stat_user_filename, &flags)' fs/stat.c
+          grep -q 'filename_lookup(dfd, susfs_stat_fname, lookup_flags, &path, NULL)' fs/stat.c
+          grep -q 'susfs_stage5_trial22_samsung419_vfs_stat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+
+          # Previous locked semantics.
+          grep -q 'susfs_stage5_trial21_samsung419_vfs_facessat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 23"
+           echo "Trial 22 failed on one compile error only: fs/stat.c could not see filename_lookup()."
+           echo "Trial20 already declares filename_lookup() in fs/internal.h."
+           echo "Added the missing fs/internal.h include to stat.c."
+           echo "Trial22 stat/no-su semantics otherwise unchanged."
+           echo "If green, proceed directly to SUS_MAP / OPEN_REDIRECT parity and final flash-candidate audit."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial23-stat-internal-header.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -3121,7 +3172,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial22-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial23-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3147,7 +3198,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 22 port 2.3.0 stat no-su semantics"
+          git commit -m "CI: SUSFS Stage 5 Trial 23 expose fs-internal filename lookup to stat"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3194,7 +3245,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial22
+          name: m127f-susfs-stage5-trial23
           if-no-files-found: warn
           path: |
             Image
