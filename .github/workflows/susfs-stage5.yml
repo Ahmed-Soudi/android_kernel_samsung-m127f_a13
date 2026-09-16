@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 18
+name: SUSFS Samsung 4.19 Stage 5 - Trial 19
 
 permissions:
   contents: write
@@ -2386,6 +2386,99 @@ jobs:
           } > .ci/stage5/trial18-status.txt
 
 
+      - name: Port official 2.3.0 inline faccessat no-su semantics
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("fs/open.c")
+          x=p.read_text()
+
+          inc='#include <linux/compat.h>\n'
+          add='''#include <linux/compat.h>
+          #ifdef CONFIG_KSU_SUSFS
+          #include <linux/susfs_def.h>
+          #endif
+          '''
+          if '#include <linux/susfs_def.h>' not in x:
+              if inc not in x: raise SystemExit("open.c include anchor missing")
+              x=x.replace(inc,add,1)
+
+          fn='long do_faccessat(int dfd, const char __user *filename, int mode)\n'
+          externs='''#ifdef CONFIG_KSU_SUSFS
+          extern struct static_key_true ksu_su_compat_enabled;
+          extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+          extern int ksu_handle_faccessat(int *dfd, struct filename **filename,
+                                         int *mode, int *__unused_flags);
+          #endif
+
+          '''
+          if 'extern int ksu_handle_faccessat(int *dfd' not in x:
+              if fn not in x: raise SystemExit("do_faccessat anchor missing")
+              x=x.replace(fn,externs+fn,1)
+
+          decl='\tunsigned int lookup_flags = LOOKUP_FOLLOW;\n'
+          if 'struct filename *susfs_fname = NULL;' not in x:
+              if decl not in x: raise SystemExit("lookup_flags declaration missing")
+              x=x.replace(decl,decl+'''#ifdef CONFIG_KSU_SUSFS
+          \tstruct filename *susfs_fname = NULL;
+          #endif
+          ''',1)
+
+          old='''retry:
+          \tres = user_path_at(dfd, filename, lookup_flags, &path);
+          \tif (res)
+          '''
+          new='''retry:
+          #ifdef CONFIG_KSU_SUSFS
+          \t/* susfs_stage5_trial19_inline_faccessat_no_su */
+          \tsusfs_fname = getname_flags(filename, lookup_flags, NULL);
+          \tif (IS_ERR(susfs_fname)) {
+          \t\tres = PTR_ERR(susfs_fname);
+          \t\tgoto out;
+          \t}
+
+          \tif (!susfs_is_current_proc_no_su() &&
+          \t    static_branch_likely(&ksu_su_compat_enabled) &&
+          \t    unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
+          \t\tksu_handle_faccessat(&dfd, &susfs_fname, &mode, NULL);
+
+          \tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);
+          \tputname(susfs_fname);
+          #else
+          \tres = user_path_at(dfd, filename, lookup_flags, &path);
+          #endif
+          \tif (res)
+          '''
+          if 'susfs_stage5_trial19_inline_faccessat_no_su' not in x:
+              if old not in x: raise SystemExit("Samsung 4.19 retry/user_path_at anchor missing")
+              x=x.replace(old,new,1)
+          p.write_text(x)
+          PY
+
+          grep -q 'susfs_stage5_trial19_inline_faccessat_no_su' fs/open.c
+          grep -q 'susfs_is_current_proc_no_su()' fs/open.c
+          grep -q 'static_branch_likely(&ksu_su_compat_enabled)' fs/open.c
+          grep -q '__ksu_is_allow_uid_for_current(current_uid().val)' fs/open.c
+          grep -q 'ksu_handle_faccessat(&dfd, &susfs_fname, &mode, NULL)' fs/open.c
+          grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL)' fs/open.c
+          grep -q 'putname(susfs_fname)' fs/open.c
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 19"
+           echo "Trial 18 audit showed the KSU faccessat handler existed only in KSUN syscall bridge, not the official 2.3.0 VFS inline path."
+           echo "Ported official 2.3.0 faccessat no-su semantics to Samsung 4.19 fs/open.c."
+           echo "TIF_PROC_NO_SU processes bypass KSU sucompat path."
+           echo "Allowed KSU processes use ksu_handle_faccessat before filename_lookup."
+           echo "No Zygisk implementation embedded."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial19-inline-faccessat.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2662,7 +2755,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial18-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial19-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2688,7 +2781,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 18 audit remaining 2.3.0 semantic gaps"
+          git commit -m "CI: SUSFS Stage 5 Trial 19 port 2.3.0 inline faccessat no-su semantics"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2735,7 +2828,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial18
+          name: m127f-susfs-stage5-trial19
           if-no-files-found: warn
           path: |
             Image
