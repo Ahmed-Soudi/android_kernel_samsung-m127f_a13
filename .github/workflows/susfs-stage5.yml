@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 7
+name: SUSFS Samsung 4.19 Stage 5 - Trial 8
 
 permissions:
   contents: write
@@ -1737,6 +1737,35 @@ jobs:
             echo "NOT A FLASH CANDIDATE: final SUSFS 2.3.0 mount semantics remain pending."
           } > .ci/stage5/trial7-cleanup.txt
 
+      - name: Audit official SUSFS 2.3.0 semantic delta
+        run: |
+          set -euxo pipefail
+          mkdir -p .ci/stage5/official230
+          curl -fL --retry 3 'https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android13-5.15/kernel_patches/50_add_susfs_in_kernel-5.15.patch' -o .ci/stage5/official230/kernel.patch
+          curl -fL --retry 3 'https://gitlab.com/simonpunk/susfs4ksu/-/raw/gki-android13-5.15/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch' -o .ci/stage5/official230/ksu.patch
+          required=(TIF_PROC_UMOUNTED TIF_PROC_NO_SU SUS_MAP zygote_next ksu_handle_faccessat ksu_handle_stat OPEN_REDIRECT hide_sus_mnts_for_non_su_procs susfs_get_non_sus_mnt_id_from_mnt susfs_get_non_sus_vfsmnt_from_vfsmnt)
+          : > .ci/stage5/trial8-semantic-audit.txt
+          for sym in "${required[@]}"; do
+            count=$(grep -h -F "$sym" .ci/stage5/official230/*.patch | wc -l)
+            printf '%-48s %s\n' "$sym" "$count" | tee -a .ci/stage5/trial8-semantic-audit.txt
+            test "$count" -gt 0
+          done
+          {
+            echo '===== OFFICIAL 2.3.0 FOCUSED CONTEXT ====='
+            grep -n -C 16 -E 'susfs_get_non_sus_mnt_id_from_mnt|susfs_get_non_sus_vfsmnt_from_vfsmnt|hide_sus_mnts_for_non_su_procs|TIF_PROC_UMOUNTED|TIF_PROC_NO_SU|zygote_next|SUS_MAP|OPEN_REDIRECT|ksu_handle_faccessat|ksu_handle_stat' .ci/stage5/official230/*.patch || true
+          } > .ci/stage5/trial8-official230-focused-context.txt
+          {
+            echo '===== SAMSUNG 4.19 CURRENT INVENTORY ====='
+            for sym in "${required[@]}"; do
+              echo "--- $sym ---"
+              grep -R -n -F "$sym" fs include KernelSU-Next/kernel --include='*.c' --include='*.h' --include='Kconfig' 2>/dev/null || true
+            done
+            echo '===== TEMP BRIDGES ====='
+            grep -R -n -E 'susfs_stage5_trial6_non_sus_mount_bridge|DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID|DEFAULT_SUS_MNT_GROUP_ID DEFAULT_KSU_MNT_GROUP_ID|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' fs include KernelSU-Next 2>/dev/null || true
+          } > .ci/stage5/trial8-samsung419-semantic-inventory.txt
+          grep -q 'susfs_stage5_trial6_non_sus_mount_bridge' fs/namespace.c
+          printf '%s\n' 'Stage 5 Trial 8' 'Official SUSFS 2.3.0 semantic audit captured.' 'Green Trial 7 compile baseline preserved.' 'NOT A FLASH CANDIDATE.' > .ci/stage5/trial8-status.txt
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2013,7 +2042,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial7-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial8-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2039,7 +2068,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 7 clean orphaned legacy labels"
+          git commit -m "CI: SUSFS Stage 5 Trial 8 audit official 2.3.0 semantic delta"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2086,7 +2115,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial7
+          name: m127f-susfs-stage5-trial8
           if-no-files-found: warn
           path: |
             Image
