@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 15
+name: SUSFS Samsung 4.19 Stage 5 - Trial 16
 
 permissions:
   contents: write
@@ -2138,6 +2138,92 @@ jobs:
           } > .ci/stage5/trial15-mount-id-callsites.txt
 
 
+      - name: Port official 2.3.0 zygote mount lookup semantics
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("fs/namespace.c")
+          x = p.read_text()
+
+          marker = "susfs_stage5_trial16_zygote_lookup_semantics"
+          if marker in x:
+              raise SystemExit("Trial 16 marker unexpectedly already present")
+
+          needle = """struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
+          {
+          \tstruct hlist_head *head = m_hash(mnt, dentry);
+          \tstruct mount *p;
+          """
+          if needle not in x:
+              raise SystemExit("__lookup_mnt Samsung 4.19 anchor not found")
+
+          insert = """struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
+          {
+          \tstruct hlist_head *head = m_hash(mnt, dentry);
+          \tstruct mount *p;
+
+          #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          \t/* susfs_stage5_trial16_zygote_lookup_semantics
+          \t *
+          \t * SUSFS 2.3.0 temporary SUS_MOUNT handling for processes already
+          \t * marked umounted (including zygote_next descendants): do not return
+          \t * a KSU high-ID mount from lookup; resolve only the legitimate mount.
+          \t *
+          \t * Samsung CONFIG_KDP_NS stores struct mount::mnt as a pointer, so the
+          \t * parent-vfsmount comparison must not use upstream's &parent->mnt form.
+          \t */
+          \tif (susfs_is_current_proc_umounted()) {
+          \t\thlist_for_each_entry_rcu(p, head, mnt_hash) {
+          #ifdef CONFIG_KDP_NS
+          \t\t\tif (p->mnt_id < DEFAULT_KSU_MNT_ID &&
+          \t\t\t    p->mnt_parent->mnt == mnt &&
+          \t\t\t    p->mnt_mountpoint == dentry)
+          #else
+          \t\t\tif (p->mnt_id < DEFAULT_KSU_MNT_ID &&
+          \t\t\t    &p->mnt_parent->mnt == mnt &&
+          \t\t\t    p->mnt_mountpoint == dentry)
+          #endif
+          \t\t\t\treturn p;
+          \t\t}
+          \t\treturn NULL;
+          \t}
+          #endif
+          """
+          x = x.replace(needle, insert, 1)
+          p.write_text(x)
+          PY
+
+          # Hard semantic gates.
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'susfs_is_current_proc_umounted()' fs/namespace.c
+          grep -q 'p->mnt_id < DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'p->mnt_parent->mnt == mnt' fs/namespace.c
+          grep -q '&p->mnt_parent->mnt == mnt' fs/namespace.c
+
+          # Do not regress the Trial 13-15 mount work.
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+          ! grep -R -n \
+            --include='*.c' --include='*.h' \
+            'DEFAULT_SUS_MNT_ID\|DEFAULT_SUS_MNT_GROUP_ID\|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' \
+            fs include
+
+          {
+            echo "Stage 5 Trial 16"
+            echo "Trial 15 green baseline retained."
+            echo "Ported official SUSFS 2.3.0 __lookup_mnt umounted-process behavior."
+            echo "High-ID KSU mounts are hidden from marked zygote/zygote_next descendants."
+            echo "Samsung CONFIG_KDP_NS parent-vfsmount representation handled explicitly."
+            echo "This is kernel-side zygote handling only; no Zygisk implementation is embedded."
+            echo "External KSUN Zygisk modules remain an after-flash install/test layer."
+            echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial16-zygote-lookup-semantics.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2414,7 +2500,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial15-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial16-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2440,7 +2526,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 15 finish 2.3.0 mount ID callsite migration"
+          git commit -m "CI: SUSFS Stage 5 Trial 16 port 2.3.0 zygote mount lookup semantics"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2487,7 +2573,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial15
+          name: m127f-susfs-stage5-trial16
           if-no-files-found: warn
           path: |
             Image
