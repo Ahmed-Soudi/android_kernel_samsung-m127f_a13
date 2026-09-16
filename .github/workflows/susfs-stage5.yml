@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 20
+name: SUSFS Samsung 4.19 Stage 5 - Trial 21
 
 permissions:
   contents: write
@@ -2571,6 +2571,135 @@ jobs:
           } > .ci/stage5/trial20-faccessat-419-adaptation.txt
 
 
+      - name: Bridge KSUN 3.3 faccessat ABI for Samsung 4.19
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          op=Path("fs/open.c")
+          x=op.read_text()
+
+          # Trial20 proved the VFS path compiles but link failed because our KSUN 3.3.0
+          # baseline still exposes syscall-regs sucompat, while current SUSFS expects the
+          # manually-patched VFS ABI. Do not reference the __read_mostly bool directly
+          # from fs/open.o on this Samsung linker layout; use tiny KSUN-side helpers.
+          x=x.replace(
+          '''extern struct static_key_true ksu_su_compat_enabled;
+          extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+          extern int ksu_handle_faccessat(int *dfd, struct filename **filename,
+                                         int *mode, int *__unused_flags);
+          ''',
+          '''extern bool ksu_sucompat_enabled_samsung419(void);
+          extern int ksu_handle_faccessat_samsung419(int *dfd,
+                                                     const char __user **filename_user,
+                                                     int *mode, int *__unused_flags);
+          ''')
+
+          old='''\tif (!susfs_is_current_proc_no_su() &&
+          \t    static_branch_likely(&ksu_su_compat_enabled) &&
+          \t    unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
+          \t\tksu_handle_faccessat(&dfd, &susfs_fname, &mode, NULL);
+
+          \tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);
+          '''
+          new='''\tif (!susfs_is_current_proc_no_su() &&
+          \t    ksu_sucompat_enabled_samsung419()) {
+          \t\tconst char __user *susfs_user_filename = filename;
+
+          \t\tksu_handle_faccessat_samsung419(&dfd, &susfs_user_filename,
+          \t\t\t\t\t       &mode, NULL);
+          \t\tputname(susfs_fname);
+          \t\tsusfs_fname = getname_flags(susfs_user_filename, lookup_flags, NULL);
+          \t\tif (IS_ERR(susfs_fname)) {
+          \t\t\tres = PTR_ERR(susfs_fname);
+          \t\t\tgoto out;
+          \t\t}
+          \t}
+
+          \tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);
+          '''
+          if old not in x:
+              raise SystemExit("Trial19 faccessat condition anchor missing")
+          x=x.replace(old,new,1)
+          op.write_text(x)
+
+          sp=Path("KernelSU-Next/kernel/feature/sucompat.c")
+          u=sp.read_text()
+          marker="/* susfs_stage5_trial21_samsung419_vfs_facessat_bridge */"
+          if marker not in u:
+              anchor='static const char su_path[] = SU_PATH;\n'
+              if anchor not in u:
+                  raise SystemExit("KSUN su_path anchor missing")
+              bridge=r'''
+          /* susfs_stage5_trial21_samsung419_vfs_facessat_bridge
+           *
+           * Samsung 4.19 manual-VFS bridge for SUSFS 2.3.0.  KSUN 3.3.0's stock
+           * sucompat path on this tree is syscall-regs based, so expose the narrow
+           * current-SUSFS faccessat ABI without replacing the proven syscall bridge.
+           */
+          bool ksu_sucompat_enabled_samsung419(void)
+          {
+          	return READ_ONCE(ksu_su_compat_enabled);
+          }
+
+          int ksu_handle_faccessat_samsung419(int *dfd,
+          				    const char __user **filename_user,
+          				    int *mode, int *__unused_flags)
+          {
+          	static const char sh_path[] = SH_PATH;
+          	char path[sizeof(su_path) + 1] = { 0 };
+          	char __user *replacement;
+
+          	if (!filename_user || !*filename_user)
+          		return 0;
+          	if (!ksu_is_allow_uid_for_current(current_uid().val))
+          		return 0;
+
+          	if (strncpy_from_user(path, *filename_user, sizeof(path)) < 0)
+          		return 0;
+
+          	if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
+          		replacement = userspace_stack_buffer(sh_path, sizeof(sh_path));
+          		if (replacement)
+          			*filename_user = replacement;
+          	}
+          	return 0;
+          }
+          '''
+              u=u.replace(anchor,anchor+bridge,1)
+          sp.write_text(u)
+          PY
+
+          grep -q 'susfs_stage5_trial21_samsung419_vfs_facessat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'bool ksu_sucompat_enabled_samsung419(void)' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'int ksu_handle_faccessat_samsung419' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'ksu_sucompat_enabled_samsung419()' fs/open.c
+          grep -q 'ksu_handle_faccessat_samsung419(&dfd, &susfs_user_filename' fs/open.c
+          ! grep -q 'static_branch_likely(&ksu_su_compat_enabled)' fs/open.c
+          ! grep -q 'extern struct static_key_true ksu_su_compat_enabled' fs/open.c
+          ! grep -q 'ksu_handle_faccessat(&dfd, &susfs_fname' fs/open.c
+
+          # Keep Trial20's 4.19 filename_lookup adaptation.
+          grep -q '^int filename_lookup(' fs/namei.c
+          grep -q 'int filename_lookup(int dfd, struct filename \*name, unsigned flags,' fs/internal.h
+
+          # Keep prior semantic locks.
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 21"
+           echo "Trial 20 reached vmlinux link."
+           echo "Fixed undefined ksu_handle_faccessat by adding a narrow Samsung-4.19 KSUN 3.3 VFS ABI bridge."
+           echo "Avoided direct fs/open.o access to KSUN __read_mostly sucompat flag, fixing AArch64 relocation truncation."
+           echo "Official SUSFS 2.3.0 faccessat intent retained: no-su bypass plus /system/bin/su redirection for allowed KSU uid."
+           echo "Stock KSUN syscall-regs bridge remains intact."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial21-ksun-faccessat-abi.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2847,7 +2976,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial20-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial21-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2873,7 +3002,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 20 adapt faccessat filename lookup for Samsung 4.19"
+          git commit -m "CI: SUSFS Stage 5 Trial 21 bridge KSUN 3.3 faccessat ABI"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2920,7 +3049,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial20
+          name: m127f-susfs-stage5-trial21
           if-no-files-found: warn
           path: |
             Image
