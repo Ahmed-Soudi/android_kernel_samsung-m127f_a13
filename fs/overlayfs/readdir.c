@@ -916,7 +916,19 @@ static int ovl_dir_open(struct inode *inode, struct file *file)
 	if (!od)
 		return -ENOMEM;
 
+#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+	/* ovl_susfs_samsung419 */
+	ovl_path_lowerdata(file->f_path.dentry, &realpath);
+	if (likely(realpath.mnt && realpath.dentry)) {
+		type = __OVL_PATH_UPPER;
+		goto susfs_ovl_open_real;
+	}
+#endif
+
 	type = ovl_path_real(file->f_path.dentry, &realpath);
+#ifdef CONFIG_KSU_SUSFS_SUS_OVERLAYFS
+susfs_ovl_open_real:
+#endif
 	realfile = ovl_dir_open_realfile(file, &realpath);
 	if (IS_ERR(realfile)) {
 		kfree(od);
