@@ -1,0 +1,106 @@
+diff --git a/kernel/Kconfig b/kernel/Kconfig
+index c7701661..a81d5124 100644
+--- a/kernel/Kconfig
++++ b/kernel/Kconfig
+@@ -35,4 +35,79 @@ config KSU_DISABLE_POLICY
+ 	  Escalation will always use the default full root profile, and
+ 	  non-root handling will follow the global umount policy only.
+ 
++
++menu "KernelSU - SUSFS Stage4 compile probe"
++
++config KSU_SUSFS
++    bool "SUSFS Stage4 compile probe"
++    depends on KSU
++    default y
++
++config KSU_SUSFS_SUS_PATH
++    bool "SUS path"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_MOUNT
++    bool "SUS mount"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
++    bool "Auto add KSU default mounts"
++    depends on KSU_SUSFS_SUS_MOUNT
++    default y
++
++config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
++    bool "Auto add bind mounts"
++    depends on KSU_SUSFS_SUS_MOUNT
++    default y
++
++config KSU_SUSFS_SUS_KSTAT
++    bool "SUS kstat"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_OVERLAYFS
++    bool "SUS overlayfs"
++    depends on KSU_SUSFS
++    default n
++
++config KSU_SUSFS_TRY_UMOUNT
++    bool "TRY_UMOUNT"
++    depends on KSU_SUSFS
++    default n
++
++config KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
++    bool "Auto add bind mounts to TRY_UMOUNT"
++    depends on KSU_SUSFS_TRY_UMOUNT
++    default n
++
++config KSU_SUSFS_SPOOF_UNAME
++    bool "Spoof uname"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_ENABLE_LOG
++    bool "SUSFS log"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
++    bool "Hide KSU/SUSFS kallsyms"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
++    bool "Spoof cmdline/bootconfig"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_OPEN_REDIRECT
++    bool "Open redirect"
++    depends on KSU_SUSFS
++    default y
++
++endmenu
++
+ endmenu
+diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
+index 88c79568..f11158a6 100644
+--- a/kernel/selinux/selinux.c
++++ b/kernel/selinux/selinux.c
+@@ -226,3 +226,17 @@ void escape_to_root_for_adb_root(void)
+     }
+     commit_creds(cred);
+ }
++
++
++#ifdef CONFIG_KSU_SUSFS
++/* Stage 5 2.3.0 compile-probe adapters for Samsung 4.19. */
++bool susfs_is_current_ksu_domain(void)
++{
++    return is_ksu_domain();
++}
++
++bool susfs_is_current_zygote_domain(void)
++{
++    return is_zygote(current_cred());
++}
++#endif
