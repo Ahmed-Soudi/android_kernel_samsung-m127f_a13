@@ -26,6 +26,9 @@
 #include <linux/bootmem.h>
 #include <linux/task_work.h>
 #include <linux/sched/task.h>
+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_TRY_UMOUNT)
+#include <linux/susfs_def.h>
+#endif
 #include <linux/fslog.h>
 
 #ifdef CONFIG_KDP_NS
@@ -35,7 +38,106 @@
 #include "pnode.h"
 #include "internal.h"
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KDP_NS
+#define SUSFS_MNT_ID_BACKUP(m) ((m)->mnt->susfs_mnt_id_backup)
+#else
+#define SUSFS_MNT_ID_BACKUP(m) ((m)->mnt.susfs_mnt_id_backup)
+#endif
+#endif
+/* susfs_namespace_generic_cleanup_samsung419 */
+
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+extern bool susfs_is_current_ksu_domain(void);
+extern bool susfs_is_current_zygote_domain(void);
+
+
+#define CL_COPY_MNT_NS BIT(25)
+#endif
+
+
+
+#ifdef CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
+extern void susfs_auto_add_try_umount_for_bind_mount(
+    struct path *path);
+bool susfs_is_auto_add_try_umount_for_bind_mount_enabled = true;
+#endif
+
 /* Maximum number of mounts in a mount namespace */
+
+#ifdef CONFIG_KSU_SUSFS
+/* susfs_stage5_trial13_non_sus_mount_semantics */
+static inline struct vfsmount *susfs_mount_to_vfsmnt_419(struct mount *mnt)
+{
+#ifdef CONFIG_KDP_NS
+	return mnt->mnt;
+#else
+	return &mnt->mnt;
+#endif
+}
+
+int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt)
+{
+	struct mount *mnt = orig_mnt;
+	int mnt_id;
+
+	if (!mnt)
+		return 0;
+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+		return mnt->mnt_id;
+
+	lock_mount_hash();
+	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent &&
+	       mnt->mnt_id >= DEFAULT_KSU_MNT_ID;
+	     mnt = mnt->mnt_parent)
+		;
+	mnt_id = mnt ? mnt->mnt_id : 0;
+	unlock_mount_hash();
+	return mnt_id;
+}
+
+struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt)
+{
+	struct mount *mnt;
+	struct vfsmount *result;
+
+	if (!vfsmnt)
+		return NULL;
+	mnt = real_mount(vfsmnt);
+	if (!mnt)
+		return vfsmnt;
+
+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID) {
+		result = susfs_mount_to_vfsmnt_419(mnt);
+		mntget(result);
+		dget(result->mnt_root);
+		return result;
+	}
+
+	lock_mount_hash();
+	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent &&
+	       mnt->mnt_id >= DEFAULT_KSU_MNT_ID;
+	     mnt = mnt->mnt_parent)
+		;
+
+	if (!mnt) {
+		unlock_mount_hash();
+		return vfsmnt;
+	}
+
+	result = susfs_mount_to_vfsmnt_419(mnt);
+	mntget(result);
+	if (!result->mnt_root || IS_ERR(result->mnt_root)) {
+		mntput(result);
+		unlock_mount_hash();
+		return vfsmnt;
+	}
+	dget(result->mnt_root);
+	unlock_mount_hash();
+	return result;
+}
+#endif
+
 unsigned int sysctl_mount_max __read_mostly = 100000;
 
 /* @fs.sec -- c4d165e8cb5ea1cc14cdedb9eab23efd642d4d5f -- */
@@ -160,6 +262,18 @@ static inline struct hlist_head *mp_hash(struct dentry *dentry)
 	return &mountpoint_hashtable[tmp & mp_hash_mask];
 }
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+// Our own mnt_alloc_id() that assigns mnt_id starting from DEFAULT_KSU_MNT_ID
+static int susfs_mnt_alloc_id(struct mount *mnt)
+{
+	int res = ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL);
+
+	if (res < 0)
+		return res;
+	mnt->mnt_id = res;
+	return 0;
+}
+#endif
 static int mnt_alloc_id(struct mount *mnt)
 {
 	int res = ida_alloc(&mnt_id_ida, GFP_KERNEL);
@@ -172,6 +286,23 @@ static int mnt_alloc_id(struct mount *mnt)
 
 static void mnt_free_id(struct mount *mnt)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+#ifdef CONFIG_KDP_NS
+	if (unlikely(mnt->mnt->mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+		return;
+#else
+	if (unlikely(mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+		return;
+#endif
+	// Lastly if 'SUSFS_MNT_ID_BACKUP(mnt)' is not 0, then it contains a backup origin mnt_id
+	// so we free it in the original way
+	if (likely(SUSFS_MNT_ID_BACKUP(mnt))) {
+		// If SUSFS_MNT_ID_BACKUP(mnt) is not zero, it means mnt->mnt_id is spoofed,
+		// so here we return the original mnt_id for being freed.
+		ida_free(&mnt_id_ida, SUSFS_MNT_ID_BACKUP(mnt));
+		return;
+	}
+#endif
 	ida_free(&mnt_id_ida, mnt->mnt_id);
 }
 
@@ -180,7 +311,20 @@ static void mnt_free_id(struct mount *mnt)
  */
 static int mnt_alloc_group_id(struct mount *mnt)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	int res;
+
+	// Check if mnt has sus mnt_id
+	if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+		// If so, assign a sus mnt_group id DEFAULT_KSU_MNT_GROUP_ID from susfs_mnt_group_ida
+		res = ida_alloc_min(&mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID, GFP_KERNEL);
+		goto bypass_orig_flow;
+	}
+	res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
+bypass_orig_flow:
+#else
 	int res = ida_alloc_min(&mnt_group_ida, 1, GFP_KERNEL);
+#endif
 
 	if (res < 0)
 		return res;
@@ -193,6 +337,15 @@ static int mnt_alloc_group_id(struct mount *mnt)
  */
 void mnt_release_group_id(struct mount *mnt)
 {
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	// If mnt->mnt_group_id >= DEFAULT_KSU_MNT_GROUP_ID, it means 'mnt' is also sus mount,
+	// then we free the mnt->mnt_group_id from susfs_mnt_group_ida
+	if (mnt->mnt_group_id >= DEFAULT_KSU_MNT_GROUP_ID) {
+		ida_free(&mnt_group_ida, mnt->mnt_group_id);
+		mnt->mnt_group_id = 0;
+		return;
+	}
+#endif
 	ida_free(&mnt_group_ida, mnt->mnt_group_id);
 	mnt->mnt_group_id = 0;
 }
@@ -242,13 +395,32 @@ static void drop_mountpoint(struct fs_pin *p)
 #endif
 }
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+static struct mount *alloc_vfsmnt(const char *name,
+				 bool should_spoof, int custom_mnt_id)
+#else
 static struct mount *alloc_vfsmnt(const char *name)
+#endif
 {
 	struct mount *mnt = kmem_cache_zalloc(mnt_cache, GFP_KERNEL);
 	if (mnt) {
 		int err;
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		/* susfs_alloc_vfsmnt_samsung419 */
+		if (should_spoof) {
+			if (custom_mnt_id) {
+				mnt->mnt_id = custom_mnt_id;
+				err = 0;
+			} else {
+				err = susfs_mnt_alloc_id(mnt);
+			}
+		} else {
+			err = mnt_alloc_id(mnt);
+		}
+#else
 		err = mnt_alloc_id(mnt);
+#endif
 		if (err)
 			goto out_free_cache;
 #ifdef CONFIG_KDP_NS
@@ -732,6 +904,33 @@ struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
 	struct hlist_head *head = m_hash(mnt, dentry);
 	struct mount *p;
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* susfs_stage5_trial16_zygote_lookup_semantics
+	 *
+	 * SUSFS 2.3.0 temporary SUS_MOUNT handling for processes already
+	 * marked umounted (including zygote_next descendants): do not return
+	 * a KSU high-ID mount from lookup; resolve only the legitimate mount.
+	 *
+	 * Samsung CONFIG_KDP_NS stores struct mount::mnt as a pointer, so the
+	 * parent-vfsmount comparison must not use upstream's &parent->mnt form.
+	 */
+	if (susfs_is_current_proc_umounted()) {
+		hlist_for_each_entry_rcu(p, head, mnt_hash) {
+#ifdef CONFIG_KDP_NS
+			if (p->mnt_id < DEFAULT_KSU_MNT_ID &&
+			    p->mnt_parent->mnt == mnt &&
+			    p->mnt_mountpoint == dentry)
+#else
+			if (p->mnt_id < DEFAULT_KSU_MNT_ID &&
+			    &p->mnt_parent->mnt == mnt &&
+			    p->mnt_mountpoint == dentry)
+#endif
+				return p;
+		}
+		return NULL;
+	}
+#endif
+
 	hlist_for_each_entry_rcu(p, head, mnt_hash)
 #ifdef CONFIG_KDP_NS
 		if (p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
@@ -1084,12 +1283,25 @@ struct vfsmount *
 vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void *data)
 {
 	struct mount *mnt;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* susfs_vfs_kern_mount_samsung419 */
+	struct mount *susfs_iter;
+	struct mnt_namespace *susfs_ns;
+	int susfs_fake_mnt_id;
+#endif
 	struct dentry *root;
 
 	if (!type)
 		return ERR_PTR(-ENODEV);
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (unlikely(susfs_is_current_ksu_domain()))
+		mnt = alloc_vfsmnt(name, true, 0);
+	else
+		mnt = alloc_vfsmnt(name, false, 0);
+#else
 	mnt = alloc_vfsmnt(name);
+#endif
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
 
@@ -1131,6 +1343,26 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void 
 	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
 #endif
 	mnt->mnt_parent = mnt;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (susfs_is_current_zygote_domain()) {
+		susfs_ns = current->nsproxy->mnt_ns;
+		if (susfs_ns) {
+			get_mnt_ns(susfs_ns);
+			rcu_read_lock();
+			susfs_fake_mnt_id = list_first_entry(
+				&susfs_ns->list, struct mount, mnt_list)->mnt_id;
+			list_for_each_entry_rcu(susfs_iter,
+				&susfs_ns->list, mnt_list) {
+				if (susfs_iter->mnt_id < DEFAULT_KSU_MNT_ID)
+					susfs_fake_mnt_id++;
+			}
+			SUSFS_MNT_ID_BACKUP(mnt) = READ_ONCE(mnt->mnt_id);
+			WRITE_ONCE(mnt->mnt_id, susfs_fake_mnt_id);
+			rcu_read_unlock();
+			put_mnt_ns(susfs_ns);
+		}
+	}
+#endif
 	lock_mount_hash();
 	list_add_tail(&mnt->mnt_instance, &root->d_sb->s_mounts);
 	unlock_mount_hash();
@@ -1168,8 +1400,30 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 #endif
 	struct mount *mnt;
 	int err;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* susfs_clone_mnt_samsung419 */
+	struct mount *susfs_iter;
+	struct mnt_namespace *susfs_ns;
+	int susfs_fake_mnt_id;
+	bool susfs_ksu = susfs_is_current_ksu_domain();
+	bool susfs_zygote = susfs_is_current_zygote_domain();
+#endif
 
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (unlikely(susfs_ksu)) {
+		if (!(flag & CL_COPY_MNT_NS)) {
+			mnt = alloc_vfsmnt(old->mnt_devname, true, 0);
+		} else {
+			mnt = alloc_vfsmnt(old->mnt_devname, true, old->mnt_id);
+		}
+	} else if (old->mnt_id >= DEFAULT_KSU_MNT_ID) {
+		mnt = alloc_vfsmnt(old->mnt_devname, true, 0);
+	} else {
+		mnt = alloc_vfsmnt(old->mnt_devname, false, 0);
+	}
+#else
 	mnt = alloc_vfsmnt(old->mnt_devname);
+#endif
 	if (!mnt)
 		return ERR_PTR(-ENOMEM);
 
@@ -1218,10 +1472,16 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 	if ((flag & CL_UNPRIVILEGED) &&
 	    (!(flag & CL_EXPIRE) || list_empty(&old->mnt_expire)))
 		ns_flags |= MNT_LOCKED;
+	if (susfs_ksu && (flag & CL_COPY_MNT_NS))
+		ns_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
 	kdp_assign_mnt_flags(mnt->mnt, ns_flags);
 #else
 	mnt->mnt.mnt_flags = old->mnt.mnt_flags;
 	mnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (susfs_ksu && (flag & CL_COPY_MNT_NS))
+		mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+#endif
 	/* Don't allow unprivileged users to change mount flags */
 	if (flag & CL_UNPRIVILEGED) {
 		mnt->mnt.mnt_flags |= MNT_LOCK_ATIME;
@@ -1255,6 +1515,26 @@ static struct mount *clone_mnt(struct mount *old, struct dentry *root,
 	mnt->mnt_mountpoint = mnt->mnt.mnt_root;
 #endif
 	mnt->mnt_parent = mnt;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (likely(susfs_zygote) && !(flag & CL_COPY_MNT_NS)) {
+		susfs_ns = current->nsproxy->mnt_ns;
+		if (susfs_ns) {
+			get_mnt_ns(susfs_ns);
+			rcu_read_lock();
+			susfs_fake_mnt_id = list_first_entry(
+				&susfs_ns->list, struct mount, mnt_list)->mnt_id;
+			list_for_each_entry_rcu(susfs_iter,
+				&susfs_ns->list, mnt_list) {
+				if (susfs_iter->mnt_id < DEFAULT_KSU_MNT_ID)
+					susfs_fake_mnt_id++;
+			}
+			SUSFS_MNT_ID_BACKUP(mnt) = READ_ONCE(mnt->mnt_id);
+			WRITE_ONCE(mnt->mnt_id, susfs_fake_mnt_id);
+			rcu_read_unlock();
+			put_mnt_ns(susfs_ns);
+		}
+	}
+#endif
 	lock_mount_hash();
 	list_add_tail(&mnt->mnt_instance, &sb->s_mounts);
 	unlock_mount_hash();
@@ -2012,6 +2292,10 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 					int flag)
 {
 	struct mount *res, *p, *q, *r, *parent;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* susfs_copy_tree_samsung419 */
+	bool susfs_zygote = susfs_is_current_zygote_domain();
+#endif
 
 	if (!(flag & CL_COPY_UNBINDABLE) && IS_MNT_UNBINDABLE(mnt))
 		return ERR_PTR(-EINVAL);
@@ -2028,6 +2312,10 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 	p = mnt;
 	list_for_each_entry(r, &mnt->mnt_mounts, mnt_child) {
 		struct mount *s;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		int susfs_attach_mnt_count = 0;
+#endif
+
 		if (!is_subdir(r->mnt_mountpoint, dentry))
 			continue;
 
@@ -2072,6 +2360,14 @@ struct mount *copy_tree(struct mount *mnt, struct dentry *dentry,
 			lock_mount_hash();
 			list_add_tail(&q->mnt_list, &res->mnt_list);
 			attach_mnt(q, parent, p->mnt_mp);
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+			if (susfs_zygote &&
+			    !(flag & CL_COPY_MNT_NS) &&
+			    q->mnt_id < DEFAULT_KSU_MNT_ID) {
+				susfs_attach_mnt_count++;
+				q->mnt_id += susfs_attach_mnt_count;
+			}
+#endif
 			unlock_mount_hash();
 		}
 	}
@@ -2556,6 +2852,18 @@ static int do_loopback(struct path *path, const char *old_name,
 		umount_tree(mnt, UMOUNT_SYNC);
 		unlock_mount_hash();
 	}
+#if defined(CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT) || defined(CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT)
+	// Check if bind mounted path should be hidden and umounted automatically.
+	// And we target only process with ksu domain.
+	if (susfs_is_current_ksu_domain()) {
+#if defined(CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT)
+		if (susfs_is_auto_add_try_umount_for_bind_mount_enabled) {
+			susfs_auto_add_try_umount_for_bind_mount(path);
+		}
+#endif
+	}
+#endif // #if defined(CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT) || defined(CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT)
+
 out2:
 	unlock_mount(mp);
 out:
@@ -3285,6 +3593,11 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 	struct mount *old;
 	struct mount *new;
 	int copy_flags;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	/* susfs_copy_mnt_ns_samsung419 */
+	bool susfs_zygote = susfs_is_current_zygote_domain();
+	int susfs_last_mnt_id = 0;
+#endif
 
 	BUG_ON(!ns);
 
@@ -3304,6 +3617,9 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 	copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;
 	if (user_ns != ns->user_ns)
 		copy_flags |= CL_SHARED_TO_SLAVE | CL_UNPRIVILEGED;
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	copy_flags |= CL_COPY_MNT_NS;
+#endif
 #ifdef CONFIG_KDP_NS
 	new = copy_tree(old, old->mnt->mnt_root, copy_flags);
 #else
@@ -3360,6 +3676,18 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 #endif
 			p = next_mnt(p, old);
 	}
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+	if (susfs_zygote && !list_empty(&new_ns->list)) {
+		susfs_last_mnt_id = list_first_entry(
+			&new_ns->list, struct mount, mnt_list)->mnt_id;
+		list_for_each_entry(q, &new_ns->list, mnt_list) {
+			if (unlikely(q->mnt_id >= DEFAULT_KSU_MNT_ID))
+				continue;
+			SUSFS_MNT_ID_BACKUP(q) = q->mnt_id;
+			q->mnt_id = susfs_last_mnt_id++;
+		}
+	}
+#endif
 	namespace_unlock();
 
 	if (rootmnt)
@@ -3971,3 +4299,37 @@ const struct proc_ns_operations mntns_operations = {
 	.install	= mntns_install,
 	.owner		= mntns_owner,
 };
+
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+extern void susfs_try_umount_all(uid_t uid);
+void susfs_run_try_umount_for_current_mnt_ns(void) {
+	struct mount *mnt;
+	struct mnt_namespace *mnt_ns;
+
+	mnt_ns = current->nsproxy->mnt_ns;
+	// Lock the namespace
+	namespace_lock();
+	list_for_each_entry(mnt, &mnt_ns->list, mnt_list) {
+		// Change the sus mount to be private
+		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+			change_mnt_propagation(mnt, MS_PRIVATE);
+		}
+	}
+	// Unlock the namespace
+	namespace_unlock();
+	susfs_try_umount_all(current_uid().val);
+}
+#endif
+#ifdef CONFIG_KSU_SUSFS
+bool susfs_is_mnt_devname_ksu(struct path *path) {
+	struct mount *mnt;
+
+	if (path && path->mnt) {
+		mnt = real_mount(path->mnt);
+		if (mnt && mnt->mnt_devname && !strcmp(mnt->mnt_devname, "KSU")) {
+			return true;
+		}
+	}
+	return false;
+}
+#endif
