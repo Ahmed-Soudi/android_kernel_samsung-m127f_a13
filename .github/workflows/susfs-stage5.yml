@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 21
+name: SUSFS Samsung 4.19 Stage 5 - Trial 22
 
 permissions:
   contents: write
@@ -2700,6 +2700,151 @@ jobs:
           } > .ci/stage5/trial21-ksun-faccessat-abi.txt
 
 
+      - name: Port official 2.3.0 stat no-su semantics
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          sp=Path("fs/stat.c")
+          x=sp.read_text()
+
+          # Samsung 4.19 already has SUSFS headers for kstat/mount. The current 2.3.0
+          # stat path also needs the generic SUSFS process-state helpers.
+          x=x.replace(
+          '#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MOUNT)\n',
+          '#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MOUNT)\n',
+          1)
+
+          # fs/stat.c can reuse filename_lookup made fs-internal by Trial20.
+          anchor='''int vfs_statx(int dfd, const char __user *filename, int flags,
+          \t      struct kstat *stat, u32 request_mask)
+          {
+          '''
+          externs='''#ifdef CONFIG_KSU_SUSFS
+          extern bool ksu_sucompat_enabled_samsung419(void);
+          extern int ksu_handle_stat_samsung419(int *dfd,
+                                                const char __user **filename_user,
+                                                int *flags);
+          #endif
+
+          '''
+          if 'extern int ksu_handle_stat_samsung419' not in x:
+              if anchor not in x: raise SystemExit("vfs_statx anchor missing")
+              x=x.replace(anchor,externs+anchor,1)
+
+          decl='\tunsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;\n'
+          if 'struct filename *susfs_stat_fname = NULL;' not in x:
+              start=x.find(anchor)
+              end=x.find('\n}\nEXPORT_SYMBOL(vfs_statx);',start)
+              body=x[start:end]
+              if decl not in body: raise SystemExit("vfs_statx lookup_flags declaration missing")
+              body=body.replace(decl,decl+'''#ifdef CONFIG_KSU_SUSFS
+          \tstruct filename *susfs_stat_fname = NULL;
+          #endif
+          ''',1)
+              x=x[:start]+body+x[end:]
+
+          old='''retry:
+          \terror = user_path_at(dfd, filename, lookup_flags, &path);
+          \tif (error)
+          '''
+          new='''retry:
+          #ifdef CONFIG_KSU_SUSFS
+          \t/* susfs_stage5_trial22_inline_stat_no_su */
+          \tsusfs_stat_fname = getname_flags(filename, lookup_flags, NULL);
+          \tif (IS_ERR(susfs_stat_fname)) {
+          \t\terror = PTR_ERR(susfs_stat_fname);
+          \t\tgoto out;
+          \t}
+
+          \tif (!susfs_is_current_proc_no_su() &&
+          \t    ksu_sucompat_enabled_samsung419()) {
+          \t\tconst char __user *susfs_stat_user_filename = filename;
+
+          \t\tksu_handle_stat_samsung419(&dfd, &susfs_stat_user_filename, &flags);
+          \t\tputname(susfs_stat_fname);
+          \t\tsusfs_stat_fname = getname_flags(susfs_stat_user_filename,
+          \t\t\t\t\t\tlookup_flags, NULL);
+          \t\tif (IS_ERR(susfs_stat_fname)) {
+          \t\t\terror = PTR_ERR(susfs_stat_fname);
+          \t\t\tgoto out;
+          \t\t}
+          \t}
+
+          \terror = filename_lookup(dfd, susfs_stat_fname, lookup_flags, &path, NULL);
+          \tputname(susfs_stat_fname);
+          #else
+          \terror = user_path_at(dfd, filename, lookup_flags, &path);
+          #endif
+          \tif (error)
+          '''
+          if 'susfs_stage5_trial22_inline_stat_no_su' not in x:
+              if old not in x: raise SystemExit("vfs_statx retry anchor missing")
+              x=x.replace(old,new,1)
+          sp.write_text(x)
+
+          kp=Path("KernelSU-Next/kernel/feature/sucompat.c")
+          u=kp.read_text()
+          marker="/* susfs_stage5_trial22_samsung419_vfs_stat_bridge */"
+          if marker not in u:
+              insert_before="int ksu_handle_faccessat_samsung419(int *dfd,\n"
+              pos=u.find(insert_before)
+              if pos < 0: raise SystemExit("Trial21 faccessat bridge anchor missing")
+              bridge=r'''/* susfs_stage5_trial22_samsung419_vfs_stat_bridge */
+          int ksu_handle_stat_samsung419(int *dfd,
+          			       const char __user **filename_user,
+          			       int *flags)
+          {
+          	static const char sh_path[] = SH_PATH;
+          	char path[sizeof(su_path) + 1] = { 0 };
+          	char __user *replacement;
+
+          	if (!filename_user || !*filename_user)
+          		return 0;
+          	if (!ksu_is_allow_uid_for_current(current_uid().val))
+          		return 0;
+
+          	if (strncpy_from_user(path, *filename_user, sizeof(path)) < 0)
+          		return 0;
+
+          	if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
+          		replacement = userspace_stack_buffer(sh_path, sizeof(sh_path));
+          		if (replacement)
+          			*filename_user = replacement;
+          	}
+          	return 0;
+          }
+
+          '''
+              u=u[:pos]+bridge+u[pos:]
+          kp.write_text(u)
+          PY
+
+          grep -q 'susfs_stage5_trial22_inline_stat_no_su' fs/stat.c
+          grep -q 'susfs_is_current_proc_no_su()' fs/stat.c
+          grep -q 'ksu_sucompat_enabled_samsung419()' fs/stat.c
+          grep -q 'ksu_handle_stat_samsung419(&dfd, &susfs_stat_user_filename, &flags)' fs/stat.c
+          grep -q 'filename_lookup(dfd, susfs_stat_fname, lookup_flags, &path, NULL)' fs/stat.c
+          grep -q 'susfs_stage5_trial22_samsung419_vfs_stat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+
+          # Trial20/21 locks.
+          grep -q '^int filename_lookup(' fs/namei.c
+          grep -q 'ksu_handle_faccessat_samsung419' fs/open.c
+          grep -q 'susfs_stage5_trial21_samsung419_vfs_facessat_bridge' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 22"
+           echo "Trial 21 green baseline verified."
+           echo "Ported official SUSFS 2.3.0 vfs_statx no-su/sucompat flow to Samsung 4.19."
+           echo "Added narrow KSUN 3.3 Samsung-4.19 stat bridge matching Trial21 faccessat strategy."
+           echo "Reuses Trial20 fs-internal filename_lookup adaptation."
+           echo "Next after green: SUS_MAP / OPEN_REDIRECT parity + final flash-candidate audit."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial22-stat-no-su.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2976,7 +3121,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial21-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial22-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3002,7 +3147,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 21 bridge KSUN 3.3 faccessat ABI"
+          git commit -m "CI: SUSFS Stage 5 Trial 22 port 2.3.0 stat no-su semantics"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3049,7 +3194,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial21
+          name: m127f-susfs-stage5-trial22
           if-no-files-found: warn
           path: |
             Image
