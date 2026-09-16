@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 9
+name: SUSFS Samsung 4.19 Stage 5 - Trial 10
 
 permissions:
   contents: write
@@ -1750,20 +1750,37 @@ jobs:
 
           tar -xzf .ci/stage5/official230/upstream.tar.gz             -C .ci/stage5/official230/src --strip-components=1
 
-          kernel_patch=$(find .ci/stage5/official230/src/kernel_patches -maxdepth 1 -type f             -name '50_add_susfs_in_kernel*5.15*.patch' -print -quit)
-          ksu_patch=$(find .ci/stage5/official230/src/kernel_patches/KernelSU -maxdepth 1 -type f             -name '10_enable_susfs_for_ksu.patch' -print -quit)
+          # Do not assume the branch keeps the kernel version in the patch
+          # filename. Trial 9 proved the archive is valid but this overly
+          # specific "*5.15*" filename filter returned nothing.
+          mapfile -t kernel_patches < <(find .ci/stage5/official230/src/kernel_patches -maxdepth 1 -type f -name '50_add_susfs_in_kernel*.patch' -print | sort)
+          mapfile -t ksu_patches < <(find .ci/stage5/official230/src/kernel_patches/KernelSU -maxdepth 1 -type f -name '10_enable_susfs_for_ksu*.patch' -print | sort)
 
-          test -n "$kernel_patch"
-          test -n "$ksu_patch"
+          printf 'kernel patch candidates:\n%s\n' "${kernel_patches[*]}"
+          printf 'KSU patch candidates:\n%s\n' "${ksu_patches[*]}"
+
+          if [ "${#kernel_patches[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one official 50_add_susfs_in_kernel patch, found ${#kernel_patches[@]}"
+            find .ci/stage5/official230/src/kernel_patches -maxdepth 2 -type f -print | sort
+            exit 1
+          fi
+          if [ "${#ksu_patches[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one official KernelSU integration patch, found ${#ksu_patches[@]}"
+            find .ci/stage5/official230/src/kernel_patches/KernelSU -maxdepth 1 -type f -print | sort
+            exit 1
+          fi
+
+          kernel_patch="${kernel_patches[0]}"
+          ksu_patch="${ksu_patches[0]}"
 
           cp "$kernel_patch" .ci/stage5/official230/kernel.patch
           cp "$ksu_patch" .ci/stage5/official230/ksu.patch
 
           required=(TIF_PROC_UMOUNTED TIF_PROC_NO_SU SUS_MAP zygote_next ksu_handle_faccessat ksu_handle_stat OPEN_REDIRECT hide_sus_mnts_for_non_su_procs susfs_get_non_sus_mnt_id_from_mnt susfs_get_non_sus_vfsmnt_from_vfsmnt)
-          : > .ci/stage5/trial9-semantic-audit.txt
+          : > .ci/stage5/trial10-semantic-audit.txt
           for sym in "${required[@]}"; do
             count=$(grep -h -F "$sym" .ci/stage5/official230/kernel.patch .ci/stage5/official230/ksu.patch | wc -l)
-            printf '%-48s %s\n' "$sym" "$count" | tee -a .ci/stage5/trial9-semantic-audit.txt
+            printf '%-48s %s\n' "$sym" "$count" | tee -a .ci/stage5/trial10-semantic-audit.txt
             if [ "$count" -eq 0 ]; then
               echo "::error::Expected 2.3.0 semantic marker absent: $sym"
               exit 1
@@ -1777,7 +1794,7 @@ jobs:
             echo
             echo '===== OFFICIAL 2.3.0 FOCUSED CONTEXT ====='
             grep -n -C 16 -E 'susfs_get_non_sus_mnt_id_from_mnt|susfs_get_non_sus_vfsmnt_from_vfsmnt|hide_sus_mnts_for_non_su_procs|TIF_PROC_UMOUNTED|TIF_PROC_NO_SU|zygote_next|SUS_MAP|OPEN_REDIRECT|ksu_handle_faccessat|ksu_handle_stat'               .ci/stage5/official230/kernel.patch .ci/stage5/official230/ksu.patch || true
-          } > .ci/stage5/trial9-official230-focused-context.txt
+          } > .ci/stage5/trial10-official230-focused-context.txt
 
           {
             echo '===== SAMSUNG 4.19 CURRENT INVENTORY ====='
@@ -1787,10 +1804,10 @@ jobs:
             done
             echo '===== TEMP BRIDGES ====='
             grep -R -n -E 'susfs_stage5_trial6_non_sus_mount_bridge|DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID|DEFAULT_SUS_MNT_GROUP_ID DEFAULT_KSU_MNT_GROUP_ID|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE'               fs include KernelSU-Next 2>/dev/null || true
-          } > .ci/stage5/trial9-samsung419-semantic-inventory.txt
+          } > .ci/stage5/trial10-samsung419-semantic-inventory.txt
 
           grep -q 'susfs_stage5_trial6_non_sus_mount_bridge' fs/namespace.c
-          printf '%s\n'             'Stage 5 Trial 9'             'Official SUSFS 2.3.0 semantic audit captured from branch archive.'             'Green Trial 7 compile baseline preserved.'             'NOT A FLASH CANDIDATE.'             > .ci/stage5/trial9-status.txt
+          printf '%s\n'             'Stage 5 Trial 10'             'Official SUSFS 2.3.0 semantic audit captured from branch archive.'             'Green Trial 7 compile baseline preserved.'             'NOT A FLASH CANDIDATE.'             > .ci/stage5/trial10-status.txt
 
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
@@ -2068,7 +2085,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial9-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial10-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2094,7 +2111,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 9 fix official 2.3.0 audit source"
+          git commit -m "CI: SUSFS Stage 5 Trial 10 discover official 2.3.0 kernel patch"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2141,7 +2158,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial9
+          name: m127f-susfs-stage5-trial10
           if-no-files-found: warn
           path: |
             Image
