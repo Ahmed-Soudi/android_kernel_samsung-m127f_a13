@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 17
+name: SUSFS Samsung 4.19 Stage 5 - Trial 18
 
 permissions:
   contents: write
@@ -2309,6 +2309,83 @@ jobs:
           } > .ci/stage5/trial17-official-ida-ownership.txt
 
 
+      - name: Audit remaining official 2.3.0 semantic gaps
+        run: |
+          set -euxo pipefail
+
+          mkdir -p .ci/stage5
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          roots=[Path("fs"),Path("include"),Path("KernelSU-Next/kernel")]
+          terms=[
+           "SUS_MAP","OPEN_REDIRECT","susfs_is_current_proc_no_su",
+           "hide_sus_mnts_for_non_su_procs","ksu_handle_faccessat","ksu_handle_stat",
+           "zygote_next","TIF_PROC_UMOUNTED","TIF_PROC_NO_SU",
+           "susfs_get_non_sus_mnt_id_from_mnt","susfs_get_non_sus_vfsmnt_from_vfsmnt",
+           "VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT","DEFAULT_KSU_MNT_ID",
+           "kernel_umount","static_branch","static_key"
+          ]
+          lines=[]
+          for term in terms:
+              hits=[]
+              for root in roots:
+                  if not root.exists(): continue
+                  for p in root.rglob("*"):
+                      if not p.is_file(): continue
+                      try: txt=p.read_text(errors="ignore")
+                      except: continue
+                      n=txt.count(term)
+                      if n: hits.append((str(p),n))
+              lines.append(f"\n===== {term} =====")
+              lines.append(f"TOTAL {sum(n for _,n in hits)}")
+              lines += [f"{n:4d} {p}" for p,n in hits[:80]]
+          Path(".ci/stage5/trial18-live-semantic-inventory.txt").write_text("\n".join(lines)+"\n")
+
+          # Capture focused contexts from the official 2.3.0 sources imported by the
+          # workflow. This trial is intentionally an audit gate before the final port
+          # batches: no guessed semantics.
+          off=Path(".ci/stage5/official230/src")
+          out=[]
+          if off.exists():
+              pats=re.compile(r"SUS_MAP|OPEN_REDIRECT|no_su|hide_sus_mnts|faccessat|ksu_handle_stat|zygote_next|kernel_umount|static_key")
+              for p in off.rglob("*"):
+                  if not p.is_file(): continue
+                  try: ls=p.read_text(errors="ignore").splitlines()
+                  except: continue
+                  matches=[i for i,l in enumerate(ls) if pats.search(l)]
+                  if not matches: continue
+                  out.append(f"\n===== {p} =====")
+                  seen=set()
+                  for i in matches[:120]:
+                      a=max(0,i-3); b=min(len(ls),i+4)
+                      key=(a,b)
+                      if key in seen: continue
+                      seen.add(key)
+                      out.extend(f"{j+1:6d}: {ls[j]}" for j in range(a,b))
+          Path(".ci/stage5/trial18-official-focused-context.txt").write_text("\n".join(out)+"\n")
+          PY
+
+          # Lock everything we already made semantic rather than compatibility-only.
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+          ! grep -R -n --include='*.c' --include='*.h' \
+            'DEFAULT_SUS_MNT_ID\|DEFAULT_SUS_MNT_GROUP_ID\|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' \
+            fs include
+
+          {
+           echo "Stage 5 Trial 18"
+           echo "Trial 17 green semantic baseline retained."
+           echo "Generated live-tree vs official-2.3.0 focused semantic inventories."
+           echo "Purpose: identify the exact remaining SUS_MAP / OPEN_REDIRECT / no-su / KSU hook gaps before flash-candidate integration."
+           echo "No Zygisk implementation is embedded."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial18-status.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2585,7 +2662,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial17-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial18-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2611,7 +2688,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 17 correct 2.3.0 dedicated mount IDA ownership"
+          git commit -m "CI: SUSFS Stage 5 Trial 18 audit remaining 2.3.0 semantic gaps"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2658,7 +2735,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial17
+          name: m127f-susfs-stage5-trial18
           if-no-files-found: warn
           path: |
             Image
