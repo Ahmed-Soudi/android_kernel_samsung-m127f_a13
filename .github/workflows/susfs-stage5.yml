@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 13
+name: SUSFS Samsung 4.19 Stage 5 - Trial 14
 
 permissions:
   contents: write
@@ -1939,6 +1939,130 @@ jobs:
           } > .ci/stage5/trial13-mount-semantics.txt
 
 
+      - name: Port official 2.3.0 mount ID allocation and unshare semantics
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("include/linux/susfs_def.h")
+          h = p.read_text()
+          for line in (
+              "#define DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID\n",
+              "#define DEFAULT_SUS_MNT_GROUP_ID DEFAULT_KSU_MNT_GROUP_ID\n",
+              "#define DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE DEFAULT_KSU_MNT_ID\n",
+          ):
+              h = h.replace(line, "")
+          p.write_text(h)
+
+          p = Path("fs/namespace.c")
+          x = p.read_text()
+
+          # Retire the 1.5.7 vocabulary. Current 2.3.0 uses the normal kernel IDAs
+          # with a high DEFAULT_KSU_* allocation range.
+          x = x.replace("DEFAULT_SUS_MNT_GROUP_ID", "DEFAULT_KSU_MNT_GROUP_ID")
+          x = x.replace("DEFAULT_SUS_MNT_ID", "DEFAULT_KSU_MNT_ID")
+
+          # The old 4.19 port used separate SUSFS IDAs. Current 2.3.0 deliberately
+          # allocates high IDs from the normal IDAs, so release paths remain coherent.
+          x = x.replace("&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID", "&mnt_id_ida, DEFAULT_KSU_MNT_ID")
+          x = x.replace("&susfs_mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID", "&mnt_group_ida, DEFAULT_KSU_MNT_GROUP_ID")
+          x = x.replace("ida_free(&susfs_mnt_id_ida, mnt->mnt_id);", "ida_free(&mnt_id_ida, mnt->mnt_id);")
+          x = x.replace("ida_free(&susfs_mnt_group_ida, mnt->mnt_group_id);", "ida_free(&mnt_group_ida, mnt->mnt_group_id);")
+
+          # Old unshare detection used a magic backup-ID sentinel. 2.3.0 marks the
+          # cloned vfsmount instead, because its reused ID was never allocated by IDA.
+          old = """\t// We should first check the 'SUSFS_MNT_ID_BACKUP(mnt)', see if it is DEFAULT_KSU_MNT_ID_FOR_KSU_PROC_UNSHARE
+          \t// if so, these mnt_id were not assigned by mnt_alloc_id() so we don't need to free it.
+          \tif (unlikely(SUSFS_MNT_ID_BACKUP(mnt) == DEFAULT_KSU_MNT_ID_FOR_KSU_PROC_UNSHARE)) {
+          \t\treturn;
+          \t}
+          """
+          if old in x:
+              x = x.replace(old, """#ifdef CONFIG_KDP_NS
+          \tif (unlikely(mnt->mnt->mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+          \t\treturn;
+          #else
+          \tif (unlikely(mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+          \t\treturn;
+          #endif
+          """, 1)
+          else:
+              raise SystemExit("old unshare mnt_free_id sentinel block not found")
+
+          # The high-ID branch is now the normal IDA too; no separate SUSFS free path.
+          old = """\t// Now we can check if its mnt_id is sus
+          \tif (unlikely(mnt->mnt_id >= DEFAULT_KSU_MNT_ID)) {
+          \t\tida_free(&mnt_id_ida, mnt->mnt_id);
+          \t\treturn;
+          \t}
+          """
+          x = x.replace(old, "", 1)
+
+          # Any spoof-backup ID still belongs to the normal IDA.
+          # Keep that Samsung 4.19 bookkeeping until the later zygote-spoof batch.
+
+          # Replace the old magic sentinel assignment in clone_mnt. The unshared clone
+          # keeps old->mnt_id; after flags are copied we mark it as not IDA-owned.
+          old = """\t\t\tif (mnt)
+          \t\t\t\tSUSFS_MNT_ID_BACKUP(mnt) =
+          \t\t\t\t\tDEFAULT_KSU_MNT_ID_FOR_KSU_PROC_UNSHARE;
+          """
+          if old not in x:
+              raise SystemExit("clone_mnt magic unshare sentinel assignment not found")
+          x = x.replace(old, "", 1)
+
+          # Mark the reused-ID clone after Samsung/non-Samsung mount flags are copied.
+          kdp = "\tkdp_assign_mnt_flags(mnt->mnt, ns_flags);\n"
+          if kdp not in x:
+              raise SystemExit("Samsung kdp_assign_mnt_flags anchor missing")
+          x = x.replace(kdp, """\tif (susfs_ksu && (flag & CL_COPY_MNT_NS))
+          \t\tns_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+          \tkdp_assign_mnt_flags(mnt->mnt, ns_flags);
+          """, 1)
+
+          normal = "\tmnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);\n"
+          if normal not in x:
+              raise SystemExit("normal mount flags anchor missing")
+          x = x.replace(normal, normal + """#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+          \tif (susfs_ksu && (flag & CL_COPY_MNT_NS))
+          \t\tmnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+          #endif
+          """, 1)
+
+          # Remove now-unused separate IDA declarations if present.
+          for decl in (
+              "static DEFINE_IDA(susfs_mnt_id_ida);\n",
+              "static DEFINE_IDA(susfs_mnt_group_ida);\n",
+          ):
+              x = x.replace(decl, "")
+
+          p.write_text(x)
+          PY
+
+          # Hard gates: old aliases/sentinel/separate IDA ownership must be gone.
+          ! grep -R -n 'DEFAULT_SUS_MNT_ID\|DEFAULT_SUS_MNT_GROUP_ID\|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' \
+              include/linux/susfs_def.h fs/namespace.c
+          ! grep -n 'susfs_mnt_id_ida\|susfs_mnt_group_ida' fs/namespace.c
+
+          grep -q 'ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'DEFAULT_KSU_MNT_GROUP_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+          grep -q 'CONFIG_KDP_NS' fs/namespace.c
+
+          {
+            echo "Stage 5 Trial 14"
+            echo "Trial 13 mount parent-walk semantics retained."
+            echo "Removed temporary DEFAULT_SUS_MNT_ID* aliases."
+            echo "High KSU mount/group IDs now use the normal kernel IDAs."
+            echo "Unshare reused-ID ownership now uses VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT."
+            echo "Samsung CONFIG_KDP_NS flag storage adapted."
+            echo "Zygote mount-ID spoof backup remains intentionally for the next semantic batch."
+            echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial14-mount-id-semantics.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2215,7 +2339,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial13-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial14-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2241,7 +2365,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 13 port 2.3.0 non-SUS mount lookup"
+          git commit -m "CI: SUSFS Stage 5 Trial 14 port 2.3.0 mount ID allocation semantics"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2288,7 +2412,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial13
+          name: m127f-susfs-stage5-trial14
           if-no-files-found: warn
           path: |
             Image
