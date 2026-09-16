@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 14
+name: SUSFS Samsung 4.19 Stage 5 - Trial 15
 
 permissions:
   contents: write
@@ -2063,6 +2063,81 @@ jobs:
           } > .ci/stage5/trial14-mount-id-semantics.txt
 
 
+      - name: Finish current 2.3.0 mount ID callsite migration
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Trial 14 intentionally removed the compatibility aliases and migrated
+          # namespace.c first. The compile now exposes the remaining 1.5.7 VFS
+          # callsites. Current SUSFS 2.3.0 uses DEFAULT_KSU_MNT_ID consistently.
+          targets = [
+              Path("fs/proc/fd.c"),
+              Path("fs/statfs.c"),
+              Path("fs/proc_namespace.c"),
+          ]
+
+          for p in targets:
+              x = p.read_text()
+              before = x.count("DEFAULT_SUS_MNT_ID")
+              if before:
+                  x = x.replace("DEFAULT_SUS_MNT_ID", "DEFAULT_KSU_MNT_ID")
+                  p.write_text(x)
+                  print(f"{p}: migrated {before} DEFAULT_SUS_MNT_ID callsite(s)")
+              else:
+                  print(f"{p}: no legacy mount-ID callsite present")
+
+          # Sweep all already-adapted SUSFS kernel callsites, not just the compiler's
+          # first six diagnostics. Do not touch archived .ci upstream/reference files.
+          roots = [Path("fs"), Path("include")]
+          legacy = ("DEFAULT_SUS_MNT_ID", "DEFAULT_SUS_MNT_GROUP_ID",
+                    "DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE")
+          survivors = []
+          for root in roots:
+              for p in root.rglob("*"):
+                  if not p.is_file():
+                      continue
+                  try:
+                      text = p.read_text()
+                  except UnicodeDecodeError:
+                      continue
+                  for sym in legacy:
+                      if sym in text:
+                          survivors.append((str(p), sym))
+
+          if survivors:
+              for p, sym in survivors:
+                  print(f"legacy survivor: {p}: {sym}")
+              raise SystemExit("legacy SUSFS mount-ID vocabulary remains in live kernel tree")
+          PY
+
+          # The exact Trial-14 compiler failures must now use current 2.3.0 vocabulary.
+          grep -q 'DEFAULT_KSU_MNT_ID' fs/proc/fd.c
+          grep -q 'DEFAULT_KSU_MNT_ID' fs/statfs.c
+          grep -q 'DEFAULT_KSU_MNT_ID' fs/proc_namespace.c
+
+          ! grep -R -n \
+            --include='*.c' --include='*.h' \
+            'DEFAULT_SUS_MNT_ID\|DEFAULT_SUS_MNT_GROUP_ID\|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE' \
+            fs include
+
+          # Preserve Trial 13/14 semantic markers.
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+
+          {
+            echo "Stage 5 Trial 15"
+            echo "Trial 14 reached the real kernel compile."
+            echo "Migrated remaining live 1.5.7 DEFAULT_SUS_MNT_ID callsites to DEFAULT_KSU_MNT_ID."
+            echo "Hard-gated the live fs/include tree against all three obsolete DEFAULT_SUS_MNT* names."
+            echo "Trial 13 parent-walk and Trial 14 normal-IDA/unshare semantics retained."
+            echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial15-mount-id-callsites.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2339,7 +2414,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial14-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial15-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2365,7 +2440,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 14 port 2.3.0 mount ID allocation semantics"
+          git commit -m "CI: SUSFS Stage 5 Trial 15 finish 2.3.0 mount ID callsite migration"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2412,7 +2487,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial14
+          name: m127f-susfs-stage5-trial15
           if-no-files-found: warn
           path: |
             Image
