@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 19
+name: SUSFS Samsung 4.19 Stage 5 - Trial 20
 
 permissions:
   contents: write
@@ -2479,6 +2479,98 @@ jobs:
           } > .ci/stage5/trial19-inline-faccessat.txt
 
 
+      - name: Adapt official faccessat filename flow to Samsung 4.19
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          op=Path("fs/open.c")
+          x=op.read_text()
+
+          # Trial 19 anchored the fname declaration at the first lookup_flags in open.c
+          # instead of do_faccessat(). Remove that misplaced declaration everywhere,
+          # then insert it only inside do_faccessat.
+          bad='''#ifdef CONFIG_KSU_SUSFS
+          \tstruct filename *susfs_fname = NULL;
+          #endif
+          '''
+          x=x.replace(bad, "")
+
+          start=x.find("long do_faccessat(int dfd, const char __user *filename, int mode)")
+          if start < 0:
+              raise SystemExit("Samsung do_faccessat() not found")
+          end=x.find("\n}\n", start)
+          if end < 0:
+              raise SystemExit("do_faccessat end not found")
+          body=x[start:end]
+          decl="\tunsigned int lookup_flags = LOOKUP_FOLLOW;\n"
+          if decl not in body:
+              raise SystemExit("do_faccessat lookup_flags anchor missing")
+          body=body.replace(decl, decl+'''#ifdef CONFIG_KSU_SUSFS
+          \tstruct filename *susfs_fname = NULL;
+          #endif
+          ''',1)
+          x=x[:start]+body+x[end:]
+          op.write_text(x)
+
+          # Linux/Samsung 4.19 keeps filename_lookup() private to namei.c, while the
+          # official 5.15 SUSFS patch calls it from open.c. Make that existing 4.19
+          # helper fs-internal (not exported to modules) and declare it in internal.h.
+          np=Path("fs/namei.c")
+          n=np.read_text()
+          patterns=[
+              r"static int filename_lookup\(",
+              r"static\s+int\s+filename_lookup\(",
+          ]
+          newn, count=re.subn(r"static\s+int\s+filename_lookup\(",
+                              "int filename_lookup(", n, count=1)
+          if count != 1:
+              raise SystemExit("Expected exactly one static filename_lookup() in Samsung 4.19")
+          np.write_text(newn)
+
+          ih=Path("fs/internal.h")
+          h=ih.read_text()
+          proto='''int filename_lookup(int dfd, struct filename *name, unsigned flags,
+          \t\t    struct path *path, struct path *root);
+          '''
+          if proto not in h:
+              anchor="extern int user_path_mountpoint_at(int, const char __user *, unsigned int, struct path *);\n"
+              if anchor not in h:
+                  raise SystemExit("internal.h namei anchor missing")
+              h=h.replace(anchor, anchor+proto, 1)
+          ih.write_text(h)
+          PY
+
+          # Trial 20 hard gates.
+          grep -q 'struct filename \*susfs_fname = NULL;' fs/open.c
+          test "$(grep -c 'struct filename \*susfs_fname = NULL;' fs/open.c)" -eq 1
+          grep -q '^int filename_lookup(' fs/namei.c
+          ! grep -q '^static .*filename_lookup(' fs/namei.c
+          grep -q 'int filename_lookup(int dfd, struct filename \*name, unsigned flags,' fs/internal.h
+          grep -q 'susfs_stage5_trial19_inline_faccessat_no_su' fs/open.c
+          grep -q 'susfs_is_current_proc_no_su()' fs/open.c
+          grep -q 'ksu_handle_faccessat(&dfd, &susfs_fname, &mode, NULL)' fs/open.c
+          grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL)' fs/open.c
+
+          # Preserve locked mount/zygote semantics.
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 20"
+           echo "Trial 19 failed at compile due two Samsung-4.19 adaptation issues, not SUSFS semantics."
+           echo "Moved fname declaration into the actual do_faccessat() scope."
+           echo "Made existing 4.19 filename_lookup() fs-internal so open.c can use the official 2.3.0 flow."
+           echo "No EXPORT_SYMBOL added."
+           echo "Trial 19 no-su/faccessat semantics retained."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial20-faccessat-419-adaptation.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -2755,7 +2847,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial19-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial20-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2781,7 +2873,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 19 port 2.3.0 inline faccessat no-su semantics"
+          git commit -m "CI: SUSFS Stage 5 Trial 20 adapt faccessat filename lookup for Samsung 4.19"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2828,7 +2920,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial19
+          name: m127f-susfs-stage5-trial20
           if-no-files-found: warn
           path: |
             Image
