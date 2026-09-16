@@ -20,6 +20,9 @@
 #include <linux/uaccess.h>
 #include <linux/pkeys.h>
 #include <linux/mm_inline.h>
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+#include <linux/susfs_def.h>
+#endif
 #include <linux/ctype.h>
 
 #include <asm/elf.h>
@@ -352,6 +355,7 @@ static void show_vma_header_prefix(struct seq_file *m,
 	seq_put_decimal_ull(m, " ", ino);
 	seq_putc(m, ' ');
 }
+
 
 static void
 show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
