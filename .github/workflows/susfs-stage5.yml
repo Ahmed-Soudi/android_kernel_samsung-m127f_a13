@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 11
+name: SUSFS Samsung 4.19 Stage 5 - Trial 12
 
 permissions:
   contents: write
@@ -1777,15 +1777,25 @@ jobs:
           cp "$ksu_patch" .ci/stage5/official230/ksu.patch
 
           required=(TIF_PROC_UMOUNTED TIF_PROC_NO_SU SUS_MAP zygote_next ksu_handle_faccessat ksu_handle_stat OPEN_REDIRECT hide_sus_mnts_for_non_su_procs susfs_get_non_sus_mnt_id_from_mnt susfs_get_non_sus_vfsmnt_from_vfsmnt)
-          : > .ci/stage5/trial11-semantic-audit.txt
+          : > .ci/stage5/trial12-semantic-audit.txt
+          # This is an inventory, not a compatibility assertion. Trial 11
+          # proved that assuming every expected concept still appears under
+          # the same symbol name is wrong (TIF_PROC_NO_SU is absent from these
+          # two current official patch files). Record zeroes and continue.
           for sym in "${required[@]}"; do
-            count=$(grep -h -F "$sym" .ci/stage5/official230/kernel.patch .ci/stage5/official230/ksu.patch | wc -l)
-            printf '%-48s %s\n' "$sym" "$count" | tee -a .ci/stage5/trial11-semantic-audit.txt
-            if [ "$count" -eq 0 ]; then
-              echo "::error::Expected 2.3.0 semantic marker absent: $sym"
-              exit 1
-            fi
+            count=$( { grep -h -F "$sym" .ci/stage5/official230/kernel.patch .ci/stage5/official230/ksu.patch || true; } | wc -l )
+            printf '%-48s %s\n' "$sym" "$count" | tee -a .ci/stage5/trial12-semantic-audit.txt
           done
+
+          {
+            echo
+            echo '===== ABSENT REQUESTED MARKERS (INFORMATIONAL) ====='
+            while read -r sym count; do
+              if [ "$count" = "0" ]; then
+                echo "$sym"
+              fi
+            done < .ci/stage5/trial12-semantic-audit.txt
+          } >> .ci/stage5/trial12-semantic-audit.txt
 
           {
             echo '===== DISCOVERED OFFICIAL FILES ====='
@@ -1794,7 +1804,7 @@ jobs:
             echo
             echo '===== OFFICIAL 2.3.0 FOCUSED CONTEXT ====='
             grep -n -C 16 -E 'susfs_get_non_sus_mnt_id_from_mnt|susfs_get_non_sus_vfsmnt_from_vfsmnt|hide_sus_mnts_for_non_su_procs|TIF_PROC_UMOUNTED|TIF_PROC_NO_SU|zygote_next|SUS_MAP|OPEN_REDIRECT|ksu_handle_faccessat|ksu_handle_stat'               .ci/stage5/official230/kernel.patch .ci/stage5/official230/ksu.patch || true
-          } > .ci/stage5/trial11-official230-focused-context.txt
+          } > .ci/stage5/trial12-official230-focused-context.txt
 
           {
             echo '===== SAMSUNG 4.19 CURRENT INVENTORY ====='
@@ -1804,10 +1814,10 @@ jobs:
             done
             echo '===== TEMP BRIDGES ====='
             grep -R -n -E 'susfs_stage5_trial6_non_sus_mount_bridge|DEFAULT_SUS_MNT_ID DEFAULT_KSU_MNT_ID|DEFAULT_SUS_MNT_GROUP_ID DEFAULT_KSU_MNT_GROUP_ID|DEFAULT_SUS_MNT_ID_FOR_KSU_PROC_UNSHARE'               fs include KernelSU-Next 2>/dev/null || true
-          } > .ci/stage5/trial11-samsung419-semantic-inventory.txt
+          } > .ci/stage5/trial12-samsung419-semantic-inventory.txt
 
           grep -q 'susfs_stage5_trial6_non_sus_mount_bridge' fs/namespace.c
-          printf '%s\n'             'Stage 5 Trial 11'             'Official SUSFS 2.3.0 semantic audit captured from branch archive.'             'Green Trial 7 compile baseline preserved.'             'NOT A FLASH CANDIDATE.'             > .ci/stage5/trial11-status.txt
+          printf '%s\n'             'Stage 5 Trial 12'             'Official SUSFS 2.3.0 semantic audit captured from branch archive.'             'Green Trial 7 compile baseline preserved.'             'NOT A FLASH CANDIDATE.'             > .ci/stage5/trial12-status.txt
 
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
@@ -2085,7 +2095,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial11-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial12-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -2111,7 +2121,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 11 accept official GKI patch naming"
+          git commit -m "CI: SUSFS Stage 5 Trial 12 make semantic inventory non-assumptive"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -2158,7 +2168,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial11
+          name: m127f-susfs-stage5-trial12
           if-no-files-found: warn
           path: |
             Image
