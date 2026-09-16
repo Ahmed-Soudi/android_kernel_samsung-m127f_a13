@@ -1,0 +1,7 @@
+Stage 5 Trial 19
+Trial 18 audit showed the KSU faccessat handler existed only in KSUN syscall bridge, not the official 2.3.0 VFS inline path.
+Ported official 2.3.0 faccessat no-su semantics to Samsung 4.19 fs/open.c.
+TIF_PROC_NO_SU processes bypass KSU sucompat path.
+Allowed KSU processes use ksu_handle_faccessat before filename_lookup.
+No Zygisk implementation embedded.
+NOT A FLASH CANDIDATE.
