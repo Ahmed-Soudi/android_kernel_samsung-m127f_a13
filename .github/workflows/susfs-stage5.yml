@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 25
+name: SUSFS Samsung 4.19 Stage 5 - Trial 26
 
 permissions:
   contents: write
@@ -2973,6 +2973,166 @@ jobs:
           } > .ci/stage5/trial25-sus-map-proc-core.txt
 
 
+      - name: Port map_files and OPEN_REDIRECT proc semantics
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # ---- fs/proc/base.c: map_files SUS_MAP + OPEN_REDIRECT readlink ----
+          p=Path("fs/proc/base.c"); x=p.read_text()
+
+          inc='#include <linux/cpufreq_times.h>\n'
+          if '#include <linux/susfs_def.h>' not in x:
+              if inc not in x: raise SystemExit("base.c include anchor missing")
+              x=x.replace(inc,inc+'''#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+          #include <linux/susfs_def.h>
+          #endif
+          ''',1)
+
+          read_anchor='static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)\n'
+          if 'susfs_open_redirect_spoof_do_proc_readlink' not in x:
+              if read_anchor not in x: raise SystemExit("do_proc_readlink anchor missing")
+              x=x.replace(read_anchor,'''#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          extern int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode,
+                                                                 char *tmp_buf, int buflen);
+          #endif
+
+          '''+read_anchor,1)
+
+          needle='\tif (!tmp)\n\t\treturn -ENOMEM;\n'
+          if 'susfs_stage5_trial26_open_redirect_proc_readlink' not in x:
+              start=x.find(read_anchor); end=x.find('\n}\n',start); body=x[start:end]
+              if needle not in body: raise SystemExit("do_proc_readlink tmp anchor missing")
+              body=body.replace(needle,needle+'''#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          	/* susfs_stage5_trial26_open_redirect_proc_readlink */
+          	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
+          		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode,
+          								tmp, buflen)) {
+          			len = strlen(tmp);
+          			if (copy_to_user(buffer, tmp, len))
+          				len = -EFAULT;
+          			goto out;
+          		}
+          	}
+          #endif
+          ''',1)
+              x=x[:start]+body+x[end:]
+
+          # 4.19 has two passes in proc_map_files_readdir. Both must ignore SUS_MAP.
+          old1='''\tfor (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
+          \t\tif (vma->vm_file && ++pos > ctx->pos)
+          \t\t\tnr_files++;
+          \t}
+          '''
+          new1='''\tfor (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
+          \t\tif (!vma->vm_file)
+          \t\t\tcontinue;
+          #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+          \t\t/* susfs_stage5_trial26_map_files_count */
+          \t\tif (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+          \t\t\tcontinue;
+          #endif
+          \t\tif (++pos > ctx->pos)
+          \t\t\tnr_files++;
+          \t}
+          '''
+          if 'susfs_stage5_trial26_map_files_count' not in x:
+              if old1 not in x: raise SystemExit("map_files count pass anchor missing")
+              x=x.replace(old1,new1,1)
+
+          old2='''\t\t\tif (!vma->vm_file)
+          \t\t\t\tcontinue;
+          \t\t\tif (++pos <= ctx->pos)
+          '''
+          new2='''\t\t\tif (!vma->vm_file)
+          \t\t\t\tcontinue;
+          #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+          \t\t\t/* susfs_stage5_trial26_map_files_fill */
+          \t\t\tif (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+          \t\t\t\tcontinue;
+          #endif
+          \t\t\tif (++pos <= ctx->pos)
+          '''
+          if 'susfs_stage5_trial26_map_files_fill' not in x:
+              if old2 not in x: raise SystemExit("map_files fill pass anchor missing")
+              x=x.replace(old2,new2,1)
+
+          p.write_text(x)
+
+          # ---- fs/proc/task_mmu.c: OPEN_REDIRECT maps spoof ----
+          p=Path("fs/proc/task_mmu.c"); x=p.read_text()
+          show='static void\nshow_map_vma(struct seq_file *m, struct vm_area_struct *vma)\n'
+          if 'susfs_open_redirect_spoof_show_map_vma_srcu' not in x:
+              if show not in x: raise SystemExit("show_map_vma anchor missing")
+              x=x.replace(show,'''#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          extern struct srcu_struct susfs_srcu_open_redirect;
+          extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode,
+                                                                  unsigned long *out_ino,
+                                                                  dev_t *out_dev,
+                                                                  char **out_spoofed_name);
+          #endif
+
+          '''+show,1)
+
+          inode_anchor='\t\tstruct inode *inode = file_inode(vma->vm_file);\n'
+          if 'susfs_stage5_trial26_open_redirect_show_map' not in x:
+              start=x.find(show); end=x.find('\n}\n',start); body=x[start:end]
+              if inode_anchor not in body: raise SystemExit("show_map inode anchor missing")
+              insert=inode_anchor+'''#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+          		/* susfs_stage5_trial26_open_redirect_show_map */
+          		if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+          			char *spoofed_redirected_name = NULL;
+          			int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
+          			int ret = susfs_open_redirect_spoof_show_map_vma_srcu(
+          				inode, &ino, &dev, &spoofed_redirected_name);
+          			if (!ret) {
+          				pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+          				start = vma->vm_start;
+          				end = vma->vm_end;
+          				show_vma_header_prefix(m, start, end, flags,
+          						       pgoff, dev, ino);
+          				seq_pad(m, ' ');
+          				if (spoofed_redirected_name)
+          					seq_puts(m, spoofed_redirected_name);
+          				seq_putc(m, '\\n');
+          				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+          				return;
+          			}
+          			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+          		}
+          #endif
+          '''
+              body=body.replace(inode_anchor,insert,1)
+              x=x[:start]+body+x[end:]
+          p.write_text(x)
+          PY
+
+          grep -q 'susfs_stage5_trial26_open_redirect_proc_readlink' fs/proc/base.c
+          grep -q 'susfs_stage5_trial26_map_files_count' fs/proc/base.c
+          grep -q 'susfs_stage5_trial26_map_files_fill' fs/proc/base.c
+          grep -q 'susfs_stage5_trial26_open_redirect_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_open_redirect_spoof_show_map_vma_srcu' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial25_sus_map_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial25_sus_map_show_smap' fs/proc/task_mmu.c
+
+          # Prior green locks.
+          grep -q 'susfs_stage5_trial19_inline_faccessat_no_su' fs/open.c
+          grep -q 'susfs_stage5_trial22_inline_stat_no_su' fs/stat.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 26"
+           echo "Trial25 green baseline verified."
+           echo "Ported official SUSFS 2.3.0 map_files hiding to both Samsung-4.19 readdir passes."
+           echo "Ported OPEN_REDIRECT /proc readlink spoofing."
+           echo "Ported OPEN_REDIRECT /proc/PID/maps pathname/dev/inode spoofing."
+           echo "Remaining focused SUS_MAP batch: smaps_rollup + pagemap."
+           echo "Then final flash-candidate audit."
+           echo "NOT A FLASH CANDIDATE."
+          } > .ci/stage5/trial26-mapfiles-openredirect.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -3249,7 +3409,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial25-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial26-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3275,7 +3435,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 25 port SUS_MAP proc maps core"
+          git commit -m "CI: SUSFS Stage 5 Trial 26 port map_files and OPEN_REDIRECT proc semantics"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3322,7 +3482,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial25
+          name: m127f-susfs-stage5-trial26
           if-no-files-found: warn
           path: |
             Image
