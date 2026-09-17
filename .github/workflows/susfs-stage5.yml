@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 28
+name: SUSFS Samsung 4.19 Stage 5 - Trial 29
 
 permissions:
   contents: write
@@ -3521,12 +3521,57 @@ jobs:
           test "$(find . -name '*.rej' -type f | wc -l)" -eq 0
           git diff --check
 
+      - name: Final SUSFS 2.3.0 semantic config symbol audit
+        run: |
+          set -euxo pipefail
+          mkdir -p .ci/stage5/final-audit
+          for item in \
+           "fs/namespace.c:susfs_stage5_trial16_zygote_lookup_semantics" \
+           "fs/open.c:susfs_stage5_trial19_inline_faccessat_no_su" \
+           "fs/stat.c:susfs_stage5_trial22_inline_stat_no_su" \
+           "fs/proc/task_mmu.c:susfs_stage5_trial25_sus_map_show_map" \
+           "fs/proc/task_mmu.c:susfs_stage5_trial25_sus_map_show_smap" \
+           "fs/proc/task_mmu.c:susfs_stage5_trial26_open_redirect_show_map" \
+           "fs/proc/base.c:susfs_stage5_trial26_map_files_count" \
+           "fs/proc/base.c:susfs_stage5_trial26_open_redirect_proc_readlink" \
+           "fs/proc/task_mmu.c:susfs_stage5_trial28_rollup_gather_" \
+           "fs/proc/task_mmu.c:susfs_stage5_trial28_pagemap"; do
+            f="${item%%:*}"; m="${item#*:}"; grep -q "$m" "$f"
+          done
+          if grep -RInE 'DEFAULT_SUS_MNT_ID|DEFAULT_SUS_MNT_GROUP_ID' fs include KernelSU-Next/kernel --include='*.c' --include='*.h' > .ci/stage5/final-audit/obsolete-mount-ids.txt; then
+            cat .ci/stage5/final-audit/obsolete-mount-ids.txt; exit 1
+          fi
+          grep -q 'DEFINE_IDA(susfs_mnt_id_ida)' fs/namespace.c
+          grep -q 'DEFINE_IDA(susfs_mnt_group_ida)' fs/namespace.c
+          grep -q 'DEFAULT_KSU_MNT_ID' fs/namespace.c
+          grep -q 'VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT' fs/namespace.c
+          grep -q 'CONFIG_KDP_NS' fs/namespace.c
+          grep -q 'ksu_handle_faccessat_samsung419' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'ksu_handle_stat_samsung419' KernelSU-Next/kernel/feature/sucompat.c
+          grep -q 'ksu_sucompat_enabled_samsung419' KernelSU-Next/kernel/feature/sucompat.c
+          for term in SUS_MAP OPEN_REDIRECT susfs_is_current_proc_no_su hide_sus_mnts_for_non_su_procs zygote_next TIF_PROC_UMOUNTED TIF_PROC_NO_SU susfs_get_non_sus_mnt_id_from_mnt susfs_get_non_sus_vfsmnt_from_vfsmnt VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT DEFAULT_KSU_MNT_ID; do
+            echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
+            grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
+          done
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC2=n' .github/workflows/build-ksun.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' .github/workflows/build-ksun.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' .github/workflows/build-ksun.yml
+          cat > .ci/stage5/final-audit/README.txt <<'EOF'
+          Stage 5 Trial 29 final audit.
+          Green audit + green full build = FLASH CANDIDATE, not runtime proof.
+          Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
+          SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
+          Zygisk remains external and must be installed/tested after device validation.
+          EOF
+
+
       - name: Push disposable Stage 4 source branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial28-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial29-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3552,7 +3597,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 28 fix Samsung 4.19 smaps rollup anchor"
+          git commit -m "CI: SUSFS Stage 5 Trial 29 final semantic config symbol audit"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3595,11 +3640,30 @@ jobs:
           echo "Stage 5 Trial 7 compile recipe completed."
           echo "Compile probe only — do not flash."
 
+      - name: Mark Stage 5 Trial 29 flash candidate
+        run: |
+          set -euxo pipefail
+          mkdir -p .ci/stage5/flash-candidate
+          cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
+          cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
+          {
+           echo "Stage 5 Trial 29 FLASH CANDIDATE"
+           echo "source_head=${GITHUB_SHA}"
+           echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
+           echo "kernelsu_next=3.3.0"
+           echo "susfs=2.3.0 Samsung 4.19 backport"
+           echo "ps5_uac1=preserved"
+           echo "zygisk=external-module-only"
+           echo "runtime_validation=pending"
+           [ ! -f Image ] || sha256sum Image
+          } | tee .ci/stage5/flash-candidate/manifest.txt
+
+
       - name: Upload Stage 5 Trial 7 compile outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial28
+          name: m127f-susfs-stage5-trial29
           if-no-files-found: warn
           path: |
             Image
