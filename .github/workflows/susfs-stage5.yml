@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 30
+name: SUSFS Samsung 4.19 Stage 5 - Trial 31
 
 permissions:
   contents: write
@@ -3554,11 +3554,17 @@ jobs:
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC2=n' .github/workflows/build-ksun.yml
+          # The known-good PS5 workflow enables UAC1 but does not carry an explicit
+          # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
+          # correct source-workflow preservation gate; the generated kernel
+          # config/build remains the authoritative compile-time check.
+          ! grep -q 'CONFIG_USB_CONFIGFS_F_UAC2=y' .github/workflows/build-ksun.yml
           grep -q 'CONFIG_USB_F_UAC1=y' .github/workflows/build-ksun.yml
           grep -q 'CONFIG_USB_U_AUDIO=y' .github/workflows/build-ksun.yml
+          echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
+            > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 5 Trial 30 final audit.
+          Stage 5 Trial 31 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3571,7 +3577,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial30-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial31-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3647,7 +3653,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 5 Trial 30 FLASH CANDIDATE"
+           echo "Stage 5 Trial 31 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3663,7 +3669,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial30
+          name: m127f-susfs-stage5-trial31
           if-no-files-found: warn
           path: |
             Image
