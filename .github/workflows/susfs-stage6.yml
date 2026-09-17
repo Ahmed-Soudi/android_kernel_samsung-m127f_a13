@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 38
+name: SUSFS Samsung 4.19 Stage 6 - Trial 39
 
 permissions:
   contents: write
@@ -3273,6 +3273,22 @@ jobs:
 
           echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
+          # Stage 6 Trial 39: with SUSFS core enabled but OPEN_REDIRECT and
+          # other behavioral subfeatures disabled, copied_size is compiled
+          # but unused in official 2.3.0. Samsung builds with -Werror.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("fs/susfs.c")
+          t = p.read_text()
+          old = "size_t copied_size = 0;"
+          new = "size_t copied_size __maybe_unused = 0; /* susfs_stage6_trial39_coreonly_copied_size */"
+          if old not in t:
+              raise SystemExit("Trial39 copied_size anchor missing")
+          t = t.replace(old, new, 1)
+          p.write_text(t)
+          PY
+          grep -q 'susfs_stage6_trial39_coreonly_copied_size' fs/susfs.c
+
       - name: Prepare Stage 5 KSUN SUSFS 2.3.0 compile-probe integration
         run: |
           set -euxo pipefail
@@ -3475,7 +3491,7 @@ jobs:
               '            echo "ERROR: SUSFS core symbols are not linked"',
               "            exit 1",
               "          fi",
-              '          echo "Stage 6 Trial 38 core-on/no-logging audit passed."',
+              '          echo "Stage 6 Trial 39 core-on/no-logging audit passed."',
               "",
               "",
           ])
@@ -3497,11 +3513,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL38-COREON.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL39-COREON.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL38-COREON\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL39-COREON\n"
           )
           p.write_text(s)
           PY
@@ -3564,7 +3580,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 38: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
+          echo 'Stage 6 Trial 39: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3576,7 +3592,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 38 final audit.
+          Stage 6 Trial 39 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3589,7 +3605,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial38-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial39-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3615,7 +3631,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 38 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 39 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3665,7 +3681,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 38 FLASH CANDIDATE"
+           echo "Stage 6 Trial 39 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3681,12 +3697,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial38-coreon
+          name: m127f-susfs-stage6-trial39-coreon
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL38-COREON.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL39-COREON.zip
 
