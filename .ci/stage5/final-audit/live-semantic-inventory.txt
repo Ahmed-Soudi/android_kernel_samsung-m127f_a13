@@ -1,0 +1,145 @@
+===== SUS_MAP =====
+fs/proc/base.c:98:#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+fs/proc/base.c:2288:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/proc/base.c:2290:		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+fs/proc/base.c:2313:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/proc/base.c:2315:			if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+fs/proc/task_mmu.c:23:#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+fs/proc/task_mmu.c:405:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/proc/task_mmu.c:407:		if (SUSFS_IS_INODE_SUS_MAP(inode))
+fs/proc/task_mmu.c:903:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/proc/task_mmu.c:905:	if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+fs/proc/task_mmu.c:966:		#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/proc/task_mmu.c:969:		    !SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+fs/proc/task_mmu.c:1684:		#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/proc/task_mmu.c:1690:			    !SUSFS_IS_INODE_SUS_MAP(file_inode(susfs_vma->vm_file)))
+fs/susfs.c:1168:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/susfs.c:1191:	set_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags);
+fs/susfs.c:1192:	SUSFS_LOGI("pathname: '%s', is flagged as AS_FLAGS_SUS_MAP\n", info.target_pathname);
+fs/susfs.c:1200:	SUSFS_LOGI("CMD_SUSFS_ADD_SUS_MAP -> ret: %d\n", info.err);
+fs/susfs.c:1202:#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/susfs.c:1305:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+fs/susfs.c:1306:	info->err = copy_config_to_buf("CONFIG_KSU_SUSFS_SUS_MAP\n", buf_ptr, &copied_size, SUSFS_ENABLED_FEATURES_SIZE);
+include/linux/susfs.h:155:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+include/linux/susfs.h:228:#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+include/linux/susfs_def.h:35:#define CMD_SUSFS_ADD_SUS_MAP 0x60020
+include/linux/susfs_def.h:75:#define AS_FLAGS_SUS_MAP 39
+include/linux/susfs_def.h:152:#define SUSFS_IS_INODE_SUS_MAP(inode) \
+include/linux/susfs_def.h:154:		unlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags)) && \
+===== OPEN_REDIRECT =====
+fs/proc/base.c:98:#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+fs/proc/base.c:1694:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/proc/base.c:1707:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/proc/base.c:1709:	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
+fs/proc/task_mmu.c:23:#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+fs/proc/task_mmu.c:360:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/proc/task_mmu.c:382:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/proc/task_mmu.c:384:		if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+fs/namei.c:43:#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+fs/susfs.c:880:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/susfs.c:882:static DEFINE_HASHTABLE(OPEN_REDIRECT_HLIST, 14);
+fs/susfs.c:980:	hash_for_each_possible_safe(OPEN_REDIRECT_HLIST, tmp_entry_target, tmp_hlist_node, node, target_inode->i_ino) {
+fs/susfs.c:997:		hash_for_each_possible_safe(OPEN_REDIRECT_HLIST, tmp_entry_redirected, tmp_hlist_node, node, redirected_inode->i_ino) {
+fs/susfs.c:1004:		SUSFS_LOGI("target_pathname: '%s', redirected_pathname: '%s', target_i_ino: '%lu', redirected_i_ino: '%lu', target_s_dev: '%lu', redirected_s_dev: '%lu', uid_scheme: '%d', reversed_lookup_only: %d, spoofed_mnt_id: %d, is successfully added to OPEN_REDIRECT_HLIST\n",
+fs/susfs.c:1006:		SUSFS_LOGI("target_pathname: '%s', redirected_pathname: '%s', target_i_ino: '%lu', redirected_i_ino: '%lu', target_s_dev: '%lu', redirected_s_dev: '%lu', uid_scheme: '%d', reversed_lookup_only: %d, spoofed_mnt_id: %d, is successfully added to OPEN_REDIRECT_HLIST\n",
+fs/susfs.c:1008:		hash_add_rcu(OPEN_REDIRECT_HLIST, &new_entry_target->node, new_entry_target->target_ino);
+fs/susfs.c:1009:		hash_add_rcu(OPEN_REDIRECT_HLIST, &new_entry_redirected->node, new_entry_redirected->target_ino);
+fs/susfs.c:1011:		set_bit(AS_FLAGS_OPEN_REDIRECT, &redirected_inode->i_mapping->flags);
+fs/susfs.c:1012:		set_bit(AS_FLAGS_OPEN_REDIRECT, &target_inode->i_mapping->flags);
+fs/susfs.c:1022:	SUSFS_LOGI("target_pathname: '%s', redirected_pathname: '%s', target_i_ino: '%lu', redirected_i_ino: '%lu', target_s_dev: '%lu', redirected_s_dev: '%lu', uid_scheme: '%d', reversed_lookup_only: %d, spoofed_mnt_id: %d, is successfully added to OPEN_REDIRECT_HLIST\n",
+fs/susfs.c:1024:	SUSFS_LOGI("target_pathname: '%s', redirected_pathname: '%s', target_i_ino: '%lu', redirected_i_ino: '%lu', target_s_dev: '%lu', redirected_s_dev: '%lu', uid_scheme: '%d', reversed_lookup_only: %d, spoofed_mnt_id: %d, is successfully added to OPEN_REDIRECT_HLIST\n",
+fs/susfs.c:1026:	hash_add_rcu(OPEN_REDIRECT_HLIST, &new_entry_target->node, new_entry_target->target_ino);
+fs/susfs.c:1027:	hash_add_rcu(OPEN_REDIRECT_HLIST, &new_entry_redirected->node, new_entry_redirected->target_ino);
+fs/susfs.c:1029:	set_bit(AS_FLAGS_OPEN_REDIRECT, &redirected_inode->i_mapping->flags);
+fs/susfs.c:1030:	set_bit(AS_FLAGS_OPEN_REDIRECT, &target_inode->i_mapping->flags);
+fs/susfs.c:1042:	SUSFS_LOGI("CMD_SUSFS_ADD_OPEN_REDIRECT -> ret: %d\n", info.err);
+fs/susfs.c:1050:	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
+fs/susfs.c:1094:	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
+fs/susfs.c:1122:	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
+fs/susfs.c:1151:	hash_for_each_possible_rcu(OPEN_REDIRECT_HLIST, entry, node, inode->i_ino) {
+fs/susfs.c:1165:#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/susfs.c:1300:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+fs/susfs.c:1301:	info->err = copy_config_to_buf("CONFIG_KSU_SUSFS_OPEN_REDIRECT\n", buf_ptr, &copied_size, SUSFS_ENABLED_FEATURES_SIZE);
+include/linux/susfs.h:133:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+include/linux/susfs.h:223:#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+include/linux/susfs_def.h:27:#define CMD_SUSFS_ADD_OPEN_REDIRECT 0x555c0
+include/linux/susfs_def.h:74:#define AS_FLAGS_OPEN_REDIRECT 36
+include/linux/susfs_def.h:157:#define SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(inode) \
+include/linux/susfs_def.h:159:		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_mapping->flags))
+include/linux/susfs_def.h:161:#define SUSFS_IS_INODE_OPEN_REDIRECT(inode) \
+include/linux/susfs_def.h:163:		unlikely(test_bit(AS_FLAGS_OPEN_REDIRECT, &inode->i_mapping->flags)) && \
+===== susfs_is_current_proc_no_su =====
+fs/open.c:432:	if (!susfs_is_current_proc_no_su() &&
+fs/stat.c:209:	if (!susfs_is_current_proc_no_su() &&
+include/linux/susfs_def.h:140:static inline bool susfs_is_current_proc_no_su(void) {
+===== hide_sus_mnts_for_non_su_procs =====
+fs/susfs.c:246:DEFINE_STATIC_KEY_FALSE(susfs_is_hide_sus_mnts_for_non_su_procs_enabled);
+fs/susfs.c:248:void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info) {
+fs/susfs.c:249:	struct st_susfs_hide_sus_mnts_for_non_su_procs info = {0};
+fs/susfs.c:251:	if (copy_from_user(&info, (struct st_susfs_hide_sus_mnts_for_non_su_procs __user*)*user_info, sizeof(info))) {
+fs/susfs.c:257:		static_branch_enable(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled);
+fs/susfs.c:259:		static_branch_disable(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled);
+fs/susfs.c:262:	SUSFS_LOGI("susfs_is_hide_sus_mnts_for_non_su_procs_enabled: %d\n", static_key_enabled(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled));
+fs/susfs.c:265:	if (copy_to_user(&((struct st_susfs_hide_sus_mnts_for_non_su_procs __user*)*user_info)->err, &info.err, sizeof(info.err))) {
+include/linux/susfs.h:55:struct st_susfs_hide_sus_mnts_for_non_su_procs {
+include/linux/susfs.h:197:void susfs_set_hide_sus_mnts_for_non_su_procs(void __user **user_info);
+===== zygote_next =====
+fs/namespace.c:926:	 * marked umounted (including zygote_next descendants): do not return
+include/linux/susfs_def.h:123:static inline bool susfs_is_current_proc_umounted_for_zygote_next(void) {
+include/linux/susfs_def.h:127:static inline void susfs_set_current_proc_umounted_for_zygote_next(void) {
+include/linux/susfs_def.h:131:static inline void susfs_clear_current_proc_umounted_for_zygote_next(void) {
+===== TIF_PROC_UMOUNTED =====
+include/linux/susfs_def.h:67:#define TIF_PROC_UMOUNTED 33
+include/linux/susfs_def.h:69:#define TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT 35
+include/linux/susfs_def.h:112:	return (likely(test_thread_flag(TIF_PROC_UMOUNTED)));
+include/linux/susfs_def.h:116:	set_thread_flag(TIF_PROC_UMOUNTED);
+include/linux/susfs_def.h:120:	clear_thread_flag(TIF_PROC_UMOUNTED);
+include/linux/susfs_def.h:124:	return (likely(test_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT)));
+include/linux/susfs_def.h:128:	set_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);
+include/linux/susfs_def.h:132:	clear_thread_flag(TIF_PROC_UMOUNTED_FOR_ZYGOTE_NEXT);
+include/linux/susfs_def.h:136:	return (likely(test_thread_flag(TIF_PROC_UMOUNTED)) &&
+===== TIF_PROC_NO_SU =====
+include/linux/susfs_def.h:68:#define TIF_PROC_NO_SU 34
+include/linux/susfs_def.h:141:	return (likely(test_thread_flag(TIF_PROC_NO_SU)));
+include/linux/susfs_def.h:145:	set_thread_flag(TIF_PROC_NO_SU);
+include/linux/susfs_def.h:149:	clear_thread_flag(TIF_PROC_NO_SU);
+===== susfs_get_non_sus_mnt_id_from_mnt =====
+fs/namespace.c:80:int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt)
+fs/susfs.c:31:extern int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt);
+fs/susfs.c:326:		new_entry->spoofed_mnt_id = susfs_get_non_sus_mnt_id_from_mnt(real_mount(path.mnt));
+fs/susfs.c:345:	new_entry->spoofed_mnt_id = susfs_get_non_sus_mnt_id_from_mnt(real_mount(path.mnt));
+===== susfs_get_non_sus_vfsmnt_from_vfsmnt =====
+fs/namespace.c:100:struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt)
+fs/susfs.c:32:extern struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt);
+fs/susfs.c:327:		no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path.mnt);
+fs/susfs.c:346:	no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path.mnt);
+===== VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT =====
+fs/namespace.c:301:	if (unlikely(mnt->mnt->mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+fs/namespace.c:304:	if (unlikely(mnt->mnt.mnt_flags & VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT))
+fs/namespace.c:1491:		ns_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+fs/namespace.c:1498:		mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
+include/linux/susfs_def.h:65:#define VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT 0x80000000 /* used for mounts that are unshared by ksu process */
+===== DEFAULT_KSU_MNT_ID =====
+fs/proc_namespace.c:109:	if (unlikely(r->mnt_id >= DEFAULT_KSU_MNT_ID))
+fs/proc_namespace.c:150:	if (unlikely(r->mnt_id >= DEFAULT_KSU_MNT_ID))
+fs/proc_namespace.c:219:	if (unlikely(r->mnt_id >= DEFAULT_KSU_MNT_ID))
+fs/namespace.c:87:	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+fs/namespace.c:92:	       mnt->mnt_id >= DEFAULT_KSU_MNT_ID;
+fs/namespace.c:111:	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID) {
+fs/namespace.c:120:	       mnt->mnt_id >= DEFAULT_KSU_MNT_ID;
+fs/namespace.c:271:// Our own mnt_alloc_id() that assigns mnt_id starting from DEFAULT_KSU_MNT_ID
+fs/namespace.c:274:	int res = ida_alloc_min(&susfs_mnt_id_ida, DEFAULT_KSU_MNT_ID, GFP_KERNEL);
+fs/namespace.c:295:	if (unlikely(mnt->mnt_id >= DEFAULT_KSU_MNT_ID)) {
+fs/namespace.c:328:	if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+fs/namespace.c:935:			if (p->mnt_id < DEFAULT_KSU_MNT_ID &&
+fs/namespace.c:939:			if (p->mnt_id < DEFAULT_KSU_MNT_ID &&
+fs/namespace.c:1371:				if (susfs_iter->mnt_id < DEFAULT_KSU_MNT_ID)
+fs/namespace.c:1434:	} else if (old->mnt_id >= DEFAULT_KSU_MNT_ID) {
+fs/namespace.c:1543:				if (susfs_iter->mnt_id < DEFAULT_KSU_MNT_ID)
+fs/namespace.c:2381:			    q->mnt_id < DEFAULT_KSU_MNT_ID) {
+fs/namespace.c:3699:			if (unlikely(q->mnt_id >= DEFAULT_KSU_MNT_ID))
+fs/namespace.c:4329:		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+fs/proc/fd.c:65:			mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+fs/proc/fd.c:66:		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+fs/statfs.c:82:		for (; mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) {}
+include/linux/susfs_def.h:46:#define DEFAULT_KSU_MNT_ID 2000000000 /* used for mounts created or single cloned by ksu process */
