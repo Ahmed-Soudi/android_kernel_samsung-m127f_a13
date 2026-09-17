@@ -1,0 +1,3 @@
+===== OPEN_REDIRECT focused =====
+fs/namei.c:43:#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+===== SUS_MAP focused =====

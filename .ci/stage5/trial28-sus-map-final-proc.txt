@@ -1,0 +1,6 @@
+Stage 5 Trial 28
+Trial27 failed before source push/build because it assumed a 5.15 smaps_rollup statement shape.
+Trial28 discovers and wraps Samsung 4.19's actual smap_gather_stats callsites.
+Also retains the pagemap SUS_MAP adaptation.
+If green, next is final semantic/config/symbol audit and flash-candidate packaging.
+NOT YET A FLASH CANDIDATE.
