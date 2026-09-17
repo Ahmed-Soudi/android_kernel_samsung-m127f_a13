@@ -1,0 +1,5 @@
+Stage 5 Trial 25
+Trial24 proved SUS_MAP/OPEN_REDIRECT core existed but proc callsites were absent.
+Ported SUS_MAP hiding for /proc/PID/maps and /proc/PID/smaps.
+Remaining before flash candidate: map_files/pagemap/smaps_rollup and OPEN_REDIRECT proc/maps spoof paths.
+NOT A FLASH CANDIDATE.
