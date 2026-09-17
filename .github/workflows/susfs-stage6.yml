@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 33
+name: SUSFS Samsung 4.19 Stage 6 - Trial 34
 
 permissions:
   contents: write
@@ -1843,8 +1843,9 @@ jobs:
           end = len(x) if end < 0 else end + 1
 
           real = textwrap.dedent(r"""
-          #ifdef CONFIG_KSU_SUSFS
+          #if defined(CONFIG_KSU_SUSFS) && defined(CONFIG_KSU_SUSFS_SUS_MOUNT)
           /* susfs_stage5_trial13_non_sus_mount_semantics */
+          /* susfs_stage6_trial34_gate_non_sus_mount_helpers */
           static inline struct vfsmount *susfs_mount_to_vfsmnt_419(struct mount *mnt)
           {
           #ifdef CONFIG_KDP_NS
@@ -1923,6 +1924,8 @@ jobs:
 
           ! grep -q 'susfs_stage5_trial6_non_sus_mount_bridge' fs/namespace.c
           grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage6_trial34_gate_non_sus_mount_helpers' fs/namespace.c
+          grep -q '#if defined(CONFIG_KSU_SUSFS) && defined(CONFIG_KSU_SUSFS_SUS_MOUNT)' fs/namespace.c
           grep -q 'mnt->mnt_id < DEFAULT_KSU_MNT_ID' fs/namespace.c
           grep -q 'mnt->mnt_id >= DEFAULT_KSU_MNT_ID' fs/namespace.c
           grep -q 'mnt = mnt->mnt_parent' fs/namespace.c
@@ -3495,11 +3498,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL33-MINCORE.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL34-MINCORE.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL33-MINCORE\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL34-MINCORE\n"
           )
           p.write_text(s)
           PY
@@ -3573,7 +3576,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 33 final audit.
+          Stage 6 Trial 34 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3586,7 +3589,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial33-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial34-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3612,7 +3615,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 33 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 34 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3662,7 +3665,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 33 FLASH CANDIDATE"
+           echo "Stage 6 Trial 34 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3678,12 +3681,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial33-mincore
+          name: m127f-susfs-stage6-trial34-mincore
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL33-MINCORE.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL34-MINCORE.zip
 
