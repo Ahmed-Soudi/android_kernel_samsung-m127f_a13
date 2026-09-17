@@ -1,0 +1,6 @@
+Stage 5 Trial 13
+Green Trial 12 semantic audit consumed.
+Trial-6 identity mount bridge replaced by current 2.3.0 parent-walk semantics.
+Samsung CONFIG_KDP_NS vfsmount pointer layout adapted explicitly.
+Temporary DEFAULT_SUS_MNT_ID aliases remain for the next mount-allocation semantic batch.
+NOT A FLASH CANDIDATE.
