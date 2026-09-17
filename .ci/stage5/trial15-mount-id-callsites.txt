@@ -1,0 +1,6 @@
+Stage 5 Trial 15
+Trial 14 reached the real kernel compile.
+Migrated remaining live 1.5.7 DEFAULT_SUS_MNT_ID callsites to DEFAULT_KSU_MNT_ID.
+Hard-gated the live fs/include tree against all three obsolete DEFAULT_SUS_MNT* names.
+Trial 13 parent-walk and Trial 14 normal-IDA/unshare semantics retained.
+NOT A FLASH CANDIDATE.
