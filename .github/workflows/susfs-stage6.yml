@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 32
+name: SUSFS Samsung 4.19 Stage 6 - Trial 33
 
 permissions:
   contents: write
@@ -3390,19 +3390,19 @@ jobs:
           d = p.read_text()
           symbols = [
               "CONFIG_KSU_SUSFS=y",
-              "CONFIG_KSU_SUSFS_SUS_PATH=y",
-              "CONFIG_KSU_SUSFS_SUS_MOUNT=y",
-              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y",
-              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y",
-              "CONFIG_KSU_SUSFS_SUS_KSTAT=y",
+              "# CONFIG_KSU_SUSFS_SUS_PATH is not set",
+              "# CONFIG_KSU_SUSFS_SUS_MOUNT is not set",
+              "# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set",
+              "# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT is not set",
+              "# CONFIG_KSU_SUSFS_SUS_KSTAT is not set",
               "# CONFIG_KSU_SUSFS_SUS_OVERLAYFS is not set",
               "# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set",
               "# CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT is not set",
-              "CONFIG_KSU_SUSFS_SPOOF_UNAME=y",
+              "# CONFIG_KSU_SUSFS_SPOOF_UNAME is not set",
               "CONFIG_KSU_SUSFS_ENABLE_LOG=y",
-              "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y",
-              "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y",
-              "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y",
+              "# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set",
+              "# CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG is not set",
+              "# CONFIG_KSU_SUSFS_OPEN_REDIRECT is not set",
           ]
           for sym in symbols:
               name = sym.replace("# ", "").split("=", 1)[0].split(" is not set", 1)[0]
@@ -3463,9 +3463,9 @@ jobs:
               "          set -euxo pipefail",
               "          grep -E '^CONFIG_KSU_SUSFS(=|_)' .config || true",
               "          grep -q '^CONFIG_KSU_SUSFS=y$' .config",
-              "          grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' .config",
-              "          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' .config",
-              "          grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' .config",
+              "          grep -q '^# CONFIG_KSU_SUSFS_SUS_PATH is not set$' .config",
+              "          grep -q '^# CONFIG_KSU_SUSFS_SUS_MOUNT is not set$' .config",
+              "          grep -q '^# CONFIG_KSU_SUSFS_SUS_KSTAT is not set$' .config",
               "          test -s fs/susfs.o",
               "          if ! grep -Eq '(^|[[:space:]])susfs_' System.map; then",
               '            echo "ERROR: SUSFS symbols not linked into final kernel"',
@@ -3495,11 +3495,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL32-STATFIX.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL33-MINCORE.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL32-STATFIX\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL33-MINCORE\n"
           )
           p.write_text(s)
           PY
@@ -3525,7 +3525,7 @@ jobs:
           ! grep -q '^\s*u32 mask = mark->mask & IN_ALL_EVENTS;$' fs/notify/fdinfo.c
           grep -q 'may_create_susfs_samsung419' fs/namei.c
           grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
-          grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
+          grep -q '^# CONFIG_KSU_SUSFS_SUS_MOUNT is not set$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           test -z "$(git -C KernelSU-Next status --porcelain)"
           test "$(find . -name '*.rej' -type f | wc -l)" -eq 0
           git diff --check
@@ -3573,7 +3573,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 32 final audit.
+          Stage 6 Trial 33 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3586,7 +3586,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial32-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial33-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3612,7 +3612,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 32 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 33 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3662,7 +3662,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 32 FLASH CANDIDATE"
+           echo "Stage 6 Trial 33 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3678,12 +3678,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial32
+          name: m127f-susfs-stage6-trial33-mincore
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL32-STATFIX.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL33-MINCORE.zip
 
