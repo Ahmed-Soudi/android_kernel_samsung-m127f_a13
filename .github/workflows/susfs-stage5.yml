@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 5 - Trial 26
+name: SUSFS Samsung 4.19 Stage 5 - Trial 27
 
 permissions:
   contents: write
@@ -3133,6 +3133,124 @@ jobs:
           } > .ci/stage5/trial26-mapfiles-openredirect.txt
 
 
+      - name: Finish SUS_MAP smaps_rollup and pagemap semantics
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path("fs/proc/task_mmu.c")
+          x=p.read_text()
+
+          # Official 2.3.0: skip SUS_MAP VMAs in smaps_rollup's main gather loop.
+          fn=x.find("static int show_smaps_rollup(struct seq_file *m, void *v)")
+          if fn < 0:
+              raise SystemExit("show_smaps_rollup missing")
+          end=x.find("\n}\n", fn)
+          body=x[fn:end]
+
+          if "susfs_stage5_trial27_rollup_main" not in body:
+              needle="\t\tsmap_gather_stats(vma, &mss, 0);\n"
+              repl='''#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+          		/* susfs_stage5_trial27_rollup_main */
+          		if (!vma->vm_file ||
+          		    !SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+          			smap_gather_stats(vma, &mss, 0);
+          #else
+          		smap_gather_stats(vma, &mss, 0);
+          #endif
+          '''
+              if needle not in body:
+                  raise SystemExit("rollup main gather anchor missing")
+              body=body.replace(needle,repl,1)
+
+          # Official 2.3.0 also filters the partial-VMA Case 4 gather.
+          if "susfs_stage5_trial27_rollup_partial" not in body:
+              needle="\t\t\t\tsmap_gather_stats(vma, &mss, last_vma_end);\n"
+              repl='''#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+          				/* susfs_stage5_trial27_rollup_partial */
+          				if (!vma->vm_file ||
+          				    !SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+          					smap_gather_stats(vma, &mss, last_vma_end);
+          #else
+          				smap_gather_stats(vma, &mss, last_vma_end);
+          #endif
+          '''
+              if needle not in body:
+                  raise SystemExit("rollup partial gather anchor missing")
+              body=body.replace(needle,repl,1)
+
+          x=x[:fn]+body+x[end:]
+
+          # Official 2.3.0 pagemap semantics: while mmap_sem is held, skip walking
+          # ranges whose containing file-backed VMA is SUS_MAP.
+          fn=x.find("static ssize_t pagemap_read(")
+          if fn < 0:
+              raise SystemExit("pagemap_read missing")
+          end=x.find("\n}\n", fn)
+          body=x[fn:end]
+
+          if "susfs_stage5_trial27_pagemap" not in body:
+              # Samsung 4.19 equivalent of modern mmap_read_lock_killable is
+              # down_read_killable(&mm->mmap_sem). Insert immediately after its
+              # successful acquisition and before walk_page_range().
+              walk="\t\tret = walk_page_range("
+              wp=body.find(walk)
+              if wp < 0:
+                  raise SystemExit("pagemap walk_page_range anchor missing")
+              line_end=body.find("\n", wp)
+              # We don't replace the call: wrap the complete statement, which may span lines.
+              semi=body.find(";", wp)
+              if semi < 0:
+                  raise SystemExit("pagemap walk statement terminator missing")
+              stmt=body[wp:semi+2]
+              repl='''#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+          		/* susfs_stage5_trial27_pagemap */
+          		{
+          			struct vm_area_struct *susfs_vma =
+          				find_vma(mm, start_vaddr);
+
+          			if (!susfs_vma ||
+          			    susfs_vma->vm_start > start_vaddr ||
+          			    !susfs_vma->vm_file ||
+          			    !SUSFS_IS_INODE_SUS_MAP(file_inode(susfs_vma->vm_file)))
+          ''' + stmt.replace("\t\t", "\t\t\t", 1) + '''		}
+          #else
+          ''' + stmt + '''#endif
+          '''
+              body=body[:wp]+repl+body[semi+2:]
+              x=x[:fn]+body+x[end:]
+
+          p.write_text(x)
+          PY
+
+          grep -q 'susfs_stage5_trial27_rollup_main' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial27_rollup_partial' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial27_pagemap' fs/proc/task_mmu.c
+          grep -q 'SUSFS_IS_INODE_SUS_MAP' fs/proc/task_mmu.c
+
+          # Locked previous semantic batches.
+          grep -q 'susfs_stage5_trial25_sus_map_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial25_sus_map_show_smap' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial26_open_redirect_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial26_map_files_count' fs/proc/base.c
+          grep -q 'susfs_stage5_trial26_open_redirect_proc_readlink' fs/proc/base.c
+          grep -q 'susfs_stage5_trial19_inline_faccessat_no_su' fs/open.c
+          grep -q 'susfs_stage5_trial22_inline_stat_no_su' fs/stat.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+
+          {
+           echo "Stage 5 Trial 27"
+           echo "Trial26 green baseline retained."
+           echo "Finished the remaining official SUSFS 2.3.0 SUS_MAP proc visibility batch:"
+           echo "  - smaps_rollup main VMA gather"
+           echo "  - smaps_rollup partial VMA gather"
+           echo "  - pagemap page-walk suppression for SUS_MAP file-backed VMAs"
+           echo "Samsung 4.19 mmap_sem/find_vma APIs used instead of 5.15 mmap_read_lock/vma_lookup."
+           echo "If green, next is the final flash-candidate semantic/config/symbol audit."
+           echo "NOT YET A FLASH CANDIDATE."
+          } > .ci/stage5/trial27-sus-map-final-proc.txt
+
+
       - name: Verify Stage 5 official 2.3.0 import ordering
         run: |
           set -euxo pipefail
@@ -3409,7 +3527,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage5-trial26-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage5-trial27-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3435,7 +3553,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 5 Trial 26 port map_files and OPEN_REDIRECT proc semantics"
+          git commit -m "CI: SUSFS Stage 5 Trial 27 finish SUS_MAP smaps_rollup pagemap"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3482,7 +3600,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage5-trial26
+          name: m127f-susfs-stage5-trial27
           if-no-files-found: warn
           path: |
             Image
