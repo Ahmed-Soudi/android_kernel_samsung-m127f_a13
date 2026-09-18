@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 42
+name: SUSFS Samsung 4.19 Stage 6 - Trial 43
 
 permissions:
   contents: write
@@ -3273,7 +3273,7 @@ jobs:
 
           echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
-          # Stage 6 Trial 42: with SUSFS core enabled but OPEN_REDIRECT and
+          # Stage 6 Trial 43: with SUSFS core enabled but OPEN_REDIRECT and
           # other behavioral subfeatures disabled, copied_size is compiled
           # but unused in official 2.3.0. Samsung builds with -Werror.
           python3 - <<'PY'
@@ -3298,31 +3298,24 @@ jobs:
           grep -q 'susfs_stage6_trial40_coreonly_copied_size' fs/susfs.c
           grep -q 'susfs_stage6_trial40_coreonly_copy_config_helper' fs/susfs.c
 
-          # Stage 6 Trial 42: keep CONFIG_KSU_SUSFS and fs/susfs.o linked,
-          # but suppress whatever init registration the imported 2.3.0 source
-          # actually uses; Trial41 incorrectly assumed a susfs_init function.
+          # Stage 6 Trial 43: Trial42 proved fs/susfs.c has no initcall.
+          # susfs_init() is an exported/external entry point. Keep the symbol
+          # and core linked, but suppress its only stateful initialization:
+          # INIT_WORK(&susfs_extra_works, susfs_run_extra_works).
           python3 - <<'PY'
           from pathlib import Path
-          import re
           p=Path("fs/susfs.c")
           t=p.read_text()
-          rx=re.compile(r'(?m)^[ \t]*(?:(?:pure|core|postcore|arch|subsys|fs|device|late|rootfs|console|security|early)_initcall(?:_sync)?|module_init)\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*;')
-          matches=list(rx.finditer(t))
-          print("Trial42 init registrations:", [m.group(0).strip() for m in matches])
-          if not matches:
-              for i,line in enumerate(t.splitlines(),1):
-                  if "init" in line.lower():
-                      print(f"INIT-CANDIDATE {i}: {line}")
-              raise SystemExit("Trial42: no init registration macro found in fs/susfs.c")
-          out=[]; pos=0
-          for m in matches:
-              out.append(t[pos:m.start()])
-              out.append("/* susfs_stage6_trial42_core_init_suppressed: "+m.group(0).strip()+" */")
-              pos=m.end()
-          out.append(t[pos:])
-          p.write_text("".join(out))
+          anchor="INIT_WORK(&susfs_extra_works, susfs_run_extra_works);"
+          if anchor not in t:
+              raise SystemExit("Trial43: susfs_init INIT_WORK anchor not found")
+          t=t.replace(anchor,
+              "/* susfs_stage6_trial43_susfs_init_work_suppressed: " + anchor + " */",
+              1)
+          p.write_text(t)
           PY
-          grep -q 'susfs_stage6_trial42_core_init_suppressed' fs/susfs.c
+          grep -q 'susfs_stage6_trial43_susfs_init_work_suppressed' fs/susfs.c
+          grep -q 'void susfs_init(void)' fs/susfs.c
 
       - name: Prepare Stage 5 KSUN SUSFS 2.3.0 compile-probe integration
         run: |
@@ -3526,7 +3519,7 @@ jobs:
               '            echo "ERROR: SUSFS core symbols are not linked"',
               "            exit 1",
               "          fi",
-              '          echo "Stage 6 Trial 42 core-on/no-logging audit passed."',
+              '          echo "Stage 6 Trial 43 core-on/no-logging audit passed."',
               "",
               "",
           ])
@@ -3548,11 +3541,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL42-CORE-NOINIT.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL43-CORE-NOINITWORK.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL42-CORE-NOINIT\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL43-CORE-NOINITWORK\n"
           )
           p.write_text(s)
           PY
@@ -3615,7 +3608,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 42: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
+          echo 'Stage 6 Trial 43: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3627,7 +3620,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 42 final audit.
+          Stage 6 Trial 43 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3640,7 +3633,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial42-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial43-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3666,7 +3659,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 42 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 43 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3716,7 +3709,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 42 FLASH CANDIDATE"
+           echo "Stage 6 Trial 43 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3732,12 +3725,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial42-core-noinit
+          name: m127f-susfs-stage6-trial43-core-noinitwork
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL42-CORE-NOINIT.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL43-CORE-NOINITWORK.zip
 
