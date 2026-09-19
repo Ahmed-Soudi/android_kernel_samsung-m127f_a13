@@ -1,0 +1,7 @@
+Stage 5 Trial 21
+Trial 20 reached vmlinux link.
+Fixed undefined ksu_handle_faccessat by adding a narrow Samsung-4.19 KSUN 3.3 VFS ABI bridge.
+Avoided direct fs/open.o access to KSUN __read_mostly sucompat flag, fixing AArch64 relocation truncation.
+Official SUSFS 2.3.0 faccessat intent retained: no-su bypass plus /system/bin/su redirection for allowed KSU uid.
+Stock KSUN syscall-regs bridge remains intact.
+NOT A FLASH CANDIDATE.
