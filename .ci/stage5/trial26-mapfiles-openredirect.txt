@@ -1,0 +1,8 @@
+Stage 5 Trial 26
+Trial25 green baseline verified.
+Ported official SUSFS 2.3.0 map_files hiding to both Samsung-4.19 readdir passes.
+Ported OPEN_REDIRECT /proc readlink spoofing.
+Ported OPEN_REDIRECT /proc/PID/maps pathname/dev/inode spoofing.
+Remaining focused SUS_MAP batch: smaps_rollup + pagemap.
+Then final flash-candidate audit.
+NOT A FLASH CANDIDATE.
