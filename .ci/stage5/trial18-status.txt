@@ -1,0 +1,6 @@
+Stage 5 Trial 18
+Trial 17 green semantic baseline retained.
+Generated live-tree vs official-2.3.0 focused semantic inventories.
+Purpose: identify the exact remaining SUS_MAP / OPEN_REDIRECT / no-su / KSU hook gaps before flash-candidate integration.
+No Zygisk implementation is embedded.
+NOT A FLASH CANDIDATE.

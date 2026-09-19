@@ -1,0 +1,7 @@
+Stage 5 Trial 23
+Trial 22 failed on one compile error only: fs/stat.c could not see filename_lookup().
+Trial20 already declares filename_lookup() in fs/internal.h.
+Added the missing fs/internal.h include to stat.c.
+Trial22 stat/no-su semantics otherwise unchanged.
+If green, proceed directly to SUS_MAP / OPEN_REDIRECT parity and final flash-candidate audit.
+NOT A FLASH CANDIDATE.
