@@ -31,6 +31,9 @@
 #include <linux/ima.h>
 #include <linux/dnotify.h>
 #include <linux/compat.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 
 #include "internal.h"
 
@@ -357,6 +360,13 @@ SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
  * We do this by temporarily clearing all FS-related capabilities and
  * switching the fsuid/fsgid around to the real ones.
  */
+#ifdef CONFIG_KSU_SUSFS
+extern bool ksu_sucompat_enabled_samsung419(void);
+extern int ksu_handle_faccessat_samsung419(int *dfd,
+                                           const char __user **filename_user,
+                                           int *mode, int *__unused_flags);
+#endif
+
 long do_faccessat(int dfd, const char __user *filename, int mode)
 {
 	const struct cred *old_cred;
@@ -366,6 +376,9 @@ long do_faccessat(int dfd, const char __user *filename, int mode)
 	struct vfsmount *mnt;
 	int res;
 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+#ifdef CONFIG_KSU_SUSFS
+	struct filename *susfs_fname = NULL;
+#endif
 
 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
 		return -EINVAL;
@@ -408,7 +421,39 @@ long do_faccessat(int dfd, const char __user *filename, int mode)
 
 	old_cred = override_creds(override_cred);
 retry:
+#ifdef CONFIG_KSU_SUSFS
+	/* susfs_stage5_trial19_inline_faccessat_no_su */
+	susfs_fname = getname_flags(filename, lookup_flags, NULL);
+	if (IS_ERR(susfs_fname)) {
+		res = PTR_ERR(susfs_fname);
+		goto out;
+	}
+
+	if (!susfs_is_current_proc_no_su() &&
+	    ksu_sucompat_enabled_samsung419()) {
+		const char __user *susfs_user_filename = filename;
+
+/* susfs_stage6_trial53_faccessat_redirect_only */
+		if (ksu_handle_faccessat_samsung419(&dfd, &susfs_user_filename,
+						      &mode, NULL) > 0) {
+			struct filename *redirected_fname;
+
+			redirected_fname = getname_flags(susfs_user_filename,
+							 lookup_flags, NULL);
+			if (IS_ERR(redirected_fname)) {
+				res = PTR_ERR(redirected_fname);
+				goto out;
+			}
+			putname(susfs_fname);
+			susfs_fname = redirected_fname;
+		}
+	}
+
+	res = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);
+	putname(susfs_fname);
+#else
 	res = user_path_at(dfd, filename, lookup_flags, &path);
+#endif
 	if (res)
 		goto out;
 
