@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 59
+name: SUSFS Samsung 4.19 Stage 6 - Trial 60
 
 permissions:
   contents: write
@@ -3339,7 +3339,7 @@ jobs:
 
           echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
-          # Stage 6 Trial 59: with SUSFS core enabled but OPEN_REDIRECT and
+          # Stage 6 Trial 60: with SUSFS core enabled but OPEN_REDIRECT and
           # other behavioral subfeatures disabled, copied_size is compiled
           # but unused in official 2.3.0. Samsung builds with -Werror.
           python3 - <<'PY'
@@ -3364,7 +3364,7 @@ jobs:
           grep -q 'susfs_stage6_trial40_coreonly_copied_size' fs/susfs.c
           grep -q 'susfs_stage6_trial40_coreonly_copy_config_helper' fs/susfs.c
 
-          # Stage 6 Trial 59: Trial42 proved fs/susfs.c has no initcall.
+          # Stage 6 Trial 60: Trial42 proved fs/susfs.c has no initcall.
           # susfs_init() is an exported/external entry point. Keep the symbol
           # and core linked, but suppress its only stateful initialization:
           # INIT_WORK(&susfs_extra_works, susfs_run_extra_works).
@@ -3469,6 +3469,11 @@ jobs:
               depends on KSU_SUSFS
               default y
 
+          config KSU_SUSFS_SUS_MAP
+              bool "Hide suspicious mapped files"
+              depends on KSU_SUSFS
+              default y
+
           endmenu
 
           '''
@@ -3500,19 +3505,20 @@ jobs:
           d = p.read_text()
           symbols = [
               "CONFIG_KSU_SUSFS=y",
-              "# CONFIG_KSU_SUSFS_SUS_PATH is not set",
-              "# CONFIG_KSU_SUSFS_SUS_MOUNT is not set",
-              "# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set",
-              "# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT is not set",
-              "# CONFIG_KSU_SUSFS_SUS_KSTAT is not set",
+              "CONFIG_KSU_SUSFS_SUS_PATH=y",
+              "CONFIG_KSU_SUSFS_SUS_MOUNT=y",
+              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y",
+              "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y",
+              "CONFIG_KSU_SUSFS_SUS_KSTAT=y",
               "# CONFIG_KSU_SUSFS_SUS_OVERLAYFS is not set",
               "# CONFIG_KSU_SUSFS_TRY_UMOUNT is not set",
               "# CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT is not set",
-              "# CONFIG_KSU_SUSFS_SPOOF_UNAME is not set",
+              "CONFIG_KSU_SUSFS_SPOOF_UNAME=y",
               "# CONFIG_KSU_SUSFS_ENABLE_LOG is not set",
-              "# CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS is not set",
-              "# CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG is not set",
-              "# CONFIG_KSU_SUSFS_OPEN_REDIRECT is not set",
+              "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y",
+              "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y",
+              "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y",
+              "CONFIG_KSU_SUSFS_SUS_MAP=y",
           ]
           for sym in symbols:
               name = sym.replace("# ", "").split("=", 1)[0].split(" is not set", 1)[0]
@@ -3522,7 +3528,7 @@ jobs:
               d = "\n".join(lines) + "\n"
           p.write_text(d)
 
-          print("Stage 4 minimal KSUN SUSFS compile-probe glue prepared")
+          print("Stage 6 Trial60 full SUSFS hiding configuration prepared")
           PY
 
           git -C KernelSU-Next diff --binary \
@@ -3573,16 +3579,20 @@ jobs:
               "          set -euxo pipefail",
               "          grep -E '^CONFIG_KSU_SUSFS(=|_)' .config || true",
               "          grep -q '^CONFIG_KSU_SUSFS=y$' .config",
-              "          if grep -Eq '^CONFIG_KSU_SUSFS_(SUS_PATH|SUS_MOUNT|SUS_KSTAT|SUS_MAP|TRY_UMOUNT|SPOOF_UNAME|ENABLE_LOG|HIDE_KSU_SUSFS_SYMBOLS|SPOOF_CMDLINE_OR_BOOTCONFIG|OPEN_REDIRECT)=y$' .config; then",
-              '            echo "ERROR: Trial 37 requires SUSFS core only; a behavioral/logging feature is enabled"',
-              "            exit 1",
-              "          fi",
+              "          for cfg in SUS_PATH SUS_MOUNT SUS_KSTAT SUS_MAP SPOOF_UNAME HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do",
+              '            grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" .config || { echo "ERROR: required SUSFS feature ${cfg} is not enabled"; exit 1; }',
+              "          done",
+              "          grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y$' .config",
+              "          grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y$' .config",
+              "          ! grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y$' .config",
               "          test -s fs/susfs.o",
               "          if ! grep -Eq '(^|[[:space:]])susfs_' System.map; then",
               '            echo "ERROR: SUSFS core symbols are not linked"',
               "            exit 1",
               "          fi",
-              '          echo "Stage 6 Trial 59 core-on/no-logging audit passed."',
+              "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c",
+              "          ! grep -R -n -E 'susfs_stage6_trial(48|49|51|54|56|57|58)_.*(bypass|off)' fs KernelSU-Next/kernel 2>/dev/null || true",
+              '          echo "Stage 6 Trial 60 full-hiding config audit passed."',
               "",
               "",
           ])
@@ -3604,11 +3614,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL59-FACCESSAT-OWNERSHIP.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL60-FULL-HIDING.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL59-FACCESSAT-OWNERSHIP\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL60-FULL-HIDING\n"
           )
           p.write_text(s)
           PY
@@ -3671,7 +3681,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 59: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
+          echo 'Stage 6 Trial 60: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3683,7 +3693,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 59 final audit.
+          Stage 6 Trial 60 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3696,7 +3706,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial59-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial60-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3722,7 +3732,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 59 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 60 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3808,6 +3818,30 @@ jobs:
 
           echo "Trial59: full faccessat SUSFS path ACTIVE; only the post-filename_lookup double putname is removed."
 
+      - name: Trial 60 audit full hiding surface before build
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # No diagnostic faccessat bypass may survive.
+          ! grep -q 'faccessat_block_body_off' fs/open.c
+          ! grep -q 'faccessat_helper_call_bypassed' fs/open.c
+
+          # Both Samsung 4.19 filename-ownership fixes must be present.
+          grep -q 'susfs_stage6_trial32_stat_filename_ownership' fs/stat.c
+          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c
+
+          # Core hiding surfaces ported in Stage 5 must still exist.
+          grep -q 'susfs_stage5_trial13_non_sus_mount_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial16_zygote_lookup_semantics' fs/namespace.c
+          grep -q 'susfs_stage5_trial25_sus_map_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial25_sus_map_show_smap' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial26_open_redirect_proc_readlink' fs/proc/base.c
+          grep -q 'susfs_stage5_trial26_open_redirect_show_map' fs/proc/task_mmu.c
+          grep -q 'susfs_stage5_trial28_pagemap' fs/proc/task_mmu.c
+
+          echo "Trial60: full hiding source surface present; proceeding to compile."
+
       - name: Execute Stage 4 build recipe
         run: |
           set -euxo pipefail
@@ -3854,7 +3888,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 59 FLASH CANDIDATE"
+           echo "Stage 6 Trial 60 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3870,12 +3904,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial59-faccessat-ownership
+          name: m127f-susfs-stage6-trial60-full-hiding
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL59-FACCESSAT-OWNERSHIP.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL60-FULL-HIDING.zip
 
