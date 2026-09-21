@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 58
+name: SUSFS Samsung 4.19 Stage 6 - Trial 59
 
 permissions:
   contents: write
@@ -3339,7 +3339,7 @@ jobs:
 
           echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
-          # Stage 6 Trial 58: with SUSFS core enabled but OPEN_REDIRECT and
+          # Stage 6 Trial 59: with SUSFS core enabled but OPEN_REDIRECT and
           # other behavioral subfeatures disabled, copied_size is compiled
           # but unused in official 2.3.0. Samsung builds with -Werror.
           python3 - <<'PY'
@@ -3364,7 +3364,7 @@ jobs:
           grep -q 'susfs_stage6_trial40_coreonly_copied_size' fs/susfs.c
           grep -q 'susfs_stage6_trial40_coreonly_copy_config_helper' fs/susfs.c
 
-          # Stage 6 Trial 58: Trial42 proved fs/susfs.c has no initcall.
+          # Stage 6 Trial 59: Trial42 proved fs/susfs.c has no initcall.
           # susfs_init() is an exported/external entry point. Keep the symbol
           # and core linked, but suppress its only stateful initialization:
           # INIT_WORK(&susfs_extra_works, susfs_run_extra_works).
@@ -3582,7 +3582,7 @@ jobs:
               '            echo "ERROR: SUSFS core symbols are not linked"',
               "            exit 1",
               "          fi",
-              '          echo "Stage 6 Trial 58 core-on/no-logging audit passed."',
+              '          echo "Stage 6 Trial 59 core-on/no-logging audit passed."',
               "",
               "",
           ])
@@ -3604,11 +3604,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL58-FACCESSAT-SHELLOFF.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL59-FACCESSAT-OWNERSHIP.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL58-FACCESSAT-SHELLOFF\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL59-FACCESSAT-OWNERSHIP\n"
           )
           p.write_text(s)
           PY
@@ -3671,7 +3671,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 58: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
+          echo 'Stage 6 Trial 59: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3683,7 +3683,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 58 final audit.
+          Stage 6 Trial 59 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3696,7 +3696,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial58-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial59-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3722,7 +3722,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 58 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 59 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3747,54 +3747,66 @@ jobs:
 
           echo "Trial46 inventory complete; no guessed callsite is required."
 
-      - name: Trial 58 bypass faccessat block body and preserve compile
+      - name: Trial 59 fix Samsung 4.19 faccessat filename ownership
         shell: bash
         run: |
           set -euxo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          p=Path("fs/open.c")
-          t=p.read_text()
-          lines=t.splitlines(True)
-          out=[]; i=0; changed=0
-          while i < len(lines):
-              if lines[i].strip() == "#ifdef CONFIG_KSU_SUSFS":
-                  j=i+1; depth=1
-                  while j < len(lines) and depth:
-                      st=lines[j].strip()
-                      if st.startswith("#if"): depth += 1
-                      elif st == "#endif" or st.startswith("#endif "): depth -= 1
-                      j += 1
-                  b="".join(lines[i:j])
-                  if "ksu_handle_faccessat_samsung419" in b:
-                      b=b.replace("#ifdef CONFIG_KSU_SUSFS",
-                          "#if defined(CONFIG_KSU_SUSFS) && 0 /* susfs_stage6_trial58_faccessat_block_body_off */",1)
-                      changed += 1
-                  out.append(b); i=j
-              else:
-                  out.append(lines[i]); i+=1
-          if changed < 1:
-              raise SystemExit("Trial58: faccessat SUSFS block not found")
-          p.write_text("".join(out))
-          print("Trial57 disabled faccessat blocks:", changed)
-          PY
-          grep -q 'susfs_stage6_trial58_faccessat_block_body_off' fs/open.c
-          echo "Trial58: complete faccessat SUSFS block disabled; other open.c SUSFS blocks remain active."
-          # With the complete faccessat SUSFS body compiled out, the declaration
-          # remains intentionally unused. Keep the isolation exact and silence -Werror.
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path("fs/open.c")
-          t=p.read_text()
-          old="struct filename *susfs_fname = NULL;"
-          new="struct filename *susfs_fname __maybe_unused = NULL; /* susfs_stage6_trial58_fname_compile_guard */"
+
+          p = Path("fs/open.c")
+          t = p.read_text()
+
+          old = (
+              "\tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);\n"
+              "\tputname(susfs_fname);\n"
+              "#else\n"
+          )
+          new = (
+              "\t/*\n"
+              "\t * susfs_stage6_trial59_faccessat_filename_ownership\n"
+              "\t *\n"
+              "\t * Samsung/Linux 4.19 filename_lookup() consumes the struct\n"
+              "\t * filename reference. This matches the ownership rule that\n"
+              "\t * caused Trial31's stat-path putname() panic. Do not release\n"
+              "\t * susfs_fname a second time after filename_lookup().\n"
+              "\t */\n"
+              "\tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);\n"
+              "#else\n"
+          )
+
           if old not in t:
-              raise SystemExit("Trial58: susfs_fname declaration anchor missing")
-          t=t.replace(old,new,1)
+              raise SystemExit(
+                  "Trial59: expected faccessat filename_lookup + putname ownership anchor missing"
+              )
+
+          t = t.replace(old, new, 1)
           p.write_text(t)
           PY
-          grep -q 'susfs_stage6_trial58_fname_compile_guard' fs/open.c
-          echo "Trial58: susfs_fname marked __maybe_unused only because faccessat body is intentionally disabled."
+
+          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c
+          grep -q 'ksu_handle_faccessat_samsung419(&dfd, &susfs_user_filename' fs/open.c
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c
+
+          python3 - <<'PY'
+          from pathlib import Path
+          t = Path("fs/open.c").read_text()
+          marker = "susfs_stage6_trial59_faccessat_filename_ownership"
+          pos = t.find(marker)
+          if pos < 0:
+              raise SystemExit("Trial59 marker missing")
+          window = t[pos:pos+900]
+          needle = "filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);"
+          if needle not in window:
+              raise SystemExit("Trial59 filename_lookup missing near ownership marker")
+          lookup = window.find(needle)
+          tail = window[lookup:lookup+220]
+          if "putname(susfs_fname)" in tail:
+              raise SystemExit("Trial59: double-put still present after filename_lookup")
+          print("Trial59: faccessat filename_lookup ownership audit passed")
+          PY
+
+          echo "Trial59: full faccessat SUSFS path ACTIVE; only the post-filename_lookup double putname is removed."
 
       - name: Execute Stage 4 build recipe
         run: |
@@ -3842,7 +3854,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 58 FLASH CANDIDATE"
+           echo "Stage 6 Trial 59 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -3858,12 +3870,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial58-faccessat-shelloff
+          name: m127f-susfs-stage6-trial59-faccessat-ownership
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL58-FACCESSAT-SHELLOFF.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL59-FACCESSAT-OWNERSHIP.zip
 
