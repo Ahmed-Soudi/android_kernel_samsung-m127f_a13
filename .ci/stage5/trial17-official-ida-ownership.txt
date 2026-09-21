@@ -1,0 +1,8 @@
+Stage 5 Trial 17
+Trial 16 green baseline retained.
+Corrected Trial 14 assumption after re-checking official SUSFS 2.3.0 patch.
+High-range mount IDs use dedicated susfs_mnt_id_ida.
+High-range group IDs use dedicated susfs_mnt_group_ida.
+Modern VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT behavior retained.
+Trial 16 zygote/zygote_next lookup semantics retained.
+NOT A FLASH CANDIDATE.

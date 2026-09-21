@@ -1,0 +1,208 @@
+diff --git a/kernel/Kconfig b/kernel/Kconfig
+index c7701661..f9b87dcd 100644
+--- a/kernel/Kconfig
++++ b/kernel/Kconfig
+@@ -35,4 +35,84 @@ config KSU_DISABLE_POLICY
+ 	  Escalation will always use the default full root profile, and
+ 	  non-root handling will follow the global umount policy only.
+ 
++
++menu "KernelSU - SUSFS Stage4 compile probe"
++
++config KSU_SUSFS
++    bool "SUSFS Stage4 compile probe"
++    depends on KSU
++    default y
++
++config KSU_SUSFS_SUS_PATH
++    bool "SUS path"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_MOUNT
++    bool "SUS mount"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT
++    bool "Auto add KSU default mounts"
++    depends on KSU_SUSFS_SUS_MOUNT
++    default y
++
++config KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT
++    bool "Auto add bind mounts"
++    depends on KSU_SUSFS_SUS_MOUNT
++    default y
++
++config KSU_SUSFS_SUS_KSTAT
++    bool "SUS kstat"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_OVERLAYFS
++    bool "SUS overlayfs"
++    depends on KSU_SUSFS
++    default n
++
++config KSU_SUSFS_TRY_UMOUNT
++    bool "TRY_UMOUNT"
++    depends on KSU_SUSFS
++    default n
++
++config KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT
++    bool "Auto add bind mounts to TRY_UMOUNT"
++    depends on KSU_SUSFS_TRY_UMOUNT
++    default n
++
++config KSU_SUSFS_SPOOF_UNAME
++    bool "Spoof uname"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_ENABLE_LOG
++    bool "SUSFS log"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS
++    bool "Hide KSU/SUSFS kallsyms"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
++    bool "Spoof cmdline/bootconfig"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_OPEN_REDIRECT
++    bool "Open redirect"
++    depends on KSU_SUSFS
++    default y
++
++config KSU_SUSFS_SUS_MAP
++    bool "Hide suspicious mapped files"
++    depends on KSU_SUSFS
++    default y
++
++endmenu
++
+ endmenu
+diff --git a/kernel/core/init.c b/kernel/core/init.c
+index c158df8e..2ba87bbe 100644
+--- a/kernel/core/init.c
++++ b/kernel/core/init.c
+@@ -5,6 +5,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/sched.h>
+ #include <linux/workqueue.h>
++#include <linux/susfs.h>
+ 
+ #include "policy/allowlist.h"
+ #include "policy/app_profile.h"
+@@ -116,6 +117,10 @@ int __init kernelsu_init(void)
+ 	pr_alert("**                                                         **");
+ 	pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
+ 	pr_alert("*************************************************************");
++#endif
++#ifdef CONFIG_KSU_SUSFS
++	/* susfs_stage6_trial61_official_susfs_init */
++	susfs_init();
+ #endif
+ 	if (allow_shell) {
+ 		pr_alert("shell is allowed at init!");
+diff --git a/kernel/feature/sucompat.c b/kernel/feature/sucompat.c
+index 553cb6ae..c5f559d9 100644
+--- a/kernel/feature/sucompat.c
++++ b/kernel/feature/sucompat.c
+@@ -75,6 +75,69 @@ static char __user *empty_user_path(void)
+ 
+ static const char su_path[] = SU_PATH;
+ 
++/* susfs_stage5_trial21_samsung419_vfs_facessat_bridge
++ *
++ * Samsung 4.19 manual-VFS bridge for SUSFS 2.3.0.  KSUN 3.3.0's stock
++ * sucompat path on this tree is syscall-regs based, so expose the narrow
++ * current-SUSFS faccessat ABI without replacing the proven syscall bridge.
++ */
++bool ksu_sucompat_enabled_samsung419(void)
++{
++	return READ_ONCE(ksu_su_compat_enabled);
++}
++
++/* susfs_stage5_trial22_samsung419_vfs_stat_bridge */
++int ksu_handle_stat_samsung419(int *dfd,
++			       const char __user **filename_user,
++			       int *flags)
++{
++	static const char sh_path[] = SH_PATH;
++	char path[sizeof(su_path) + 1] = { 0 };
++	char __user *replacement;
++
++	if (!filename_user || !*filename_user)
++		return 0;
++	if (!ksu_is_allow_uid_for_current(current_uid().val))
++		return 0;
++
++	if (strncpy_from_user(path, *filename_user, sizeof(path)) < 0)
++		return 0;
++
++	if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
++		replacement = userspace_stack_buffer(sh_path, sizeof(sh_path));
++		if (replacement)
++			*filename_user = replacement;
++	}
++	return 0;
++}
++
++int ksu_handle_faccessat_samsung419(int *dfd,
++				    const char __user **filename_user,
++				    int *mode, int *__unused_flags)
++{
++	static const char sh_path[] = SH_PATH;
++	char path[sizeof(su_path) + 1] = { 0 };
++	char __user *replacement;
++
++	if (!filename_user || !*filename_user)
++		return 0;
++	if (!ksu_is_allow_uid_for_current(current_uid().val))
++		return 0;
++
++	if (strncpy_from_user(path, *filename_user, sizeof(path)) < 0)
++		return 0;
++
++/* susfs_stage6_trial53_faccessat_redirect_result */
++	if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
++		replacement = userspace_stack_buffer(sh_path, sizeof(sh_path));
++		if (replacement) {
++			*filename_user = replacement;
++			return 1;
++		}
++	}
++	return 0;
++}
++
+ static bool is_ksud_exists()
+ {
+ 	struct path path;
+diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
+index 88c79568..f11158a6 100644
+--- a/kernel/selinux/selinux.c
++++ b/kernel/selinux/selinux.c
+@@ -226,3 +226,17 @@ void escape_to_root_for_adb_root(void)
+     }
+     commit_creds(cred);
+ }
++
++
++#ifdef CONFIG_KSU_SUSFS
++/* Stage 5 2.3.0 compile-probe adapters for Samsung 4.19. */
++bool susfs_is_current_ksu_domain(void)
++{
++    return is_ksu_domain();
++}
++
++bool susfs_is_current_zygote_domain(void)
++{
++    return is_zygote(current_cred());
++}
++#endif
