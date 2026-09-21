@@ -1,0 +1,1 @@
+Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow
