@@ -1,0 +1,8 @@
+Stage 5 Trial 14
+Trial 13 mount parent-walk semantics retained.
+Removed temporary DEFAULT_SUS_MNT_ID* aliases.
+High KSU mount/group IDs now use the normal kernel IDAs.
+Unshare reused-ID ownership now uses VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT.
+Samsung CONFIG_KDP_NS flag storage adapted.
+Zygote mount-ID spoof backup remains intentionally for the next semantic batch.
+NOT A FLASH CANDIDATE.
