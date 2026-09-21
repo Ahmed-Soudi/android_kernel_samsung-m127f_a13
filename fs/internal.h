@@ -63,6 +63,8 @@ void dlog_hook_rmdir(struct dentry *, struct path *);
  * namei.c
  */
 extern int user_path_mountpoint_at(int, const char __user *, unsigned int, struct path *);
+int filename_lookup(int dfd, struct filename *name, unsigned flags,
+		    struct path *path, struct path *root);
 long do_mknodat(int dfd, const char __user *filename, umode_t mode,
 		unsigned int dev);
 long do_mkdirat(int dfd, const char __user *pathname, umode_t mode);
