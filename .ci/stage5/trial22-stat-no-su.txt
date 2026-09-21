@@ -1,0 +1,7 @@
+Stage 5 Trial 22
+Trial 21 green baseline verified.
+Ported official SUSFS 2.3.0 vfs_statx no-su/sucompat flow to Samsung 4.19.
+Added narrow KSUN 3.3 Samsung-4.19 stat bridge matching Trial21 faccessat strategy.
+Reuses Trial20 fs-internal filename_lookup adaptation.
+Next after green: SUS_MAP / OPEN_REDIRECT parity + final flash-candidate audit.
+NOT A FLASH CANDIDATE.
