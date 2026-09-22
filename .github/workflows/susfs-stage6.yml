@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 69
+name: SUSFS Samsung 4.19 Stage 6 - Trial 70
 
 permissions:
   contents: write
@@ -3339,7 +3339,7 @@ jobs:
 
           echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
-          # Stage 6 Trial 69: with SUSFS core enabled but OPEN_REDIRECT and
+          # Stage 6 Trial 70: with SUSFS core enabled but OPEN_REDIRECT and
           # other behavioral subfeatures disabled, copied_size is compiled
           # but unused in official 2.3.0. Samsung builds with -Werror.
           python3 - <<'PY'
@@ -3364,7 +3364,7 @@ jobs:
           grep -q 'susfs_stage6_trial40_coreonly_copied_size' fs/susfs.c
           grep -q 'susfs_stage6_trial40_coreonly_copy_config_helper' fs/susfs.c
 
-          # Stage 6 Trial 69: Trial42 proved fs/susfs.c has no initcall.
+          # Stage 6 Trial 70: Trial42 proved fs/susfs.c has no initcall.
           # susfs_init() is an exported/external entry point. Keep the symbol
           # and core linked, but suppress its only stateful initialization:
           # INIT_WORK(&susfs_extra_works, susfs_run_extra_works).
@@ -3510,7 +3510,7 @@ jobs:
           include_anchor = "#include <linux/workqueue.h>\n"
           if "#include <linux/susfs.h>" not in c:
               if include_anchor not in c:
-                  raise SystemExit("Trial69: KSUN core/init.c include anchor missing")
+                  raise SystemExit("Trial70: KSUN core/init.c include anchor missing")
               c = c.replace(
                   include_anchor,
                   include_anchor + "#include <linux/susfs.h>\n",
@@ -3521,14 +3521,14 @@ jobs:
           init_block = (
               "#endif\n"
               "#ifdef CONFIG_KSU_SUSFS\n"
-              "\t/* susfs_stage6_trial69_official_susfs_init */\n"
-              "\tif (0) /* susfs_stage6_trial69_susfs_init_runtime_off */\n\t\tsusfs_init();\n"
+              "\t/* susfs_stage6_trial70_official_susfs_init */\n"
+              "\tif (0) /* susfs_stage6_trial70_susfs_init_runtime_off */\n\t\tsusfs_init();\n"
               "#endif\n"
               "\tif (allow_shell) {"
           )
-          if "susfs_stage6_trial69_official_susfs_init" not in c:
+          if "susfs_stage6_trial70_official_susfs_init" not in c:
               if init_anchor not in c:
-                  raise SystemExit("Trial69: kernelsu_init() SUSFS init anchor missing")
+                  raise SystemExit("Trial70: kernelsu_init() SUSFS init anchor missing")
               c = c.replace(init_anchor, init_block, 1)
 
           p.write_text(c)
@@ -3550,7 +3550,7 @@ jobs:
               "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y",
               "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y",
               "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y",
-              "CONFIG_KSU_SUSFS_SUS_MAP=y",
+              "# CONFIG_KSU_SUSFS_SUS_MAP is not set",
           ]
           for sym in symbols:
               name = sym.replace("# ", "").split("=", 1)[0].split(" is not set", 1)[0]
@@ -3595,7 +3595,7 @@ jobs:
               "          grep -n 'KernelSU - SUSFS Stage4 compile probe' KernelSU-Next/kernel/Kconfig",
               "          grep -n 'susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c",
               "          grep -n 'susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c",
-              "          grep -n 'susfs_stage6_trial69_official_susfs_init' KernelSU-Next/kernel/core/init.c",
+              "          grep -n 'susfs_stage6_trial70_official_susfs_init' KernelSU-Next/kernel/core/init.c",
               "          grep -n '#include <linux/susfs.h>' KernelSU-Next/kernel/core/init.c",
               "",
               "",
@@ -3613,8 +3613,9 @@ jobs:
               "          set -euxo pipefail",
               "          grep -E '^CONFIG_KSU_SUSFS(=|_)' .config || true",
               "          grep -q '^CONFIG_KSU_SUSFS=y$' .config",
+              "          ! grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' .config",
               "          ! grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' .config",
-              "          for cfg in SUS_MAP SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do",
+              "          for cfg in SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do",
               '            grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" .config || { echo "ERROR: required SUSFS feature ${cfg} is not enabled"; exit 1; }',
               "          done",
               "          ! grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' .config",
@@ -3629,7 +3630,7 @@ jobs:
               "          fi",
               "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c",
               "          ! grep -R -n -E 'susfs_stage6_trial(48|49|51|54|56|57|58)_.*(bypass|off)' fs KernelSU-Next/kernel 2>/dev/null || true",
-              '          echo "Stage 6 Trial 69 full-hiding config audit passed."',
+              '          echo "Stage 6 Trial 70 full-hiding config audit passed."',
               "",
               "",
           ])
@@ -3651,11 +3652,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL69-NOPATH.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL70-NOSUSMAP.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL69-NOPATH\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL70-NOSUSMAP\n"
           )
           p.write_text(s)
           PY
@@ -3681,7 +3682,7 @@ jobs:
           ! grep -q '^\s*u32 mask = mark->mask & IN_ALL_EVENTS;$' fs/notify/fdinfo.c
           grep -q 'may_create_susfs_samsung419' fs/namei.c
           grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
-          for cfg in SUS_MAP SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
+          for cfg in SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
             grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" arch/arm64/configs/exynos850-m12nsxx_defconfig || {
               echo "ERROR: Trial61 source defconfig left current SUSFS 2.3.0 feature ${cfg} disabled"
               exit 1
@@ -3725,7 +3726,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 69: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
+          echo 'Stage 6 Trial 70: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3737,7 +3738,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 69 final audit.
+          Stage 6 Trial 70 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3750,7 +3751,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial69-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial70-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3776,7 +3777,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 69 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 70 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3887,7 +3888,7 @@ jobs:
           grep -q 'susfs_stage5_trial26_open_redirect_show_map' fs/proc/task_mmu.c
           grep -q 'susfs_stage5_trial28_pagemap' fs/proc/task_mmu.c
 
-          echo "Trial69: full hiding source surface present; proceeding to compile."
+          echo "Trial70: full hiding source surface present; proceeding to compile."
 
       - name: Trial 63 retain SUS_MAP logical-op grouping for Samsung clang
         shell: bash
@@ -3916,30 +3917,30 @@ jobs:
                   t = t.replace(old, new, 1)
                   changed += 1
               elif new not in t:
-                  raise SystemExit(f"Trial69: expected SUS_MAP condition missing: {old}")
+                  raise SystemExit(f"Trial70: expected SUS_MAP condition missing: {old}")
 
-          marker = "/* susfs_stage6_trial69_sus_map_logical_grouping */"
+          marker = "/* susfs_stage6_trial70_sus_map_logical_grouping */"
           if marker not in t:
               anchor = "!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))"
               if anchor not in t:
-                  raise SystemExit("Trial69: grouped rollup condition missing")
+                  raise SystemExit("Trial70: grouped rollup condition missing")
               t = t.replace(anchor, marker + "\n\t\t\t    " + anchor, 1)
 
           p.write_text(t)
           print("Trial62 SUS_MAP grouping fixes applied:", changed)
           PY
 
-          grep -q 'susfs_stage6_trial69_sus_map_logical_grouping' fs/proc/task_mmu.c
+          grep -q 'susfs_stage6_trial70_sus_map_logical_grouping' fs/proc/task_mmu.c
           grep -q '!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))' fs/proc/task_mmu.c
           grep -q '!(SUSFS_IS_INODE_SUS_MAP(file_inode(susfs_vma->vm_file)))' fs/proc/task_mmu.c
 
           # No capability is disabled by this trial.
           grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
-          for cfg in SUS_MAP SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
+          for cfg in SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
             grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" arch/arm64/configs/exynos850-m12nsxx_defconfig
           done
 
-          echo "Trial69: SUS_MAP precedence warning fixed; full SUSFS 2.3.0 feature set remains enabled."
+          echo "Trial70: SUS_MAP precedence warning fixed; full SUSFS 2.3.0 feature set remains enabled."
 
       - name: Trial 64 isolate SUSFS runtime init only
         shell: bash
@@ -3950,48 +3951,47 @@ jobs:
           # integration patch. Audit the patch here; the build recipe applies it
           # later and re-audits the live KernelSU tree.
           test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial69_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial69_official_susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial70_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial70_official_susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
           grep -q 'susfs_init();' .github/patches/stage5-ksun-susfs-compile-probe.patch
 
           # Every intended 2.3.0 feature remains enabled; only runtime susfs_init()
           # execution is suppressed for this diagnostic trial.
-          for cfg in SUS_MAP SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
+          for cfg in SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
             grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" arch/arm64/configs/exynos850-m12nsxx_defconfig
           done
           grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q '^# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q '^# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT is not set$' arch/arm64/configs/exynos850-m12nsxx_defconfig
 
-          echo "Trial69: full SUSFS 2.3.0 feature set ON; only susfs_init() runtime execution OFF."
+          echo "Trial70: full SUSFS 2.3.0 feature set ON; only susfs_init() runtime execution OFF."
 
-      - name: Trial 69 isolate SUS_PATH
+      - name: Trial 70 isolate SUS_MAP
         shell: bash
         run: |
           set -euxo pipefail
 
-          # Trial68 was CI GREEN + BOOTLOOP with SUS_KSTAT and SUS_MOUNT off.
-          # Trial69 additionally disables only SUS_PATH. Diagnostic only:
-          # the final target restores every SUSFS 2.3.0 feature after repair.
+          # Trial69 was CI GREEN + BOOTLOOP with SUS_PATH, SUS_KSTAT and
+          # SUS_MOUNT already off. Trial70 additionally disables SUS_MAP.
+          # This is diagnostic only; the final target restores every feature.
           grep -q '^CONFIG_KSU_SUSFS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           ! grep -q '^CONFIG_KSU_SUSFS_SUS_PATH=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           ! grep -q '^CONFIG_KSU_SUSFS_SUS_KSTAT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           ! grep -q '^CONFIG_KSU_SUSFS_SUS_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
-          ! grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
-          ! grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
+          ! grep -q '^CONFIG_KSU_SUSFS_SUS_MAP=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
 
-          for cfg in SUS_MAP SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
+          for cfg in SPOOF_UNAME ENABLE_LOG HIDE_KSU_SUSFS_SYMBOLS SPOOF_CMDLINE_OR_BOOTCONFIG OPEN_REDIRECT; do
             grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" arch/arm64/configs/exynos850-m12nsxx_defconfig || {
-              echo "ERROR: Trial69 unintentionally disabled ${cfg}"
+              echo "ERROR: Trial70 unintentionally disabled ${cfg}"
               exit 1
             }
           done
 
-          grep -q 'susfs_stage6_trial69_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial70_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
           grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c
           grep -q 'susfs_stage6_trial32_stat_filename_ownership' fs/stat.c
 
-          echo "Trial69: SUS_PATH additionally OFF; all remaining current SUSFS features stay active."
+          echo "Trial70: SUS_MAP additionally OFF; OPEN_REDIRECT/spoof/log/hide-symbol features remain active."
 
       - name: Execute Stage 4 build recipe
         run: |
@@ -4039,7 +4039,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 69 FLASH CANDIDATE"
+           echo "Stage 6 Trial 70 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -4055,12 +4055,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial69-nopath
+          name: m127f-susfs-stage6-trial70-nosusmap
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL69-NOPATH.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL70-NOSUSMAP.zip
 
