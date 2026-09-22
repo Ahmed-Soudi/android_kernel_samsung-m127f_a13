@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 73
+name: SUSFS Samsung 4.19 Stage 6 - Trial 74
 
 permissions:
   contents: write
@@ -3339,7 +3339,7 @@ jobs:
 
           echo "Stage 5 source ordering verified: official 2.3.0 is active."
 
-          # Stage 6 Trial 73: with SUSFS core enabled but OPEN_REDIRECT and
+          # Stage 6 Trial 74: with SUSFS core enabled but OPEN_REDIRECT and
           # other behavioral subfeatures disabled, copied_size is compiled
           # but unused in official 2.3.0. Samsung builds with -Werror.
           python3 - <<'PY'
@@ -3364,7 +3364,7 @@ jobs:
           grep -q 'susfs_stage6_trial40_coreonly_copied_size' fs/susfs.c
           grep -q 'susfs_stage6_trial40_coreonly_copy_config_helper' fs/susfs.c
 
-          # Stage 6 Trial 73: Trial42 proved fs/susfs.c has no initcall.
+          # Stage 6 Trial 74: Trial42 proved fs/susfs.c has no initcall.
           # susfs_init() is an exported/external entry point. Keep the symbol
           # and core linked, but suppress its only stateful initialization:
           # INIT_WORK(&susfs_extra_works, susfs_run_extra_works).
@@ -3510,7 +3510,7 @@ jobs:
           include_anchor = "#include <linux/workqueue.h>\n"
           if "#include <linux/susfs.h>" not in c:
               if include_anchor not in c:
-                  raise SystemExit("Trial73: KSUN core/init.c include anchor missing")
+                  raise SystemExit("Trial74: KSUN core/init.c include anchor missing")
               c = c.replace(
                   include_anchor,
                   include_anchor + "#include <linux/susfs.h>\n",
@@ -3521,14 +3521,14 @@ jobs:
           init_block = (
               "#endif\n"
               "#ifdef CONFIG_KSU_SUSFS\n"
-              "\t/* susfs_stage6_trial73_official_susfs_init */\n"
-              "\tif (0) /* susfs_stage6_trial73_susfs_init_runtime_off */\n\t\tsusfs_init();\n"
+              "\t/* susfs_stage6_trial74_official_susfs_init */\n"
+              "\tif (0) /* susfs_stage6_trial74_susfs_init_runtime_off */\n\t\tsusfs_init();\n"
               "#endif\n"
               "\tif (allow_shell) {"
           )
-          if "susfs_stage6_trial73_official_susfs_init" not in c:
+          if "susfs_stage6_trial74_official_susfs_init" not in c:
               if init_anchor not in c:
-                  raise SystemExit("Trial73: kernelsu_init() SUSFS init anchor missing")
+                  raise SystemExit("Trial74: kernelsu_init() SUSFS init anchor missing")
               c = c.replace(init_anchor, init_block, 1)
 
           p.write_text(c)
@@ -3595,7 +3595,7 @@ jobs:
               "          grep -n 'KernelSU - SUSFS Stage4 compile probe' KernelSU-Next/kernel/Kconfig",
               "          grep -n 'susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c",
               "          grep -n 'susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c",
-              "          grep -n 'susfs_stage6_trial73_official_susfs_init' KernelSU-Next/kernel/core/init.c",
+              "          grep -n 'susfs_stage6_trial74_official_susfs_init' KernelSU-Next/kernel/core/init.c",
               "          grep -n '#include <linux/susfs.h>' KernelSU-Next/kernel/core/init.c",
               "",
               "",
@@ -3633,7 +3633,7 @@ jobs:
               "          fi",
               "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c",
               "          ! grep -R -n -E 'susfs_stage6_trial(48|49|51|54|56|57|58)_.*(bypass|off)' fs KernelSU-Next/kernel 2>/dev/null || true",
-              '          echo "Stage 6 Trial 73 full-hiding config audit passed."',
+              '          echo "Stage 6 Trial 74 full-hiding config audit passed."',
               "",
               "",
           ])
@@ -3655,11 +3655,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL73-UNAMEONLY.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL74-UNAME-STATIC-KEY.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL73-UNAMEONLY\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL74-UNAME-STATIC-KEY\n"
           )
           p.write_text(s)
           PY
@@ -3729,7 +3729,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 73: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
+          echo 'Stage 6 Trial 74: SUSFS core compiled in; logging and behavioral subfeatures disabled.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3741,7 +3741,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 73 final audit.
+          Stage 6 Trial 74 final audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3754,7 +3754,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial73-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial74-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3780,7 +3780,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 73 fix stat filename ownership panic"
+          git commit -m "CI: SUSFS Stage 6 Trial 74 fix stat filename ownership panic"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -3891,7 +3891,7 @@ jobs:
           grep -q 'susfs_stage5_trial26_open_redirect_show_map' fs/proc/task_mmu.c
           grep -q 'susfs_stage5_trial28_pagemap' fs/proc/task_mmu.c
 
-          echo "Trial73: full hiding source surface present; proceeding to compile."
+          echo "Trial74: full hiding source surface present; proceeding to compile."
 
       - name: Trial 63 retain SUS_MAP logical-op grouping for Samsung clang
         shell: bash
@@ -3920,20 +3920,20 @@ jobs:
                   t = t.replace(old, new, 1)
                   changed += 1
               elif new not in t:
-                  raise SystemExit(f"Trial73: expected SUS_MAP condition missing: {old}")
+                  raise SystemExit(f"Trial74: expected SUS_MAP condition missing: {old}")
 
-          marker = "/* susfs_stage6_trial73_sus_map_logical_grouping */"
+          marker = "/* susfs_stage6_trial74_sus_map_logical_grouping */"
           if marker not in t:
               anchor = "!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))"
               if anchor not in t:
-                  raise SystemExit("Trial73: grouped rollup condition missing")
+                  raise SystemExit("Trial74: grouped rollup condition missing")
               t = t.replace(anchor, marker + "\n\t\t\t    " + anchor, 1)
 
           p.write_text(t)
           print("Trial62 SUS_MAP grouping fixes applied:", changed)
           PY
 
-          grep -q 'susfs_stage6_trial73_sus_map_logical_grouping' fs/proc/task_mmu.c
+          grep -q 'susfs_stage6_trial74_sus_map_logical_grouping' fs/proc/task_mmu.c
           grep -q '!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))' fs/proc/task_mmu.c
           grep -q '!(SUSFS_IS_INODE_SUS_MAP(file_inode(susfs_vma->vm_file)))' fs/proc/task_mmu.c
 
@@ -3943,7 +3943,7 @@ jobs:
             grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" arch/arm64/configs/exynos850-m12nsxx_defconfig
           done
 
-          echo "Trial73: SUS_MAP precedence warning fixed; full SUSFS 2.3.0 feature set remains enabled."
+          echo "Trial74: SUS_MAP precedence warning fixed; full SUSFS 2.3.0 feature set remains enabled."
 
       - name: Trial 64 isolate SUSFS runtime init only
         shell: bash
@@ -3954,8 +3954,8 @@ jobs:
           # integration patch. Audit the patch here; the build recipe applies it
           # later and re-audits the live KernelSU tree.
           test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial73_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial73_official_susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial74_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial74_official_susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
           grep -q 'susfs_init();' .github/patches/stage5-ksun-susfs-compile-probe.patch
 
           # Every intended 2.3.0 feature remains enabled; only runtime susfs_init()
@@ -3967,7 +3967,7 @@ jobs:
           grep -q '^# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT is not set$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q '^# CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT is not set$' arch/arm64/configs/exynos850-m12nsxx_defconfig
 
-          echo "Trial73: full SUSFS 2.3.0 feature set ON; only susfs_init() runtime execution OFF."
+          echo "Trial74: full SUSFS 2.3.0 feature set ON; only susfs_init() runtime execution OFF."
 
       - name: Trial 73 split spoof group - SPOOF_UNAME only
         shell: bash
@@ -3992,11 +3992,123 @@ jobs:
           grep -q '^CONFIG_KSU_SUSFS_ENABLE_LOG=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q '^CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
 
-          grep -q 'susfs_stage6_trial73_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial74_susfs_init_runtime_off' .github/patches/stage5-ksun-susfs-compile-probe.patch
           grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c
           grep -q 'susfs_stage6_trial32_stat_filename_ownership' fs/stat.c
 
-          echo "Trial73: SPOOF_UNAME ON, SPOOF_CMDLINE_OR_BOOTCONFIG OFF; log/hide-symbol features remain ON."
+          echo "Trial74: SPOOF_UNAME ON, SPOOF_CMDLINE_OR_BOOTCONFIG OFF; log/hide-symbol features remain ON."
+
+      - name: Trial 74 fix SPOOF_UNAME 2.3.0 static-key caller semantics
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          p = Path("kernel/sys.c")
+          t = p.read_text()
+
+          # Current SUSFS 2.3.0 moved the "is a spoof buffer configured?"
+          # guard to the newuname() caller.  The legacy 4.19 hook calls
+          # susfs_spoof_uname() unconditionally; paired with the 2.3.0
+          # implementation that would copy the initially-zero my_uname buffer
+          # into tmp on every uname() call.
+          #
+          # Restore the current caller contract on Samsung 4.19:
+          #   DECLARE_STATIC_KEY_FALSE(...)
+          #   if (static_branch_unlikely(&key))
+          #       susfs_spoof_uname(&tmp);
+
+          if "#include <linux/jump_label.h>" not in t:
+              inc = "#include <linux/utsname.h>\n"
+              if inc not in t:
+                  raise SystemExit("Trial74: utsname include anchor missing")
+              t = t.replace(inc, inc + "#include <linux/jump_label.h>\n", 1)
+
+          old_decl = (
+              "#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME\n"
+              "extern void susfs_spoof_uname(struct new_utsname* tmp);\n"
+              "#endif"
+          )
+          new_decl = (
+              "#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME\n"
+              "DECLARE_STATIC_KEY_FALSE(susfs_is_uname_spoof_buffer_set);\n"
+              "extern void susfs_spoof_uname(struct new_utsname* tmp);\n"
+              "#endif"
+          )
+          if "DECLARE_STATIC_KEY_FALSE(susfs_is_uname_spoof_buffer_set);" not in t:
+              if old_decl not in t:
+                  raise SystemExit("Trial74: legacy SPOOF_UNAME declaration block missing")
+              t = t.replace(old_decl, new_decl, 1)
+
+          f_start = t.find("SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)")
+          f_end = t.find("#ifdef __ARCH_WANT_SYS_OLD_UNAME", f_start)
+          if f_start < 0 or f_end < 0:
+              raise SystemExit("Trial74: newuname function range missing")
+
+          fn = t[f_start:f_end]
+
+          # Remove the legacy/current SUSFS uname call block from this function
+          # so it can be reinserted at one canonical Samsung-4.19 location.
+          call_rx = re.compile(
+              r"#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME\s*"
+              r"(?:if\s*\(\s*static_branch_unlikely\s*\(\s*&susfs_is_uname_spoof_buffer_set\s*\)\s*\)\s*)?"
+              r"susfs_spoof_uname\s*\(\s*&tmp\s*\)\s*;\s*"
+              r"#endif\s*",
+              re.S,
+          )
+          fn2, n = call_rx.subn("", fn, count=1)
+          if n != 1:
+              raise SystemExit(f"Trial74: expected one newuname SUSFS call block, found {n}")
+
+          memcpy_anchor = "\tmemcpy(&tmp, utsname(), sizeof(tmp));\n"
+          if memcpy_anchor not in fn2:
+              raise SystemExit("Trial74: newuname memcpy anchor missing")
+
+          gated = (
+              "\tmemcpy(&tmp, utsname(), sizeof(tmp));\n"
+              "#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME\n"
+              "\t/* susfs_stage6_trial74_uname_static_key_gate */\n"
+              "\tif (static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))\n"
+              "\t\tsusfs_spoof_uname(&tmp);\n"
+              "#endif\n"
+          )
+          fn2 = fn2.replace(memcpy_anchor, gated, 1)
+
+          t = t[:f_start] + fn2 + t[f_end:]
+          p.write_text(t)
+          PY
+
+          # The 2.3.0 implementation owns the key; the caller only declares it.
+          grep -q 'DEFINE_STATIC_KEY_FALSE(susfs_is_uname_spoof_buffer_set)' fs/susfs.c
+          grep -q 'DECLARE_STATIC_KEY_FALSE(susfs_is_uname_spoof_buffer_set)' kernel/sys.c
+          grep -q 'susfs_stage6_trial74_uname_static_key_gate' kernel/sys.c
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' kernel/sys.c
+
+          python3 - <<'PY'
+          from pathlib import Path
+          t = Path("kernel/sys.c").read_text()
+          a = t.index("SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)")
+          b = t.index("#ifdef __ARCH_WANT_SYS_OLD_UNAME", a)
+          fn = t[a:b]
+
+          if fn.count("susfs_spoof_uname(&tmp);") != 1:
+              raise SystemExit("Trial74: newuname must contain exactly one SUSFS spoof call")
+          if "if (static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))" not in fn:
+              raise SystemExit("Trial74: SPOOF_UNAME call is not static-key gated")
+          if fn.index("susfs_stage6_trial74_uname_static_key_gate") > fn.index("up_read(&uts_sem);"):
+              raise SystemExit("Trial74: uname gate must execute while the copied UTS snapshot is in the canonical pre-unlock region")
+
+          print("Trial74: Samsung 4.19 uname caller now matches SUSFS 2.3.0 static-key contract")
+          PY
+
+          # Preserve the exact Trial73 split for a controlled runtime comparison.
+          grep -q '^CONFIG_KSU_SUSFS_SPOOF_UNAME=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
+          ! grep -q '^CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
+
+          echo "Trial74: SPOOF_UNAME remains ON; only its legacy 4.19 caller semantics were repaired."
 
       - name: Execute Stage 4 build recipe
         run: |
@@ -4044,7 +4156,7 @@ jobs:
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 73 FLASH CANDIDATE"
+           echo "Stage 6 Trial 74 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -4060,12 +4172,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial73-unameonly
+          name: m127f-susfs-stage6-trial74-uname-static-key
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL73-UNAMEONLY.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL74-UNAME-STATIC-KEY.zip
 
