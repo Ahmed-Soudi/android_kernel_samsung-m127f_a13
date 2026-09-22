@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 81
+name: SUSFS Samsung 4.19 Stage 6 - Trial 82
 
 permissions:
   contents: write
@@ -3521,12 +3521,12 @@ jobs:
           init_block = (
               "#endif\n"
               "#ifdef CONFIG_KSU_SUSFS\n"
-              "\t/* susfs_stage6_trial81_official_susfs_init */\n"
-              "\t/* susfs_stage6_trial81_susfs_init_runtime_on */\n\tsusfs_init();\n"
+              "\t/* susfs_stage6_trial82_official_susfs_init */\n"
+              "\t/* susfs_stage6_trial82_susfs_init_runtime_on */\n\tsusfs_init();\n"
               "#endif\n"
               "\tif (allow_shell) {"
           )
-          if "susfs_stage6_trial81_official_susfs_init" not in c:
+          if "susfs_stage6_trial82_official_susfs_init" not in c:
               if init_anchor not in c:
                   raise SystemExit("Trial74: kernelsu_init() SUSFS init anchor missing")
               c = c.replace(init_anchor, init_block, 1)
@@ -3586,19 +3586,19 @@ jobs:
           p = Path("KernelSU-Next/kernel/supercall/supercall.c")
           t = p.read_text()
 
-          if "susfs_stage6_trial81_supercall_dispatch" in t:
-              raise SystemExit("Trial81: dispatcher unexpectedly already present")
+          if "susfs_stage6_trial82_supercall_dispatch" in t:
+              raise SystemExit("Trial82: dispatcher unexpectedly already present")
 
           # Exact pinned 3b18216f source guard: reboot_handler_pre uses
           # four-space indentation for the install-fd comment.
           if "static int reboot_handler_pre(struct kprobe *p, struct pt_regs *regs)\n" not in t:
-              raise SystemExit("Trial81: reboot_handler_pre signature missing")
+              raise SystemExit("Trial82: reboot_handler_pre signature missing")
           if "    /* Check if this is a request to install KSU fd */\n" not in t:
-              raise SystemExit("Trial81: pinned install-fd comment shape changed")
+              raise SystemExit("Trial82: pinned install-fd comment shape changed")
 
           inc_anchor = "#include <linux/version.h>\n"
           if inc_anchor not in t:
-              raise SystemExit("Trial81: supercall include anchor missing")
+              raise SystemExit("Trial82: supercall include anchor missing")
 
           include_block = (
               "#include <linux/version.h>\n"
@@ -3611,18 +3611,20 @@ jobs:
 
           dispatch_anchor = "    /* Check if this is a request to install KSU fd */\n"
           if dispatch_anchor not in t:
-              raise SystemExit("Trial81: exact pinned reboot-handler install-fd anchor missing")
+              raise SystemExit("Trial82: exact pinned reboot-handler install-fd anchor missing")
 
           dispatcher = "\n".join([
               '#ifdef CONFIG_KSU_SUSFS',
               '    /*',
-              '     * susfs_stage6_trial81_supercall_dispatch',
+              '     * susfs_stage6_trial82_supercall_dispatch',
               '     * Native SUSFS 2.3.0 ABI for pinned KernelSU Next 3.3.0.',
               '     */',
               '    if (magic1 == KSU_INSTALL_MAGIC1 &&',
               '        magic2 == SUSFS_MAGIC &&',
               '        current_uid().val == 0) {',
-              '        void __user **susfs_arg = (void __user **)arg4;',
+              '        /* susfs_stage6_trial82_userspace_pointer_adapter */',
+              '        void __user *susfs_user_arg = (void __user *)arg4;',
+              '        void __user **susfs_arg = &susfs_user_arg;',
               '',
               '        switch (cmd) {',
               '#ifdef CONFIG_KSU_SUSFS_SUS_PATH',
@@ -3709,8 +3711,19 @@ jobs:
           git -C KernelSU-Next apply --check \
             ../.github/patches/stage5-ksun-susfs-compile-probe.patch
 
-          grep -q 'susfs_stage6_trial81_supercall_dispatch' \
+          grep -q 'susfs_stage6_trial82_supercall_dispatch' \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_userspace_pointer_adapter' \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'void __user \*susfs_user_arg = (void __user \*)arg4;' \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'void __user \*\*susfs_arg = &susfs_user_arg;' \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch
+          if grep -q 'void __user \*\*susfs_arg = (void __user \*\*)arg4;' \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch; then
+            echo "ERROR: broken Trial81 direct pointer-to-pointer cast remains"
+            exit 1
+          fi
 
           for cmd in CMD_SUSFS_SHOW_ENABLED_FEATURES CMD_SUSFS_SHOW_VARIANT CMD_SUSFS_SHOW_VERSION; do
             grep -q "${cmd}" .github/patches/stage5-ksun-susfs-compile-probe.patch
@@ -3720,7 +3733,7 @@ jobs:
             grep -q "${cmd}" .github/patches/stage5-ksun-susfs-compile-probe.patch
           done
 
-          echo "Trial81: native KSUN 3.3.0 <-> SUSFS 2.3.0 supercall dispatcher added."
+          echo "Trial82: native KSUN 3.3.0 <-> SUSFS 2.3.0 supercall dispatcher added."
       - name: Prepare disposable Stage 4 build workflow
         run: |
           set -euxo pipefail
@@ -3744,10 +3757,11 @@ jobs:
               "          grep -n 'KernelSU - SUSFS Stage4 compile probe' KernelSU-Next/kernel/Kconfig",
               "          grep -n 'susfs_is_current_ksu_domain' KernelSU-Next/kernel/selinux/selinux.c",
               "          grep -n 'susfs_is_current_zygote_domain' KernelSU-Next/kernel/selinux/selinux.c",
-              "          grep -n 'susfs_stage6_trial81_official_susfs_init' KernelSU-Next/kernel/core/init.c",
-              "          grep -n 'susfs_stage6_trial81_susfs_init_runtime_on' KernelSU-Next/kernel/core/init.c",
+              "          grep -n 'susfs_stage6_trial82_official_susfs_init' KernelSU-Next/kernel/core/init.c",
+              "          grep -n 'susfs_stage6_trial82_susfs_init_runtime_on' KernelSU-Next/kernel/core/init.c",
               "          grep -n '#include <linux/susfs.h>' KernelSU-Next/kernel/core/init.c",
-              "          grep -n 'susfs_stage6_trial81_supercall_dispatch' KernelSU-Next/kernel/supercall/supercall.c",
+              "          grep -n 'susfs_stage6_trial82_supercall_dispatch' KernelSU-Next/kernel/supercall/supercall.c",
+              "          grep -n 'susfs_stage6_trial82_userspace_pointer_adapter' KernelSU-Next/kernel/supercall/supercall.c",
               "          grep -n 'CMD_SUSFS_SHOW_ENABLED_FEATURES' KernelSU-Next/kernel/supercall/supercall.c",
               "          grep -n 'CMD_SUSFS_SHOW_VARIANT' KernelSU-Next/kernel/supercall/supercall.c",
               "          grep -n 'CMD_SUSFS_SHOW_VERSION' KernelSU-Next/kernel/supercall/supercall.c",
@@ -3812,11 +3826,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL81-SUPERCALL.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL82-ABI-POINTER-FIX.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL81-SUPERCALL\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL82-ABI-POINTER-FIX\n"
           )
           p.write_text(s)
           PY
@@ -3886,7 +3900,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 81: full current SUSFS 2.3.0 feature set enabled; semantic parity hardening active.'
+          echo 'Stage 6 Trial 82: full current SUSFS 2.3.0 feature set enabled; semantic parity hardening active.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -3898,7 +3912,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 81 full-feature semantic-parity audit.
+          Stage 6 Trial 82 full-feature semantic-parity audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -3911,7 +3925,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial81-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial82-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -3937,7 +3951,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 81 fix supercall dispatcher anchor"
+          git commit -m "CI: SUSFS Stage 6 Trial 82 fix SUSFS userspace ABI pointer"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -4079,7 +4093,7 @@ jobs:
               elif new not in t:
                   raise SystemExit(f"Trial74: expected SUS_MAP condition missing: {old}")
 
-          marker = "/* susfs_stage6_trial81_sus_map_logical_grouping */"
+          marker = "/* susfs_stage6_trial82_sus_map_logical_grouping */"
           if marker not in t:
               anchor = "!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))"
               if anchor not in t:
@@ -4090,7 +4104,7 @@ jobs:
           print("Trial62 SUS_MAP grouping fixes applied:", changed)
           PY
 
-          grep -q 'susfs_stage6_trial81_sus_map_logical_grouping' fs/proc/task_mmu.c
+          grep -q 'susfs_stage6_trial82_sus_map_logical_grouping' fs/proc/task_mmu.c
           grep -q '!(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))' fs/proc/task_mmu.c
           grep -q '!(SUSFS_IS_INODE_SUS_MAP(file_inode(susfs_vma->vm_file)))' fs/proc/task_mmu.c
 
@@ -4107,8 +4121,8 @@ jobs:
         run: |
           set -euxo pipefail
           test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial81_official_susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial81_susfs_init_runtime_on' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_official_susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_susfs_init_runtime_on' .github/patches/stage5-ksun-susfs-compile-probe.patch
           grep -q 'susfs_init();' .github/patches/stage5-ksun-susfs-compile-probe.patch
           ! grep -q 'if (0).*susfs_init' .github/patches/stage5-ksun-susfs-compile-probe.patch
 
@@ -4137,7 +4151,7 @@ jobs:
           ! grep -q '^CONFIG_KSU_SUSFS_TRY_UMOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           ! grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
 
-          echo "Trial81: complete current SUSFS 2.3.0 feature set retained."
+          echo "Trial82: complete current SUSFS 2.3.0 feature set retained."
 
       - name: Trial 78 retain SPOOF_UNAME 2.3.0 static-key caller fix
         shell: bash
@@ -4211,7 +4225,7 @@ jobs:
           gated = (
               "\tmemcpy(&tmp, utsname(), sizeof(tmp));\n"
               "#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME\n"
-              "\t/* susfs_stage6_trial81_uname_static_key_gate */\n"
+              "\t/* susfs_stage6_trial82_uname_static_key_gate */\n"
               "\tif (static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))\n"
               "\t\tsusfs_spoof_uname(&tmp);\n"
               "#endif\n"
@@ -4225,7 +4239,7 @@ jobs:
           # The 2.3.0 implementation owns the key; the caller only declares it.
           grep -q 'DEFINE_STATIC_KEY_FALSE(susfs_is_uname_spoof_buffer_set)' fs/susfs.c
           grep -q 'DECLARE_STATIC_KEY_FALSE(susfs_is_uname_spoof_buffer_set)' kernel/sys.c
-          grep -q 'susfs_stage6_trial81_uname_static_key_gate' kernel/sys.c
+          grep -q 'susfs_stage6_trial82_uname_static_key_gate' kernel/sys.c
           grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' kernel/sys.c
 
           python3 - <<'PY'
@@ -4239,7 +4253,7 @@ jobs:
               raise SystemExit("Trial74: newuname must contain exactly one SUSFS spoof call")
           if "if (static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))" not in fn:
               raise SystemExit("Trial74: SPOOF_UNAME call is not static-key gated")
-          if fn.index("susfs_stage6_trial81_uname_static_key_gate") > fn.index("up_read(&uts_sem);"):
+          if fn.index("susfs_stage6_trial82_uname_static_key_gate") > fn.index("up_read(&uts_sem);"):
               raise SystemExit("Trial74: uname gate must execute while the copied UTS snapshot is in the canonical pre-unlock region")
 
           print("Trial74: Samsung 4.19 uname caller now matches SUSFS 2.3.0 static-key contract")
@@ -4336,7 +4350,7 @@ jobs:
           gate = (
               "{\n"
               "#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG\n"
-              "\t/* susfs_stage6_trial81_cmdline_static_key_gate */\n"
+              "\t/* susfs_stage6_trial82_cmdline_static_key_gate */\n"
               "\tif (static_branch_unlikely(&susfs_is_fake_cmdline_or_bootconfig_buffer_set)) {\n"
               "\t\tsusfs_spoof_cmdline_or_bootconfig(m);\n"
               "\t\tseq_putc(m, '\\n');\n"
@@ -4351,7 +4365,7 @@ jobs:
 
           grep -q 'DEFINE_STATIC_KEY_FALSE(susfs_is_fake_cmdline_or_bootconfig_buffer_set)' fs/susfs.c
           grep -q 'DECLARE_STATIC_KEY_FALSE(susfs_is_fake_cmdline_or_bootconfig_buffer_set)' fs/proc/cmdline.c
-          grep -q 'susfs_stage6_trial81_cmdline_static_key_gate' fs/proc/cmdline.c
+          grep -q 'susfs_stage6_trial82_cmdline_static_key_gate' fs/proc/cmdline.c
           grep -q 'static_branch_unlikely(&susfs_is_fake_cmdline_or_bootconfig_buffer_set)' fs/proc/cmdline.c
 
           python3 - <<'PY'
@@ -4406,12 +4420,12 @@ jobs:
 
           bridge_anchor = "+/* susfs_stage5_trial21_samsung419_vfs_facessat_bridge\n"
           if bridge_anchor not in t:
-              raise SystemExit("Trial81: Samsung419 sucompat bridge patch anchor missing")
+              raise SystemExit("Trial82: Samsung419 sucompat bridge patch anchor missing")
 
           if "+extern bool current_chrooted(void);\n" not in t:
               t = t.replace(
                   bridge_anchor,
-                  "+/* susfs_stage6_trial81_chroot_guard */\n"
+                  "+/* susfs_stage6_trial82_chroot_guard */\n"
                   "+extern bool current_chrooted(void);\n"
                   "+\n" + bridge_anchor,
                   1,
@@ -4443,7 +4457,7 @@ jobs:
               "+\tif (strncpy_from_user(path, *filename_user, sizeof(path)) < 0)\n"
               "+\t\treturn 0;\n"
               "+\n"
-              "+\t/* susfs_stage6_trial81_stat_redirect_result */\n"
+              "+\t/* susfs_stage6_trial82_stat_redirect_result */\n"
               "+\tif (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {\n"
               "+\t\treplacement = userspace_stack_buffer(sh_path, sizeof(sh_path));\n"
               "+\t\tif (replacement) {\n"
@@ -4457,7 +4471,7 @@ jobs:
               "+int ksu_handle_faccessat_samsung419"
           )
           if stat_old not in t:
-              raise SystemExit("Trial81: stat bridge body anchor missing")
+              raise SystemExit("Trial82: stat bridge body anchor missing")
           t = t.replace(stat_old, stat_new, 1)
 
           fac_old = (
@@ -4481,7 +4495,7 @@ jobs:
               "+/* susfs_stage6_trial53_faccessat_redirect_result */"
           )
           if fac_old not in t:
-              raise SystemExit("Trial81: faccessat bridge body anchor missing")
+              raise SystemExit("Trial82: faccessat bridge body anchor missing")
           t = t.replace(fac_old, fac_new, 1)
           # The bridge edits above add lines inside an existing unified-diff
           # hunk. Trial78 left the original @@ old_count/new_count values intact,
@@ -4564,7 +4578,7 @@ jobs:
               "\t\t}\n"
           )
           new = (
-              "\t\t/* susfs_stage6_trial81_stat_redirect_only */\n"
+              "\t\t/* susfs_stage6_trial82_stat_redirect_only */\n"
               "\t\tif (ksu_handle_stat_samsung419(&dfd, &susfs_stat_user_filename,\n"
               "\t\t\t\t\t\t   &flags) > 0) {\n"
               "\t\t\tstruct filename *redirected_fname;\n"
@@ -4580,7 +4594,7 @@ jobs:
               "\t\t}\n"
           )
           if old not in t:
-              raise SystemExit("Trial81: stat caller redirect anchor missing")
+              raise SystemExit("Trial82: stat caller redirect anchor missing")
           t = t.replace(old, new, 1)
           p.write_text(t)
           PY
@@ -4589,13 +4603,13 @@ jobs:
             grep -q "^CONFIG_KSU_SUSFS_${cfg}=y$" arch/arm64/configs/exynos850-m12nsxx_defconfig
           done
 
-          grep -q 'susfs_stage6_trial81_susfs_init_runtime_on' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial81_uname_static_key_gate' kernel/sys.c
-          grep -q 'susfs_stage6_trial81_cmdline_static_key_gate' fs/proc/cmdline.c
-          grep -q 'susfs_stage6_trial81_chroot_guard' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_susfs_init_runtime_on' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_uname_static_key_gate' kernel/sys.c
+          grep -q 'susfs_stage6_trial82_cmdline_static_key_gate' fs/proc/cmdline.c
+          grep -q 'susfs_stage6_trial82_chroot_guard' .github/patches/stage5-ksun-susfs-compile-probe.patch
           test "$(grep -c '^+.*current_chrooted()' .github/patches/stage5-ksun-susfs-compile-probe.patch)" -ge 2
-          grep -q 'susfs_stage6_trial81_stat_redirect_result' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'susfs_stage6_trial81_stat_redirect_only' fs/stat.c
+          grep -q 'susfs_stage6_trial82_stat_redirect_result' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_stat_redirect_only' fs/stat.c
           grep -q '^extern bool current_chrooted(void);' include/linux/fs_struct.h
           git -C KernelSU-Next apply --check ../.github/patches/stage5-ksun-susfs-compile-probe.patch
 
@@ -4611,15 +4625,15 @@ jobs:
           fi
 
           git diff --check
-          echo "Trial81: chroot guards + redirect-only stat bridge applied; full SUSFS feature set preserved."
+          echo "Trial82: chroot guards + redirect-only stat bridge applied; full SUSFS feature set preserved."
 
       - name: Trial 78 semantic parity inventory
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p .ci/stage6-trial81
+          mkdir -p .ci/stage6-trial82
           {
-            echo "Stage 6 Trial 81 semantic parity inventory"
+            echo "Stage 6 Trial 82 semantic parity inventory"
             echo "trial78_ci=RED_corrupt_unified_diff_hunk_counts"
             echo "trial79_hunk_recount_fix=retained"
             echo "trial77_full_features_boot=GREEN"
@@ -4632,7 +4646,7 @@ jobs:
             echo "sucompat_current_chrooted_guard=added"
             echo "stat_redirect_only_rebuild=added"
             echo "remaining=root-revocation,uid-euid,atomic-static-key,zygote-next-runtime-parity"
-          } | tee .ci/stage6-trial81/semantic-status.txt
+          } | tee .ci/stage6-trial82/semantic-status.txt
 
           {
             echo "===== current_chrooted bridge patch ====="
@@ -4641,13 +4655,13 @@ jobs:
             grep -n -C 12 'trial78_stat_redirect_only' fs/stat.c || true
             echo "===== no-SU / zygote / mount inventory ====="
             grep -RIn -E 'TIF_PROC_NO_SU|TIF_PROC_UMOUNTED|zygote_next|hide_sus_mnts_for_non_su_procs|CL_COPY_MNT_NS|kernel_umount' fs include KernelSU-Next/kernel .github/patches 2>/dev/null || true
-          } > .ci/stage6-trial81/focused-parity.txt
+          } > .ci/stage6-trial82/focused-parity.txt
 
       - name: Trial 80 audit Manager SUSFS ABI parity
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p .ci/stage6-trial81
+          mkdir -p .ci/stage6-trial82
 
           grep -q '^#define SUSFS_MAGIC 0xFAFAFAFA$' include/linux/susfs_def.h
           grep -q '^#define CMD_SUSFS_SHOW_VERSION 0x555e1$' include/linux/susfs_def.h
@@ -4659,19 +4673,21 @@ jobs:
           grep -q 'void susfs_show_version(void __user \*\*user_info)' fs/susfs.c
           grep -q 'void susfs_show_variant(void __user \*\*user_info)' fs/susfs.c
           grep -q 'void susfs_get_enabled_features(void __user \*\*user_info)' fs/susfs.c
-          grep -q 'susfs_stage6_trial81_supercall_dispatch' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial82_supercall_dispatch' .github/patches/stage5-ksun-susfs-compile-probe.patch
 
           {
-            echo 'Stage 6 Trial 81 Manager ABI target'
+            echo 'Stage 6 Trial 82 Manager ABI target'
+            echo 'trial81_boot=GREEN_manager_susfs=NOT_DETECTED'
+            echo 'trial82_fix=arg4_struct_pointer_adapter'
             echo 'expected_manager_status=Supported'
             echo 'expected_susfs_version=v2.3.0'
             echo 'expected_susfs_variant=NON-GKI'
             echo 'expected_manager_display=Supported | v2.3.0 (NON-GKI)'
             echo 'userspace_module_required_for_manager_detection=no'
             echo 'BRENE_role=runtime_SUSFS_configuration_and_hiding'
-          } | tee .ci/stage6-trial81/manager-abi-status.txt
+          } | tee .ci/stage6-trial82/manager-abi-status.txt
 
-          echo 'Trial81: Manager-facing SUSFS support/version ABI statically complete.'
+          echo 'Trial82: Manager-facing SUSFS support/version ABI statically complete.'
       - name: Execute Stage 4 build recipe
         run: |
           set -euxo pipefail
@@ -4697,7 +4713,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 6 Trial 81: {name} ====="',
+                  f'echo "===== Stage 6 Trial 82: {name} ====="',
                   script,
                   "",
               ]
@@ -4708,17 +4724,17 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 6 Trial 81 full build recipe completed."
+          echo "Stage 6 Trial 82 full build recipe completed."
           echo "Trial81 full build completed; runtime boot + Manager SUSFS detection validation required."
 
-      - name: Mark Stage 6 Trial 81 flash candidate
+      - name: Mark Stage 6 Trial 82 flash candidate
         run: |
           set -euxo pipefail
           mkdir -p .ci/stage5/flash-candidate
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 81 FLASH CANDIDATE"
+           echo "Stage 6 Trial 82 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -4730,17 +4746,17 @@ jobs:
           } | tee .ci/stage5/flash-candidate/manifest.txt
 
 
-      - name: Upload Stage 6 Trial 81 outputs
+      - name: Upload Stage 6 Trial 82 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial81-susfs-supercall-anchor-fix
+          name: m127f-susfs-stage6-trial82-susfs-abi-pointer-fix
           if-no-files-found: warn
           path: |
             Image
             System.map
             .config
             .ci/stage5/
-            .ci/stage6-trial81/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL81-SUPERCALL.zip
+            .ci/stage6-trial82/
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL82-ABI-POINTER-FIX.zip
 
