@@ -1,0 +1,5 @@
+Stage 5 Trial 6
+Trial 5 reached vmlinux link.
+Obsolete 1.5.7 exported-helper callsites retired.
+2.3.0 non-SUS mount helpers use a conservative Samsung 4.19 compile bridge.
+NOT A FLASH CANDIDATE: final 2.3.0 mount semantics still pending.
