@@ -1,0 +1,135 @@
+
+===== SUS_MAP =====
+TOTAL 13
+   7 fs/susfs.c
+   2 include/linux/susfs.h
+   4 include/linux/susfs_def.h
+
+===== OPEN_REDIRECT =====
+TOTAL 33
+   1 fs/namei.c
+  24 fs/susfs.c
+   2 include/linux/susfs.h
+   6 include/linux/susfs_def.h
+
+===== susfs_is_current_proc_no_su =====
+TOTAL 1
+   1 include/linux/susfs_def.h
+
+===== hide_sus_mnts_for_non_su_procs =====
+TOTAL 11
+   9 fs/susfs.c
+   2 include/linux/susfs.h
+
+===== ksu_handle_faccessat =====
+TOTAL 3
+   1 KernelSU-Next/kernel/feature/sucompat.c
+   1 KernelSU-Next/kernel/feature/sucompat.h
+   1 KernelSU-Next/kernel/hook/syscall_event_bridge.c
+
+===== ksu_handle_stat =====
+TOTAL 3
+   1 KernelSU-Next/kernel/feature/sucompat.c
+   1 KernelSU-Next/kernel/feature/sucompat.h
+   1 KernelSU-Next/kernel/hook/syscall_event_bridge.c
+
+===== zygote_next =====
+TOTAL 4
+   1 fs/namespace.c
+   3 include/linux/susfs_def.h
+
+===== TIF_PROC_UMOUNTED =====
+TOTAL 9
+   9 include/linux/susfs_def.h
+
+===== TIF_PROC_NO_SU =====
+TOTAL 4
+   4 include/linux/susfs_def.h
+
+===== susfs_get_non_sus_mnt_id_from_mnt =====
+TOTAL 4
+   1 fs/namespace.c
+   3 fs/susfs.c
+
+===== susfs_get_non_sus_vfsmnt_from_vfsmnt =====
+TOTAL 4
+   1 fs/namespace.c
+   3 fs/susfs.c
+
+===== VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT =====
+TOTAL 5
+   4 fs/namespace.c
+   1 include/linux/susfs_def.h
+
+===== DEFAULT_KSU_MNT_ID =====
+TOTAL 23
+   3 fs/proc_namespace.c
+  16 fs/namespace.c
+   1 fs/statfs.c
+   2 fs/proc/fd.c
+   1 include/linux/susfs_def.h
+
+===== kernel_umount =====
+TOTAL 23
+   1 KernelSU-Next/kernel/Kbuild
+   1 KernelSU-Next/kernel/supercall/dispatch.c
+  16 KernelSU-Next/kernel/feature/kernel_umount.c
+   2 KernelSU-Next/kernel/feature/kernel_umount.h
+   3 KernelSU-Next/kernel/hook/setuid_hook.c
+
+===== static_branch =====
+TOTAL 80
+  12 fs/susfs.c
+   1 include/linux/context_tracking_state.h
+   2 include/linux/cgroup.h
+   1 include/linux/bpf-cgroup.h
+   1 include/linux/once.h
+   6 include/linux/page_owner.h
+  31 include/linux/jump_label.h
+   2 include/linux/dynamic_debug.h
+   7 include/linux/cpuset.h
+   2 include/linux/memcontrol.h
+   2 include/linux/perf_event.h
+   3 include/linux/mm.h
+   1 include/linux/frontswap.h
+   1 include/linux/sched/isolation.h
+   1 include/linux/sched/smt.h
+   1 include/net/ip_tunnels.h
+   1 include/net/sock.h
+   1 KernelSU-Next/kernel/feature/adb_root.c
+   1 KernelSU-Next/kernel/feature/selinux_hide.c
+   1 KernelSU-Next/kernel/hook/lsm_hook.c
+   2 KernelSU-Next/kernel/hook/syscall_event_bridge.c
+
+===== static_key =====
+TOTAL 174
+   5 fs/susfs.c
+   4 include/kvm/arm_vgic.h
+   2 include/linux/context_tracking_state.h
+   2 include/linux/cgroup.h
+  15 include/linux/jump_label_ratelimit.h
+   1 include/linux/bpf-cgroup.h
+   1 include/linux/once.h
+   1 include/linux/page_owner.h
+  98 include/linux/jump_label.h
+   3 include/linux/netdevice.h
+   1 include/linux/page_ref.h
+   1 include/linux/psi.h
+   2 include/linux/dynamic_debug.h
+   2 include/linux/cpuset.h
+   1 include/linux/vmstat.h
+   2 include/linux/memcontrol.h
+   3 include/linux/tracepoint.h
+   3 include/linux/netfilter.h
+   6 include/linux/perf_event.h
+   1 include/linux/netfilter_ingress.h
+   1 include/linux/frontswap.h
+   2 include/linux/tracepoint-defs.h
+   2 include/linux/sched/smt.h
+   2 include/linux/netfilter/x_tables.h
+   1 include/net/tcp.h
+   2 include/net/sock.h
+   2 include/net/netfilter/nf_tables_core.h
+   4 KernelSU-Next/kernel/feature/adb_root.c
+   3 KernelSU-Next/kernel/feature/selinux_hide.c
+   1 KernelSU-Next/kernel/hook/syscall_event_bridge.c
