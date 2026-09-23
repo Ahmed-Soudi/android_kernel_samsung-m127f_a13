@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 88
+name: SUSFS Samsung 4.19 Stage 6 - Trial 89
 
 permissions:
   contents: write
@@ -3743,7 +3743,7 @@ jobs:
           done
 
           echo "Trial82: native KSUN 3.3.0 <-> SUSFS 2.3.0 supercall dispatcher added."
-      - name: Trial 88 bridge raw reboot SUSFS manager reporting
+      - name: Trial 89 bridge raw reboot SUSFS manager reporting
         shell: bash
         run: |
           set -euxo pipefail
@@ -3755,8 +3755,8 @@ jobs:
           p = Path("kernel/reboot.c")
           t = p.read_text()
 
-          if "susfs_stage6_trial88_raw_reboot_manager_bridge" in t:
-              raise SystemExit("Trial88: raw reboot bridge unexpectedly already present")
+          if "susfs_stage6_trial89_raw_reboot_manager_bridge" in t:
+              raise SystemExit("Trial89: raw reboot bridge unexpectedly already present")
 
           include_block = (
               "#ifdef CONFIG_KSU_SUSFS\n"
@@ -3775,7 +3775,7 @@ jobs:
                       t = t.replace(inc_anchor, inc_anchor + include_block, 1)
                       break
               else:
-                  raise SystemExit("Trial88: no safe kernel/reboot.c include anchor found")
+                  raise SystemExit("Trial89: no safe kernel/reboot.c include anchor found")
 
           pat = re.compile(
               r'(SYSCALL_DEFINE4\(reboot\s*,\s*int\s*,\s*magic1\s*,\s*int\s*,\s*magic2\s*,\s*'
@@ -3785,35 +3785,35 @@ jobs:
           m = pat.search(t)
           if not m:
               candidates = [line for line in t.splitlines() if "SYSCALL_DEFINE4(reboot" in line]
-              print("Trial88 reboot candidates:", candidates)
-              raise SystemExit("Trial88: Samsung SYSCALL_DEFINE4(reboot) signature not matched")
+              print("Trial89 reboot candidates:", candidates)
+              raise SystemExit("Trial89: Samsung SYSCALL_DEFINE4(reboot) signature not matched")
 
           bridge_lines = [
               "#ifdef CONFIG_KSU_SUSFS",
               "\t/*",
-              "\t * susfs_stage6_trial88_raw_reboot_manager_bridge",
+              "\t * susfs_stage6_trial89_raw_reboot_manager_bridge",
               "\t * KSUN 3.3.0 ksud probes SUSFS with raw SYS_reboot.",
-              "\t * Trial88 services only Manager reporting commands here.",
+              "\t * Trial89 services only Manager reporting commands here.",
               "\t */",
               "\tif (magic1 == 0xDEADBEEF && magic2 == SUSFS_MAGIC &&",
               "\t    current_uid().val == 0) {",
               "\t\tvoid __user *susfs_user_arg = arg;",
               "\t\tvoid __user **susfs_arg = &susfs_user_arg;",
               "",
-              "\t\tpr_info(\"Trial88 SUSFS RAW REBOOT: cmd=0x%x uid=%u\\n\",",
+              "\t\tpr_info(\"Trial89 SUSFS RAW REBOOT: cmd=0x%x uid=%u\\n\",",
               "\t\t\tcmd, current_uid().val);",
               "",
               "\t\tswitch (cmd) {",
               "\t\tcase CMD_SUSFS_SHOW_ENABLED_FEATURES:",
-              "\t\t\tpr_info(\"Trial88 SUSFS RAW REBOOT: SHOW_ENABLED_FEATURES\\n\");",
+              "\t\t\tpr_info(\"Trial89 SUSFS RAW REBOOT: SHOW_ENABLED_FEATURES\\n\");",
               "\t\t\tsusfs_get_enabled_features(susfs_arg);",
               "\t\t\treturn 0;",
               "\t\tcase CMD_SUSFS_SHOW_VARIANT:",
-              "\t\t\tpr_info(\"Trial88 SUSFS RAW REBOOT: SHOW_VARIANT\\n\");",
+              "\t\t\tpr_info(\"Trial89 SUSFS RAW REBOOT: SHOW_VARIANT\\n\");",
               "\t\t\tsusfs_show_variant(susfs_arg);",
               "\t\t\treturn 0;",
               "\t\tcase CMD_SUSFS_SHOW_VERSION:",
-              "\t\t\tpr_info(\"Trial88 SUSFS RAW REBOOT: SHOW_VERSION\\n\");",
+              "\t\t\tpr_info(\"Trial89 SUSFS RAW REBOOT: SHOW_VERSION\\n\");",
               "\t\t\tsusfs_show_version(susfs_arg);",
               "\t\t\treturn 0;",
               "\t\tdefault:",
@@ -3824,19 +3824,34 @@ jobs:
               "",
           ]
           bridge = "\n".join(bridge_lines)
-          t = t[:m.end()] + bridge + t[m.end():]
+          # Trial89 C90 fix: do not inject executable code before the
+          # reboot syscall's existing function-scope declarations.
+          # Samsung 4.19 follows the standard layout:
+          #   struct pid_namespace *pid_ns = ...;
+          #   char buffer[256];
+          #   int ret = 0;
+          # Insert immediately after the final declaration instead.
+          decl_anchor = "int ret = 0;\n"
+          decl_pos = t.find(decl_anchor, m.end(), m.end() + 1024)
+          if decl_pos < 0:
+              context = t[m.end():m.end() + 1024]
+              print("Trial89 reboot declaration context:")
+              print(context)
+              raise SystemExit("Trial89: reboot declaration block anchor 'int ret = 0;' not found")
+          insert_at = decl_pos + len(decl_anchor)
+          t = t[:insert_at] + bridge + t[insert_at:]
           p.write_text(t)
           PY
 
-          grep -n -C 6 'susfs_stage6_trial88_raw_reboot_manager_bridge' kernel/reboot.c
-          grep -q 'Trial88 SUSFS RAW REBOOT: cmd=' kernel/reboot.c
+          grep -n -C 6 'susfs_stage6_trial89_raw_reboot_manager_bridge' kernel/reboot.c
+          grep -q 'Trial89 SUSFS RAW REBOOT: cmd=' kernel/reboot.c
           grep -q 'CMD_SUSFS_SHOW_ENABLED_FEATURES' kernel/reboot.c
           grep -q 'CMD_SUSFS_SHOW_VARIANT' kernel/reboot.c
           grep -q 'CMD_SUSFS_SHOW_VERSION' kernel/reboot.c
           grep -q 'void __user \*susfs_user_arg = arg;' kernel/reboot.c
           grep -q 'void __user \*\*susfs_arg = &susfs_user_arg;' kernel/reboot.c
           git diff --check -- kernel/reboot.c
-          echo "Trial88: raw SYS_reboot Manager reporting bridge installed."
+          echo "Trial89: raw SYS_reboot Manager reporting bridge installed."
 
       - name: Prepare disposable Stage 4 build workflow
         run: |
@@ -3930,11 +3945,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL88-RAW-REBOOT-MANAGER-BRIDGE.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL89-RAW-REBOOT-C90-FIX.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL88-RAW-REBOOT-MANAGER-BRIDGE\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL89-RAW-REBOOT-C90-FIX\n"
           )
           p.write_text(s)
           PY
@@ -3968,8 +3983,8 @@ jobs:
           done
           grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
-          grep -q 'susfs_stage6_trial88_raw_reboot_manager_bridge' kernel/reboot.c
-          grep -q 'Trial88 SUSFS RAW REBOOT: cmd=' kernel/reboot.c
+          grep -q 'susfs_stage6_trial89_raw_reboot_manager_bridge' kernel/reboot.c
+          grep -q 'Trial89 SUSFS RAW REBOOT: cmd=' kernel/reboot.c
           test -z "$(git -C KernelSU-Next status --porcelain)"
           test "$(find . -name '*.rej' -type f | wc -l)" -eq 0
           git diff --check
@@ -4006,7 +4021,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 88: raw reboot Manager reporting bridge added; full SUSFS 2.3.0 feature set preserved.'
+          echo 'Stage 6 Trial 89: raw reboot Manager reporting bridge added; full SUSFS 2.3.0 feature set preserved.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -4018,7 +4033,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 88 full-feature semantic-parity audit.
+          Stage 6 Trial 89 full-feature semantic-parity audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -4031,7 +4046,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial88-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial89-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -4057,7 +4072,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 88 bridge raw reboot SUSFS manager reporting"
+          git commit -m "CI: SUSFS Stage 6 Trial 89 fix raw reboot bridge C90 declaration order"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -4819,7 +4834,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 6 Trial 88: {name} ====="',
+                  f'echo "===== Stage 6 Trial 89: {name} ====="',
                   script,
                   "",
               ]
@@ -4830,17 +4845,17 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 6 Trial 88 full build recipe completed."
+          echo "Stage 6 Trial 89 full build recipe completed."
           echo "Trial81 full build completed; runtime boot + Manager SUSFS detection validation required."
 
-      - name: Mark Stage 6 Trial 88 flash candidate
+      - name: Mark Stage 6 Trial 89 flash candidate
         run: |
           set -euxo pipefail
           mkdir -p .ci/stage5/flash-candidate
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 88 FLASH CANDIDATE"
+           echo "Stage 6 Trial 89 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
@@ -4852,11 +4867,11 @@ jobs:
           } | tee .ci/stage5/flash-candidate/manifest.txt
 
 
-      - name: Upload Stage 6 Trial 88 outputs
+      - name: Upload Stage 6 Trial 89 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial88-raw-reboot-manager-bridge
+          name: m127f-susfs-stage6-trial89-raw-reboot-c90-fix
           if-no-files-found: warn
           path: |
             Image
@@ -4864,5 +4879,5 @@ jobs:
             .config
             .ci/stage5/
             .ci/stage6-trial86/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL88-RAW-REBOOT-MANAGER-BRIDGE.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL89-RAW-REBOOT-C90-FIX.zip
 
