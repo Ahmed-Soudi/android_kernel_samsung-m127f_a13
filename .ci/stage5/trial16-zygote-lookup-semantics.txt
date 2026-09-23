@@ -1,0 +1,8 @@
+Stage 5 Trial 16
+Trial 15 green baseline retained.
+Ported official SUSFS 2.3.0 __lookup_mnt umounted-process behavior.
+High-ID KSU mounts are hidden from marked zygote/zygote_next descendants.
+Samsung CONFIG_KDP_NS parent-vfsmount representation handled explicitly.
+This is kernel-side zygote handling only; no Zygisk implementation is embedded.
+External KSUN Zygisk modules remain an after-flash install/test layer.
+NOT A FLASH CANDIDATE.
