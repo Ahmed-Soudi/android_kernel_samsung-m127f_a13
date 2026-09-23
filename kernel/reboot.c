@@ -14,6 +14,10 @@
 #include <linux/reboot.h>
 #include <linux/suspend.h>
 #include <linux/syscalls.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#include <linux/susfs_def.h>
+#endif
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
 
@@ -315,6 +319,86 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	struct pid_namespace *pid_ns = task_active_pid_ns(current);
 	char buffer[256];
 	int ret = 0;
+#ifdef CONFIG_KSU_SUSFS
+	/*
+	 * susfs_stage6_trial90_raw_reboot_manager_bridge
+	 * KSUN 3.3.0 ksud probes SUSFS with raw SYS_reboot.
+	 * Trial90 exposes the complete SUSFS 2.3.0 command ABI on the
+	 * real Samsung 4.19 reboot syscall path used by userspace.
+	 */
+	if (magic1 == 0xDEADBEEF && magic2 == SUSFS_MAGIC &&
+	    current_uid().val == 0) {
+		void __user *susfs_user_arg = arg;
+		void __user **susfs_arg = &susfs_user_arg;
+
+		pr_info("Trial90 SUSFS RAW REBOOT: cmd=0x%x uid=%u\n",
+			cmd, current_uid().val);
+
+		switch (cmd) {
+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+		case CMD_SUSFS_ADD_SUS_PATH:
+			susfs_add_sus_path(susfs_arg);
+			return 0;
+		case CMD_SUSFS_ADD_SUS_PATH_LOOP:
+			susfs_add_sus_path_loop(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+		case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS:
+			susfs_set_hide_sus_mnts_for_non_su_procs(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+		case CMD_SUSFS_ADD_SUS_KSTAT:
+		case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
+			susfs_add_sus_kstat(susfs_arg);
+			return 0;
+		case CMD_SUSFS_UPDATE_SUS_KSTAT:
+			susfs_update_sus_kstat(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+		case CMD_SUSFS_SET_UNAME:
+			susfs_set_uname(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+		case CMD_SUSFS_ENABLE_LOG:
+			susfs_enable_log(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+		case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+			susfs_set_cmdline_or_bootconfig(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+		case CMD_SUSFS_ADD_OPEN_REDIRECT:
+			susfs_add_open_redirect(susfs_arg);
+			return 0;
+#endif
+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+		case CMD_SUSFS_ADD_SUS_MAP:
+			susfs_add_sus_map(susfs_arg);
+			return 0;
+#endif
+		case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:
+			susfs_set_avc_log_spoofing(susfs_arg);
+			return 0;
+		case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+			susfs_get_enabled_features(susfs_arg);
+			return 0;
+		case CMD_SUSFS_SHOW_VARIANT:
+			susfs_show_variant(susfs_arg);
+			return 0;
+		case CMD_SUSFS_SHOW_VERSION:
+			susfs_show_version(susfs_arg);
+			return 0;
+		default:
+			break;
+		}
+	}
+#endif
 
 	/* We only trust the superuser with rebooting the system. */
 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
