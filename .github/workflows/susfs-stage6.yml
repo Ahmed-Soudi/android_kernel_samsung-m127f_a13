@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 90
+name: SUSFS Samsung 4.19 Stage 6 - Trial 92
 
 permissions:
   contents: write
@@ -3743,6 +3743,95 @@ jobs:
           done
 
           echo "Trial82: native KSUN 3.3.0 <-> SUSFS 2.3.0 supercall dispatcher added."
+      - name: Trial 92 add FBE zygote-start KSUN services trigger
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Trial 91 was consumed during workflow generation because its pinned
+          # KSUN source guard used the wrong indentation. Trial 92 starts again
+          # from the boot-green Trial 90 workflow and makes ONE runtime change:
+          # add an FBE-capable zygote-start trigger for `ksud services`.
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = \
+            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+
+          python3 - <<'PY92'
+          from pathlib import Path
+
+          p = Path("KernelSU-Next/kernel/runtime/ksud_integration.c")
+          t = p.read_text()
+
+          marker = "susfs_stage6_trial92_fbe_zygote_services"
+          if marker in t:
+              raise SystemExit("Trial92: FBE zygote-start services trigger unexpectedly already present")
+
+          # Exact pinned KSUN 3.3.0 source shape at commit 3b18216f.
+          # Preserve both legacy triggers; add one additional FBE event only.
+          legacy = (
+              '    "on nonencrypted\\n"\n'
+              '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
+              '    "\\n"\n'
+              '    "on property:vold.decrypt=trigger_restart_framework\\n"\n'
+              '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
+          )
+          if legacy not in t:
+              raise SystemExit("Trial92: exact pinned legacy KSUN services trigger block changed")
+
+          replacement = (
+              '    "on nonencrypted\\n"\n'
+              '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
+              '    "\\n"\n'
+              '    /* susfs_stage6_trial92_fbe_zygote_services */\n'
+              '    "on zygote-start\\n"\n'
+              '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
+              '    "\\n"\n'
+              '    "on property:vold.decrypt=trigger_restart_framework\\n"\n'
+              '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
+          )
+
+          t = t.replace(legacy, replacement, 1)
+          p.write_text(t)
+          PY92
+
+          git -C KernelSU-Next diff --check
+          git -C KernelSU-Next diff -- kernel/runtime/ksud_integration.c \
+            > /tmp/trial92-fbe-zygote-services.patch
+          test -s /tmp/trial92-fbe-zygote-services.patch
+
+          grep -q 'susfs_stage6_trial92_fbe_zygote_services' \
+            KernelSU-Next/kernel/runtime/ksud_integration.c
+          grep -q '"on zygote-start\\n"' \
+            KernelSU-Next/kernel/runtime/ksud_integration.c
+
+          python3 - <<'PY92AUDIT'
+          from pathlib import Path
+          t = Path("KernelSU-Next/kernel/runtime/ksud_integration.c").read_text()
+          marker = "susfs_stage6_trial92_fbe_zygote_services"
+          pos = t.index(marker)
+          w = t[pos:pos+500]
+          if w.count('"on zygote-start\\n"') != 1:
+              raise SystemExit("Trial92: expected exactly one zygote-start trigger near marker")
+          if 'KSUD_PATH " services\\n"' not in w:
+              raise SystemExit("Trial92: ksud services command missing near marker")
+          print("Trial92: FBE zygote-start -> ksud services source audit passed")
+          PY92AUDIT
+
+          cat /tmp/trial92-fbe-zygote-services.patch \
+            >> .github/patches/stage5-ksun-susfs-compile-probe.patch
+
+          git -C KernelSU-Next reset --hard
+          git -C KernelSU-Next clean -fd
+
+          git -C KernelSU-Next apply --check \
+            ../.github/patches/stage5-ksun-susfs-compile-probe.patch
+
+          grep -q 'susfs_stage6_trial92_fbe_zygote_services' \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'on zygote-start' \
+            .github/patches/stage5-ksun-susfs-compile-probe.patch
+
+          echo "Trial92: added only FBE zygote-start -> ksud services trigger."
+
       - name: Trial 90 bridge raw reboot SUSFS manager reporting
         shell: bash
         run: |
@@ -3998,11 +4087,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL90-FULL-RAW-REBOOT-ABI.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL90-FULL-RAW-REBOOT-ABI\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES\n"
           )
           p.write_text(s)
           PY
@@ -4038,6 +4127,8 @@ jobs:
           grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q 'susfs_stage6_trial90_raw_reboot_manager_bridge' kernel/reboot.c
           grep -q 'Trial90 SUSFS RAW REBOOT: cmd=' kernel/reboot.c
+          grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'on zygote-start' .github/patches/stage5-ksun-susfs-compile-probe.patch
           test -z "$(git -C KernelSU-Next status --porcelain)"
           test "$(find . -name '*.rej' -type f | wc -l)" -eq 0
           git diff --check
@@ -4074,7 +4165,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 90: raw reboot Manager reporting bridge added; full SUSFS 2.3.0 feature set preserved.'
+          echo 'Stage 6 Trial 92: Trial90 baseline preserved; FBE zygote-start launches ksud services.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -4086,7 +4177,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 90 full-feature semantic-parity audit.
+          Stage 6 Trial 92 full-feature semantic-parity audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -4099,7 +4190,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial90-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial92-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -4125,7 +4216,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 90 expose full SUSFS ABI on raw reboot path"
+          git commit -m "CI: SUSFS Stage 6 Trial 92 start KSUN services on FBE zygote-start"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -4887,7 +4978,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 6 Trial 90: {name} ====="',
+                  f'echo "===== Stage 6 Trial 92: {name} ====="',
                   script,
                   "",
               ]
@@ -4898,33 +4989,33 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 6 Trial 90 full build recipe completed."
+          echo "Stage 6 Trial 92 full build recipe completed."
           echo "Trial81 full build completed; runtime boot + Manager SUSFS detection validation required."
 
-      - name: Mark Stage 6 Trial 90 flash candidate
+      - name: Mark Stage 6 Trial 92 flash candidate
         run: |
           set -euxo pipefail
           mkdir -p .ci/stage5/flash-candidate
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 90 FLASH CANDIDATE"
+           echo "Stage 6 Trial 92 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
            echo "susfs=2.3.0 Samsung 4.19 backport"
            echo "ps5_uac1=preserved"
-           echo "zygisk=external-module-only"
+           echo "zygisk=external-module;trial92_fbe_zygote_services_trigger=enabled"
            echo "runtime_validation=trial77_full_features_boot_green;trial78_pending"
            [ ! -f Image ] || sha256sum Image
           } | tee .ci/stage5/flash-candidate/manifest.txt
 
 
-      - name: Upload Stage 6 Trial 90 outputs
+      - name: Upload Stage 6 Trial 92 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial90-full-raw-reboot-abi
+          name: m127f-susfs-stage6-trial92-fbe-zygote-services
           if-no-files-found: warn
           path: |
             Image
@@ -4932,5 +5023,5 @@ jobs:
             .config
             .ci/stage5/
             .ci/stage6-trial86/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL90-FULL-RAW-REBOOT-ABI.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES.zip
 
