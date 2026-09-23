@@ -14,6 +14,10 @@
 #include <linux/reboot.h>
 #include <linux/suspend.h>
 #include <linux/syscalls.h>
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs.h>
+#include <linux/susfs_def.h>
+#endif
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
 
@@ -315,6 +319,38 @@ SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 	struct pid_namespace *pid_ns = task_active_pid_ns(current);
 	char buffer[256];
 	int ret = 0;
+#ifdef CONFIG_KSU_SUSFS
+	/*
+	 * susfs_stage6_trial89_raw_reboot_manager_bridge
+	 * KSUN 3.3.0 ksud probes SUSFS with raw SYS_reboot.
+	 * Trial89 services only Manager reporting commands here.
+	 */
+	if (magic1 == 0xDEADBEEF && magic2 == SUSFS_MAGIC &&
+	    current_uid().val == 0) {
+		void __user *susfs_user_arg = arg;
+		void __user **susfs_arg = &susfs_user_arg;
+
+		pr_info("Trial89 SUSFS RAW REBOOT: cmd=0x%x uid=%u\n",
+			cmd, current_uid().val);
+
+		switch (cmd) {
+		case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+			pr_info("Trial89 SUSFS RAW REBOOT: SHOW_ENABLED_FEATURES\n");
+			susfs_get_enabled_features(susfs_arg);
+			return 0;
+		case CMD_SUSFS_SHOW_VARIANT:
+			pr_info("Trial89 SUSFS RAW REBOOT: SHOW_VARIANT\n");
+			susfs_show_variant(susfs_arg);
+			return 0;
+		case CMD_SUSFS_SHOW_VERSION:
+			pr_info("Trial89 SUSFS RAW REBOOT: SHOW_VERSION\n");
+			susfs_show_version(susfs_arg);
+			return 0;
+		default:
+			break;
+		}
+	}
+#endif
 
 	/* We only trust the superuser with rebooting the system. */
 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))

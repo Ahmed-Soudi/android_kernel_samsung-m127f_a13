@@ -1,0 +1,1527 @@
+===== DISCOVERED OFFICIAL FILES =====
+kernel_patch=.ci/stage5/official230/src/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch
+ksu_patch=.ci/stage5/official230/src/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+
+===== OFFICIAL 2.3.0 FOCUSED CONTEXT =====
+.ci/stage5/official230/kernel.patch-109- 	retval = bprm_execve(bprm, fd, filename, flags);
+.ci/stage5/official230/kernel.patch-110-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-111-+	if (unlikely(is_su_session))
+.ci/stage5/official230/kernel.patch-112-+		(void)ksu_handle_post_execveat_sucompat(&fd, &filename, &argv, &envp, &flags, &retval);
+.ci/stage5/official230/kernel.patch-113-+#endif // #ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-114- out_free:
+.ci/stage5/official230/kernel.patch-115- 	free_bprm(bprm);
+.ci/stage5/official230/kernel.patch-116- 
+.ci/stage5/official230/kernel.patch-117-diff --git a/fs/namei.c b/fs/namei.c
+.ci/stage5/official230/kernel.patch-118-index ce97b60fe..a082b7beb 100644
+.ci/stage5/official230/kernel.patch-119---- a/fs/namei.c
+.ci/stage5/official230/kernel.patch-120-+++ b/fs/namei.c
+.ci/stage5/official230/kernel.patch-121-@@ -39,10 +39,21 @@
+.ci/stage5/official230/kernel.patch-122- #include <linux/bitops.h>
+.ci/stage5/official230/kernel.patch-123- #include <linux/init_task.h>
+.ci/stage5/official230/kernel.patch-124- #include <linux/uaccess.h>
+.ci/stage5/official230/kernel.patch:125:+#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+.ci/stage5/official230/kernel.patch-126-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch-127-+#endif
+.ci/stage5/official230/kernel.patch-128- 
+.ci/stage5/official230/kernel.patch-129- #include "internal.h"
+.ci/stage5/official230/kernel.patch-130- #include "mount.h"
+.ci/stage5/official230/kernel.patch-131- 
+.ci/stage5/official230/kernel.patch-132-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+.ci/stage5/official230/kernel.patch-133-+extern bool susfs_is_inode_sus_path(struct inode *inode);
+.ci/stage5/official230/kernel.patch-134-+extern const struct qstr susfs_fake_qstr_name;
+.ci/stage5/official230/kernel.patch-135-+#endif
+.ci/stage5/official230/kernel.patch:136:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-137-+extern struct filename *susfs_open_redirect_spoof_do_sys_openat(struct inode *inode);
+.ci/stage5/official230/kernel.patch:138:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-139-+
+.ci/stage5/official230/kernel.patch-140- /* [Feb-1997 T. Schoebel-Theuer]
+.ci/stage5/official230/kernel.patch-141-  * Fundamental changes in the pathname lookup mechanisms (namei)
+.ci/stage5/official230/kernel.patch-142-  * were necessary because of omirr.  The reason is that omirr needs
+.ci/stage5/official230/kernel.patch-143-@@ -1531,6 +1542,14 @@ static struct dentry *lookup_dcache(const struct qstr *name,
+.ci/stage5/official230/kernel.patch-144- 			return ERR_PTR(error);
+.ci/stage5/official230/kernel.patch-145- 		}
+.ci/stage5/official230/kernel.patch-146- 	}
+.ci/stage5/official230/kernel.patch-147-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+.ci/stage5/official230/kernel.patch-148-+	if (dentry && !IS_ERR(dentry) && dentry->d_inode && susfs_is_inode_sus_path(dentry->d_inode)) {
+.ci/stage5/official230/kernel.patch-149-+		if (d_in_lookup(dentry))
+.ci/stage5/official230/kernel.patch-150-+			d_lookup_done(dentry);
+.ci/stage5/official230/kernel.patch-151-+		dput(dentry);
+.ci/stage5/official230/kernel.patch-152-+		return NULL;
+.ci/stage5/official230/kernel.patch-153-+	}
+.ci/stage5/official230/kernel.patch-154-+#endif
+--
+.ci/stage5/official230/kernel.patch-369- 				return dentry;
+.ci/stage5/official230/kernel.patch-370- 		}
+.ci/stage5/official230/kernel.patch-371-@@ -3485,6 +3611,9 @@ static const char *open_last_lookups(struct nameidata *nd,
+.ci/stage5/official230/kernel.patch-372- 	struct inode *inode;
+.ci/stage5/official230/kernel.patch-373- 	struct dentry *dentry;
+.ci/stage5/official230/kernel.patch-374- 	const char *res;
+.ci/stage5/official230/kernel.patch-375-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+.ci/stage5/official230/kernel.patch-376-+	nd->state |= ND_STATE_OPEN_LAST;
+.ci/stage5/official230/kernel.patch-377-+#endif
+.ci/stage5/official230/kernel.patch-378- 
+.ci/stage5/official230/kernel.patch-379- 	nd->flags |= op->intent;
+.ci/stage5/official230/kernel.patch-380- 
+.ci/stage5/official230/kernel.patch-381-@@ -3679,10 +3808,33 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
+.ci/stage5/official230/kernel.patch-382- 		const struct open_flags *op,
+.ci/stage5/official230/kernel.patch-383- 		struct file *file)
+.ci/stage5/official230/kernel.patch-384- {
+.ci/stage5/official230/kernel.patch:385:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-386-+	int old_dfd = nd->dfd;
+.ci/stage5/official230/kernel.patch-387-+	bool is_nd_state_root_preset = (nd->state & ND_ROOT_PRESET);
+.ci/stage5/official230/kernel.patch-388-+	struct filename *fake_filename = NULL;
+.ci/stage5/official230/kernel.patch:389:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-390- 	struct user_namespace *mnt_userns;
+.ci/stage5/official230/kernel.patch-391- 	struct dentry *child;
+.ci/stage5/official230/kernel.patch-392- 	struct path path;
+.ci/stage5/official230/kernel.patch-393- 	int error = path_lookupat(nd, flags | LOOKUP_DIRECTORY, &path);
+.ci/stage5/official230/kernel.patch:394:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-395-+	if ((likely(!error) && !is_nd_state_root_preset) &&
+.ci/stage5/official230/kernel.patch:396:+		SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(path.dentry->d_inode))
+.ci/stage5/official230/kernel.patch-397-+	{
+.ci/stage5/official230/kernel.patch-398-+		fake_filename = susfs_open_redirect_spoof_do_sys_openat(path.dentry->d_inode);
+.ci/stage5/official230/kernel.patch-399-+		if (fake_filename && !IS_ERR(fake_filename)) {
+.ci/stage5/official230/kernel.patch-400-+			struct path fake_path;
+.ci/stage5/official230/kernel.patch-401-+
+.ci/stage5/official230/kernel.patch-402-+			error = filename_lookup(old_dfd, fake_filename, flags | LOOKUP_DIRECTORY, &fake_path, NULL);
+.ci/stage5/official230/kernel.patch-403-+			path_put(&path);
+.ci/stage5/official230/kernel.patch-404-+			if (unlikely(error)) {
+.ci/stage5/official230/kernel.patch-405-+				putname(fake_filename);
+.ci/stage5/official230/kernel.patch-406-+				return error;
+.ci/stage5/official230/kernel.patch-407-+			}
+.ci/stage5/official230/kernel.patch-408-+			path = fake_path;
+.ci/stage5/official230/kernel.patch-409-+		}
+.ci/stage5/official230/kernel.patch-410-+	}
+.ci/stage5/official230/kernel.patch:411:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-412- 	if (unlikely(error))
+.ci/stage5/official230/kernel.patch-413- 		return error;
+.ci/stage5/official230/kernel.patch-414- 	error = mnt_want_write(path.mnt);
+.ci/stage5/official230/kernel.patch-415-@@ -3704,24 +3856,61 @@ static int do_tmpfile(struct nameidata *nd, unsigned flags,
+.ci/stage5/official230/kernel.patch-416- 	mnt_drop_write(path.mnt);
+.ci/stage5/official230/kernel.patch-417- out:
+.ci/stage5/official230/kernel.patch-418- 	path_put(&path);
+.ci/stage5/official230/kernel.patch:419:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-420-+	if (fake_filename && !IS_ERR(fake_filename))
+.ci/stage5/official230/kernel.patch-421-+		putname(fake_filename);
+.ci/stage5/official230/kernel.patch:422:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-423- 	return error;
+.ci/stage5/official230/kernel.patch-424- }
+.ci/stage5/official230/kernel.patch-425- 
+.ci/stage5/official230/kernel.patch-426- static int do_o_path(struct nameidata *nd, unsigned flags, struct file *file)
+.ci/stage5/official230/kernel.patch-427- {
+.ci/stage5/official230/kernel.patch:428:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-429-+	int old_dfd = nd->dfd;
+.ci/stage5/official230/kernel.patch-430-+	bool is_nd_state_root_preset = (nd->state & ND_ROOT_PRESET);
+.ci/stage5/official230/kernel.patch-431-+	struct filename *fake_filename = NULL;
+.ci/stage5/official230/kernel.patch:432:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-433- 	struct path path;
+.ci/stage5/official230/kernel.patch-434- 	int error = path_lookupat(nd, flags, &path);
+.ci/stage5/official230/kernel.patch-435- 	if (!error) {
+.ci/stage5/official230/kernel.patch:436:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-437-+		if (!is_nd_state_root_preset &&
+.ci/stage5/official230/kernel.patch:438:+			SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(path.dentry->d_inode))
+.ci/stage5/official230/kernel.patch-439-+		{
+.ci/stage5/official230/kernel.patch-440-+			fake_filename = susfs_open_redirect_spoof_do_sys_openat(path.dentry->d_inode);
+.ci/stage5/official230/kernel.patch-441-+			if (fake_filename && !IS_ERR(fake_filename)) {
+.ci/stage5/official230/kernel.patch-442-+				struct path fake_path;
+.ci/stage5/official230/kernel.patch-443-+
+.ci/stage5/official230/kernel.patch-444-+				error = filename_lookup(old_dfd, fake_filename, flags, &fake_path, NULL);
+.ci/stage5/official230/kernel.patch-445-+				path_put(&path);
+.ci/stage5/official230/kernel.patch-446-+				if (unlikely(error)) {
+.ci/stage5/official230/kernel.patch-447-+					putname(fake_filename);
+.ci/stage5/official230/kernel.patch-448-+					return error;
+.ci/stage5/official230/kernel.patch-449-+				}
+.ci/stage5/official230/kernel.patch-450-+				path = fake_path;
+.ci/stage5/official230/kernel.patch-451-+			}
+.ci/stage5/official230/kernel.patch-452-+		}
+.ci/stage5/official230/kernel.patch:453:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-454- 		audit_inode(nd->name, path.dentry, 0);
+.ci/stage5/official230/kernel.patch-455- 		error = vfs_open(&path, file);
+.ci/stage5/official230/kernel.patch-456- 		path_put(&path);
+.ci/stage5/official230/kernel.patch-457- 	}
+.ci/stage5/official230/kernel.patch:458:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-459-+	if (fake_filename && !IS_ERR(fake_filename))
+.ci/stage5/official230/kernel.patch-460-+		putname(fake_filename);
+.ci/stage5/official230/kernel.patch:461:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-462- 	return error;
+.ci/stage5/official230/kernel.patch-463- }
+.ci/stage5/official230/kernel.patch-464- 
+.ci/stage5/official230/kernel.patch-465- static struct file *path_openat(struct nameidata *nd,
+.ci/stage5/official230/kernel.patch-466- 			const struct open_flags *op, unsigned flags)
+.ci/stage5/official230/kernel.patch-467- {
+.ci/stage5/official230/kernel.patch:468:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-469-+	int old_dfd = nd->dfd;
+.ci/stage5/official230/kernel.patch-470-+	bool is_nd_state_root_preset = (nd->state & ND_ROOT_PRESET);
+.ci/stage5/official230/kernel.patch-471-+	struct filename *fake_filename = NULL;
+.ci/stage5/official230/kernel.patch-472-+	struct filename *old_name = nd->name;
+.ci/stage5/official230/kernel.patch:473:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-474- 	struct file *file;
+.ci/stage5/official230/kernel.patch-475- 	int error;
+.ci/stage5/official230/kernel.patch-476- 
+.ci/stage5/official230/kernel.patch-477-@@ -3738,10 +3927,33 @@ static struct file *path_openat(struct nameidata *nd,
+.ci/stage5/official230/kernel.patch-478- 		while (!(error = link_path_walk(s, nd)) &&
+.ci/stage5/official230/kernel.patch-479- 		       (s = open_last_lookups(nd, file, op)) != NULL)
+.ci/stage5/official230/kernel.patch-480- 			;
+.ci/stage5/official230/kernel.patch:481:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-482-+		if (!error && !is_nd_state_root_preset &&
+.ci/stage5/official230/kernel.patch:483:+			SUSFS_IS_INODE_OPEN_REDIRECT_WITHOUT_UID_CHECK(nd->path.dentry->d_inode))
+.ci/stage5/official230/kernel.patch-484-+		{
+.ci/stage5/official230/kernel.patch-485-+			fake_filename = susfs_open_redirect_spoof_do_sys_openat(nd->path.dentry->d_inode);
+.ci/stage5/official230/kernel.patch-486-+			if (fake_filename && !IS_ERR(fake_filename)) {
+.ci/stage5/official230/kernel.patch-487-+				const char *new_s = NULL;
+.ci/stage5/official230/kernel.patch-488-+				terminate_walk(nd);
+.ci/stage5/official230/kernel.patch-489-+				restore_nameidata();
+.ci/stage5/official230/kernel.patch-490-+				set_nameidata(nd, old_dfd, fake_filename, NULL);
+.ci/stage5/official230/kernel.patch-491-+				new_s = path_init(nd, flags);
+.ci/stage5/official230/kernel.patch-492-+				while (!(error = link_path_walk(new_s, nd)) &&
+.ci/stage5/official230/kernel.patch-493-+				       (new_s = open_last_lookups(nd, file, op)) != NULL)
+.ci/stage5/official230/kernel.patch-494-+					;
+.ci/stage5/official230/kernel.patch-495-+			}
+.ci/stage5/official230/kernel.patch-496-+		}
+.ci/stage5/official230/kernel.patch:497:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-498- 		if (!error)
+.ci/stage5/official230/kernel.patch-499- 			error = do_open(nd, file, op);
+.ci/stage5/official230/kernel.patch-500- 		terminate_walk(nd);
+.ci/stage5/official230/kernel.patch-501- 	}
+.ci/stage5/official230/kernel.patch:502:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-503-+	if (fake_filename && !IS_ERR(fake_filename)) {
+.ci/stage5/official230/kernel.patch-504-+		nd->name = old_name;
+.ci/stage5/official230/kernel.patch-505-+		putname(fake_filename);
+.ci/stage5/official230/kernel.patch-506-+	}
+.ci/stage5/official230/kernel.patch:507:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-508- 	if (likely(!error)) {
+.ci/stage5/official230/kernel.patch-509- 		if (likely(file->f_mode & FMODE_OPENED))
+.ci/stage5/official230/kernel.patch-510- 			return file;
+.ci/stage5/official230/kernel.patch-511-@@ -5057,6 +5269,11 @@ int readlink_copy(char __user *buffer, int buflen, const char *link)
+.ci/stage5/official230/kernel.patch-512-  *
+.ci/stage5/official230/kernel.patch-513-  * Does not call security hook.
+.ci/stage5/official230/kernel.patch-514-  */
+.ci/stage5/official230/kernel.patch-515-+
+.ci/stage5/official230/kernel.patch:516:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-517-+extern int susfs_open_redirect_spoof_vfs_readlink(struct inode *inode, char __user *buffer, int buflen);
+.ci/stage5/official230/kernel.patch-518-+#endif
+.ci/stage5/official230/kernel.patch-519-+
+.ci/stage5/official230/kernel.patch-520- int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+.ci/stage5/official230/kernel.patch-521- {
+.ci/stage5/official230/kernel.patch-522- 	struct inode *inode = d_inode(dentry);
+.ci/stage5/official230/kernel.patch-523-@@ -5066,7 +5283,18 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+.ci/stage5/official230/kernel.patch-524- 
+.ci/stage5/official230/kernel.patch-525- 	if (unlikely(!(inode->i_opflags & IOP_DEFAULT_READLINK))) {
+.ci/stage5/official230/kernel.patch-526- 		if (unlikely(inode->i_op->readlink))
+.ci/stage5/official230/kernel.patch:527:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-528-+		{
+.ci/stage5/official230/kernel.patch:529:+			if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+.ci/stage5/official230/kernel.patch-530-+				res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
+.ci/stage5/official230/kernel.patch-531-+				if (!res)
+.ci/stage5/official230/kernel.patch-532-+					return res;
+.ci/stage5/official230/kernel.patch-533-+			}
+.ci/stage5/official230/kernel.patch-534-+			return inode->i_op->readlink(dentry, buffer, buflen);
+.ci/stage5/official230/kernel.patch-535-+		}
+.ci/stage5/official230/kernel.patch-536-+#else
+.ci/stage5/official230/kernel.patch-537- 			return inode->i_op->readlink(dentry, buffer, buflen);
+.ci/stage5/official230/kernel.patch-538-+#endif
+.ci/stage5/official230/kernel.patch-539- 
+.ci/stage5/official230/kernel.patch-540- 		if (!d_is_symlink(dentry))
+.ci/stage5/official230/kernel.patch-541- 			return -EINVAL;
+.ci/stage5/official230/kernel.patch-542-@@ -5082,6 +5310,15 @@ int vfs_readlink(struct dentry *dentry, char __user *buffer, int buflen)
+.ci/stage5/official230/kernel.patch-543- 		if (IS_ERR(link))
+.ci/stage5/official230/kernel.patch-544- 			return PTR_ERR(link);
+.ci/stage5/official230/kernel.patch-545- 	}
+.ci/stage5/official230/kernel.patch:546:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch:547:+	if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+.ci/stage5/official230/kernel.patch-548-+		res = susfs_open_redirect_spoof_vfs_readlink(inode, buffer, buflen);
+.ci/stage5/official230/kernel.patch-549-+		if (!res) {
+.ci/stage5/official230/kernel.patch-550-+			do_delayed_call(&done);
+.ci/stage5/official230/kernel.patch-551-+			return res;
+.ci/stage5/official230/kernel.patch-552-+		}
+.ci/stage5/official230/kernel.patch-553-+	}
+.ci/stage5/official230/kernel.patch-554-+#endif
+.ci/stage5/official230/kernel.patch-555- 	res = readlink_copy(buffer, buflen, link);
+.ci/stage5/official230/kernel.patch-556- 	do_delayed_call(&done);
+.ci/stage5/official230/kernel.patch-557- 	return res;
+.ci/stage5/official230/kernel.patch-558-diff --git a/fs/namespace.c b/fs/namespace.c
+.ci/stage5/official230/kernel.patch-559-index ff5e6455c..f4d7b35c3 100644
+.ci/stage5/official230/kernel.patch-560---- a/fs/namespace.c
+.ci/stage5/official230/kernel.patch-561-+++ b/fs/namespace.c
+.ci/stage5/official230/kernel.patch-562-@@ -32,10 +32,20 @@
+.ci/stage5/official230/kernel.patch-563- #include <linux/fs_context.h>
+--
+.ci/stage5/official230/kernel.patch-729-+out_free_id:
+.ci/stage5/official230/kernel.patch-730-+	mnt_free_id(mnt);
+.ci/stage5/official230/kernel.patch-731-+out_free_cache:
+.ci/stage5/official230/kernel.patch-732-+	kmem_cache_free(mnt_cache, mnt);
+.ci/stage5/official230/kernel.patch-733-+	return NULL;
+.ci/stage5/official230/kernel.patch-734-+}
+.ci/stage5/official230/kernel.patch-735-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-736-+
+.ci/stage5/official230/kernel.patch-737- static struct mount *alloc_vfsmnt(const char *name)
+.ci/stage5/official230/kernel.patch-738- {
+.ci/stage5/official230/kernel.patch-739- 	struct mount *mnt = kmem_cache_zalloc(mnt_cache, GFP_KERNEL);
+.ci/stage5/official230/kernel.patch-740-@@ -623,6 +768,20 @@ struct mount *__lookup_mnt(struct vfsmount *mnt, struct dentry *dentry)
+.ci/stage5/official230/kernel.patch-741- 	struct hlist_head *head = m_hash(mnt, dentry);
+.ci/stage5/official230/kernel.patch-742- 	struct mount *p;
+.ci/stage5/official230/kernel.patch-743- 
+.ci/stage5/official230/kernel.patch-744-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:745:+	// - The hook here is needed as a temp solution to hide sus mnts for zygote_next
+.ci/stage5/official230/kernel.patch-746-+	//   spawned process since it just inherits the init mount namespace, and here
+.ci/stage5/official230/kernel.patch-747-+	//   we also spoof for the zygote spawned processes that are marked umounted,
+.ci/stage5/official230/kernel.patch-748-+	//   with this hack, we do not even need to umount those sus mounts.
+.ci/stage5/official230/kernel.patch-749-+	// - The solution here is simply to return the legit mount.
+.ci/stage5/official230/kernel.patch-750-+	if (susfs_is_current_proc_umounted()) {
+.ci/stage5/official230/kernel.patch-751-+		hlist_for_each_entry_rcu(p, head, mnt_hash)
+.ci/stage5/official230/kernel.patch-752-+			if (p->mnt_id < DEFAULT_KSU_MNT_ID && &p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
+.ci/stage5/official230/kernel.patch-753-+				return p;
+.ci/stage5/official230/kernel.patch-754-+		return NULL;
+.ci/stage5/official230/kernel.patch-755-+	}
+.ci/stage5/official230/kernel.patch-756-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-757-+
+.ci/stage5/official230/kernel.patch-758- 	hlist_for_each_entry_rcu(p, head, mnt_hash)
+.ci/stage5/official230/kernel.patch-759- 		if (&p->mnt_parent->mnt == mnt && p->mnt_mountpoint == dentry)
+.ci/stage5/official230/kernel.patch-760- 			return p;
+.ci/stage5/official230/kernel.patch-761-@@ -967,7 +1126,21 @@ struct vfsmount *vfs_create_mount(struct fs_context *fc)
+--
+.ci/stage5/official230/kernel.patch-839- 	copy_flags = CL_COPY_UNBINDABLE | CL_EXPIRE;
+.ci/stage5/official230/kernel.patch-840- 	if (user_ns != ns->user_ns)
+.ci/stage5/official230/kernel.patch-841- 		copy_flags |= CL_SHARED_TO_SLAVE;
+.ci/stage5/official230/kernel.patch-842-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-843-+	copy_flags |= CL_COPY_MNT_NS;
+.ci/stage5/official230/kernel.patch-844-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-845- 	new = copy_tree(old, old->mnt.mnt_root, copy_flags);
+.ci/stage5/official230/kernel.patch-846- 	if (IS_ERR(new)) {
+.ci/stage5/official230/kernel.patch-847- 		namespace_unlock();
+.ci/stage5/official230/kernel.patch-848-@@ -4669,3 +4884,43 @@ const struct proc_ns_operations mntns_operations = {
+.ci/stage5/official230/kernel.patch-849- 	.install	= mntns_install,
+.ci/stage5/official230/kernel.patch-850- 	.owner		= mntns_owner,
+.ci/stage5/official230/kernel.patch-851- };
+.ci/stage5/official230/kernel.patch-852-+
+.ci/stage5/official230/kernel.patch-853-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-854-+/* - To retrieve the non sus mnt_id from mount */
+.ci/stage5/official230/kernel.patch:855:+int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt) {
+.ci/stage5/official230/kernel.patch-856-+	struct mount *mnt = orig_mnt;
+.ci/stage5/official230/kernel.patch-857-+	int mnt_id;
+.ci/stage5/official230/kernel.patch-858-+
+.ci/stage5/official230/kernel.patch-859-+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+.ci/stage5/official230/kernel.patch-860-+		return mnt->mnt_id;
+.ci/stage5/official230/kernel.patch-861-+
+.ci/stage5/official230/kernel.patch-862-+	lock_mount_hash();
+.ci/stage5/official230/kernel.patch-863-+	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+.ci/stage5/official230/kernel.patch-864-+	mnt_id = mnt->mnt_id;
+.ci/stage5/official230/kernel.patch-865-+	unlock_mount_hash();
+.ci/stage5/official230/kernel.patch-866-+	return mnt_id;
+.ci/stage5/official230/kernel.patch-867-+}
+.ci/stage5/official230/kernel.patch-868-+
+.ci/stage5/official230/kernel.patch-869-+/* - To retrieve the non sus vfsmount from vfsmount, takes a reference on &mnt->mnt and mnt->mnt.mnt_root */
+.ci/stage5/official230/kernel.patch:870:+struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt) {
+.ci/stage5/official230/kernel.patch-871-+	struct mount *mnt = real_mount(vfsmnt);
+.ci/stage5/official230/kernel.patch-872-+
+.ci/stage5/official230/kernel.patch-873-+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID) {
+.ci/stage5/official230/kernel.patch-874-+		mntget(&mnt->mnt);
+.ci/stage5/official230/kernel.patch-875-+		dget(mnt->mnt.mnt_root);
+.ci/stage5/official230/kernel.patch-876-+		return &mnt->mnt;
+.ci/stage5/official230/kernel.patch-877-+	}
+.ci/stage5/official230/kernel.patch-878-+
+.ci/stage5/official230/kernel.patch-879-+	lock_mount_hash();
+.ci/stage5/official230/kernel.patch-880-+	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
+.ci/stage5/official230/kernel.patch-881-+	mntget(&mnt->mnt);
+.ci/stage5/official230/kernel.patch-882-+	if (!mnt->mnt.mnt_root || IS_ERR(mnt->mnt.mnt_root)) {
+.ci/stage5/official230/kernel.patch-883-+		mntput(&mnt->mnt);
+.ci/stage5/official230/kernel.patch-884-+		unlock_mount_hash();
+.ci/stage5/official230/kernel.patch-885-+		return vfsmnt;
+.ci/stage5/official230/kernel.patch-886-+	}
+--
+.ci/stage5/official230/kernel.patch-1018- #include <linux/dnotify.h>
+.ci/stage5/official230/kernel.patch-1019- #include <linux/compat.h>
+.ci/stage5/official230/kernel.patch-1020- #include <linux/mnt_idmapping.h>
+.ci/stage5/official230/kernel.patch-1021-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1022-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch-1023-+#endif
+.ci/stage5/official230/kernel.patch-1024- 
+.ci/stage5/official230/kernel.patch-1025- #include "internal.h"
+.ci/stage5/official230/kernel.patch-1026- #include <trace/hooks/syscall_check.h>
+.ci/stage5/official230/kernel.patch-1027-@@ -394,6 +397,12 @@ static const struct cred *access_override_creds(void)
+.ci/stage5/official230/kernel.patch-1028- 	return old_cred;
+.ci/stage5/official230/kernel.patch-1029- }
+.ci/stage5/official230/kernel.patch-1030- 
+.ci/stage5/official230/kernel.patch-1031-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1032-+extern struct static_key_true ksu_su_compat_enabled;
+.ci/stage5/official230/kernel.patch-1033-+extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+.ci/stage5/official230/kernel.patch:1034:+extern int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
+.ci/stage5/official230/kernel.patch-1035-+#endif
+.ci/stage5/official230/kernel.patch-1036-+
+.ci/stage5/official230/kernel.patch-1037- static long do_faccessat(int dfd, const char __user *filename, int mode, int flags)
+.ci/stage5/official230/kernel.patch-1038- {
+.ci/stage5/official230/kernel.patch-1039- 	struct path path;
+.ci/stage5/official230/kernel.patch-1040-@@ -401,6 +410,9 @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
+.ci/stage5/official230/kernel.patch-1041- 	int res;
+.ci/stage5/official230/kernel.patch-1042- 	unsigned int lookup_flags = LOOKUP_FOLLOW;
+.ci/stage5/official230/kernel.patch-1043- 	const struct cred *old_cred = NULL;
+.ci/stage5/official230/kernel.patch-1044-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1045-+	struct filename *fname = NULL;
+.ci/stage5/official230/kernel.patch-1046-+#endif
+.ci/stage5/official230/kernel.patch-1047- 
+.ci/stage5/official230/kernel.patch-1048- 	if (mode & ~S_IRWXO)	/* where's F_OK, X_OK, W_OK, R_OK? */
+.ci/stage5/official230/kernel.patch-1049- 		return -EINVAL;
+.ci/stage5/official230/kernel.patch-1050-@@ -420,7 +432,23 @@ static long do_faccessat(int dfd, const char __user *filename, int mode, int fla
+.ci/stage5/official230/kernel.patch-1051- 	}
+.ci/stage5/official230/kernel.patch-1052- 
+.ci/stage5/official230/kernel.patch-1053- retry:
+.ci/stage5/official230/kernel.patch-1054-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1055-+	fname = getname_flags(filename, lookup_flags, NULL);
+.ci/stage5/official230/kernel.patch-1056-+
+.ci/stage5/official230/kernel.patch-1057-+	if (likely(susfs_is_current_proc_no_su()))
+.ci/stage5/official230/kernel.patch-1058-+		goto orig_flow;
+.ci/stage5/official230/kernel.patch-1059-+
+.ci/stage5/official230/kernel.patch-1060-+	if (static_branch_likely(&ksu_su_compat_enabled)) {
+.ci/stage5/official230/kernel.patch-1061-+		if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
+.ci/stage5/official230/kernel.patch:1062:+			ksu_handle_faccessat(&dfd, &fname, &mode, NULL);
+.ci/stage5/official230/kernel.patch-1063-+	}
+.ci/stage5/official230/kernel.patch-1064-+
+.ci/stage5/official230/kernel.patch-1065-+orig_flow:
+.ci/stage5/official230/kernel.patch-1066-+	res = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
+.ci/stage5/official230/kernel.patch-1067-+	putname(fname);
+.ci/stage5/official230/kernel.patch-1068-+#else
+.ci/stage5/official230/kernel.patch-1069- 	res = user_path_at(dfd, filename, lookup_flags, &path);
+.ci/stage5/official230/kernel.patch-1070-+#endif
+.ci/stage5/official230/kernel.patch-1071- 	if (res)
+.ci/stage5/official230/kernel.patch-1072- 		goto out;
+.ci/stage5/official230/kernel.patch-1073- 
+.ci/stage5/official230/kernel.patch-1074-diff --git a/fs/proc/base.c b/fs/proc/base.c
+.ci/stage5/official230/kernel.patch-1075-index 7624ae2c1..ec0438d8b 100644
+.ci/stage5/official230/kernel.patch-1076---- a/fs/proc/base.c
+.ci/stage5/official230/kernel.patch-1077-+++ b/fs/proc/base.c
+.ci/stage5/official230/kernel.patch-1078-@@ -100,6 +100,10 @@
+.ci/stage5/official230/kernel.patch-1079- #include <linux/resctrl.h>
+.ci/stage5/official230/kernel.patch-1080- #include <linux/cn_proc.h>
+.ci/stage5/official230/kernel.patch-1081- #include <linux/cpufreq_times.h>
+.ci/stage5/official230/kernel.patch:1082:+#if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+.ci/stage5/official230/kernel.patch-1083-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch:1084:+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+.ci/stage5/official230/kernel.patch-1085-+
+.ci/stage5/official230/kernel.patch-1086- #include <trace/events/oom.h>
+.ci/stage5/official230/kernel.patch-1087- #include "internal.h"
+.ci/stage5/official230/kernel.patch-1088- #include "fd.h"
+.ci/stage5/official230/kernel.patch-1089-@@ -1823,6 +1827,10 @@ static const char *proc_pid_get_link(struct dentry *dentry,
+.ci/stage5/official230/kernel.patch-1090- 	return ERR_PTR(error);
+.ci/stage5/official230/kernel.patch-1091- }
+.ci/stage5/official230/kernel.patch-1092- 
+.ci/stage5/official230/kernel.patch:1093:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-1094-+extern int susfs_open_redirect_spoof_do_proc_readlink(struct inode *inode, char *tmp_buf, int buflen);
+.ci/stage5/official230/kernel.patch-1095-+#endif
+.ci/stage5/official230/kernel.patch-1096-+
+.ci/stage5/official230/kernel.patch-1097- static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
+.ci/stage5/official230/kernel.patch-1098- {
+.ci/stage5/official230/kernel.patch-1099- 	char *tmp = (char *)__get_free_page(GFP_KERNEL);
+.ci/stage5/official230/kernel.patch-1100-@@ -1832,6 +1840,17 @@ static int do_proc_readlink(struct path *path, char __user *buffer, int buflen)
+.ci/stage5/official230/kernel.patch-1101- 	if (!tmp)
+.ci/stage5/official230/kernel.patch-1102- 		return -ENOMEM;
+.ci/stage5/official230/kernel.patch-1103- 
+.ci/stage5/official230/kernel.patch:1104:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch:1105:+	if (SUSFS_IS_INODE_OPEN_REDIRECT(path->dentry->d_inode)) {
+.ci/stage5/official230/kernel.patch-1106-+		if (!susfs_open_redirect_spoof_do_proc_readlink(path->dentry->d_inode, tmp, buflen)) {
+.ci/stage5/official230/kernel.patch-1107-+			len = strlen(tmp);
+.ci/stage5/official230/kernel.patch-1108-+			if (copy_to_user(buffer, tmp, len))
+.ci/stage5/official230/kernel.patch-1109-+				len = -EFAULT;
+.ci/stage5/official230/kernel.patch-1110-+			goto out;
+.ci/stage5/official230/kernel.patch-1111-+		}
+.ci/stage5/official230/kernel.patch-1112-+	}
+.ci/stage5/official230/kernel.patch-1113-+#endif
+.ci/stage5/official230/kernel.patch-1114-+
+.ci/stage5/official230/kernel.patch-1115- 	pathname = d_path(path, tmp, PAGE_SIZE);
+.ci/stage5/official230/kernel.patch-1116- 	len = PTR_ERR(pathname);
+.ci/stage5/official230/kernel.patch-1117- 	if (IS_ERR(pathname))
+.ci/stage5/official230/kernel.patch-1118-@@ -2451,6 +2470,10 @@ proc_map_files_readdir(struct file *file, struct dir_context *ctx)
+.ci/stage5/official230/kernel.patch-1119- 	for (vma = mm->mmap, pos = 2; vma; vma = vma->vm_next) {
+.ci/stage5/official230/kernel.patch-1120- 		if (!vma->vm_file)
+.ci/stage5/official230/kernel.patch-1121- 			continue;
+.ci/stage5/official230/kernel.patch:1122:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch:1123:+		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+.ci/stage5/official230/kernel.patch-1124-+			continue;
+.ci/stage5/official230/kernel.patch:1125:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1126- 		if (++pos <= ctx->pos)
+.ci/stage5/official230/kernel.patch-1127- 			continue;
+.ci/stage5/official230/kernel.patch-1128- 
+.ci/stage5/official230/kernel.patch-1129-diff --git a/fs/proc/bootconfig.c b/fs/proc/bootconfig.c
+.ci/stage5/official230/kernel.patch-1130-index 2e244ada1..ca76c06d0 100644
+.ci/stage5/official230/kernel.patch-1131---- a/fs/proc/bootconfig.c
+.ci/stage5/official230/kernel.patch-1132-+++ b/fs/proc/bootconfig.c
+.ci/stage5/official230/kernel.patch-1133-@@ -12,8 +12,21 @@
+.ci/stage5/official230/kernel.patch-1134- 
+.ci/stage5/official230/kernel.patch-1135- static char *saved_boot_config;
+.ci/stage5/official230/kernel.patch-1136- 
+.ci/stage5/official230/kernel.patch-1137-+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+.ci/stage5/official230/kernel.patch-1138-+extern struct static_key_false susfs_is_fake_cmdline_or_bootconfig_buffer_set;
+.ci/stage5/official230/kernel.patch-1139-+extern void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);
+.ci/stage5/official230/kernel.patch-1140-+#endif
+.ci/stage5/official230/kernel.patch-1141-+
+--
+.ci/stage5/official230/kernel.patch-1156-index 913bef0d2..39e63d028 100644
+.ci/stage5/official230/kernel.patch-1157---- a/fs/proc/fd.c
+.ci/stage5/official230/kernel.patch-1158-+++ b/fs/proc/fd.c
+.ci/stage5/official230/kernel.patch-1159-@@ -13,11 +13,22 @@
+.ci/stage5/official230/kernel.patch-1160- #include <linux/fs.h>
+.ci/stage5/official230/kernel.patch-1161- 
+.ci/stage5/official230/kernel.patch-1162- #include <linux/proc_fs.h>
+.ci/stage5/official230/kernel.patch-1163-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1164-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch-1165-+#endif // #ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1166- 
+.ci/stage5/official230/kernel.patch-1167- #include "../mount.h"
+.ci/stage5/official230/kernel.patch-1168- #include "internal.h"
+.ci/stage5/official230/kernel.patch-1169- #include "fd.h"
+.ci/stage5/official230/kernel.patch-1170- 
+.ci/stage5/official230/kernel.patch-1171-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:1172:+extern int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt);
+.ci/stage5/official230/kernel.patch-1173-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1174-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1175-+extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
+.ci/stage5/official230/kernel.patch-1176-+extern void susfs_sus_kstat_spoof_proc_fd_seq_show(int *out_target_mnt_id, unsigned long *out_target_ino, dev_t target_dev);
+.ci/stage5/official230/kernel.patch-1177-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1178-+
+.ci/stage5/official230/kernel.patch-1179- static int seq_show(struct seq_file *m, void *v)
+.ci/stage5/official230/kernel.patch-1180- {
+.ci/stage5/official230/kernel.patch-1181- 	struct files_struct *files = NULL;
+.ci/stage5/official230/kernel.patch-1182-@@ -54,11 +65,70 @@ static int seq_show(struct seq_file *m, void *v)
+.ci/stage5/official230/kernel.patch-1183- 	if (ret)
+.ci/stage5/official230/kernel.patch-1184- 		return ret;
+.ci/stage5/official230/kernel.patch-1185- 
+.ci/stage5/official230/kernel.patch-1186-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1187-+	if (susfs_is_current_app_uid()) {
+.ci/stage5/official230/kernel.patch-1188-+		struct inode *inode = file_inode(file);
+--
+.ci/stage5/official230/kernel.patch-1211-+			if (!pathname) {
+.ci/stage5/official230/kernel.patch-1212-+				goto orig_flow;
+.ci/stage5/official230/kernel.patch-1213-+			}
+.ci/stage5/official230/kernel.patch-1214-+			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
+.ci/stage5/official230/kernel.patch-1215-+			if (!dpath) {
+.ci/stage5/official230/kernel.patch-1216-+				goto out_kfree;
+.ci/stage5/official230/kernel.patch-1217-+			}
+.ci/stage5/official230/kernel.patch-1218-+			if (kern_path(dpath, 0, &path)) {
+.ci/stage5/official230/kernel.patch-1219-+				goto out_kfree;
+.ci/stage5/official230/kernel.patch-1220-+			}
+.ci/stage5/official230/kernel.patch-1221-+			if (!d_backing_inode(path.dentry)) {
+.ci/stage5/official230/kernel.patch-1222-+				goto out_path_put;
+.ci/stage5/official230/kernel.patch-1223-+			}
+.ci/stage5/official230/kernel.patch-1224-+
+.ci/stage5/official230/kernel.patch-1225-+			seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
+.ci/stage5/official230/kernel.patch-1226-+					(long long)file->f_pos, f_flags,
+.ci/stage5/official230/kernel.patch:1227:+					susfs_get_non_sus_mnt_id_from_mnt(mnt),
+.ci/stage5/official230/kernel.patch-1228-+					d_backing_inode(path.dentry)->i_ino);
+.ci/stage5/official230/kernel.patch-1229-+			path_put(&path);
+.ci/stage5/official230/kernel.patch-1230-+			kfree(pathname);
+.ci/stage5/official230/kernel.patch-1231-+			goto bypass_orig_flow;
+.ci/stage5/official230/kernel.patch-1232-+out_path_put:
+.ci/stage5/official230/kernel.patch-1233-+			path_put(&path);
+.ci/stage5/official230/kernel.patch-1234-+out_kfree:
+.ci/stage5/official230/kernel.patch-1235-+			kfree(pathname);
+.ci/stage5/official230/kernel.patch-1236-+			goto orig_flow;
+.ci/stage5/official230/kernel.patch-1237-+		}
+.ci/stage5/official230/kernel.patch-1238-+	}
+.ci/stage5/official230/kernel.patch-1239-+
+.ci/stage5/official230/kernel.patch-1240-+orig_flow:
+.ci/stage5/official230/kernel.patch-1241-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1242- 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
+.ci/stage5/official230/kernel.patch-1243- 		   (long long)file->f_pos, f_flags,
+--
+.ci/stage5/official230/kernel.patch-1245- 		   file_inode(file)->i_ino);
+.ci/stage5/official230/kernel.patch-1246- 
+.ci/stage5/official230/kernel.patch-1247-+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
+.ci/stage5/official230/kernel.patch-1248-+bypass_orig_flow:
+.ci/stage5/official230/kernel.patch-1249-+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
+.ci/stage5/official230/kernel.patch-1250- 	/* show_fd_locks() never deferences files so a stale value is safe */
+.ci/stage5/official230/kernel.patch-1251- 	show_fd_locks(m, file, files);
+.ci/stage5/official230/kernel.patch-1252- 	if (seq_has_overflowed(m))
+.ci/stage5/official230/kernel.patch-1253-diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+.ci/stage5/official230/kernel.patch-1254-index 3823dfae5..8bf726c91 100644
+.ci/stage5/official230/kernel.patch-1255---- a/fs/proc/task_mmu.c
+.ci/stage5/official230/kernel.patch-1256-+++ b/fs/proc/task_mmu.c
+.ci/stage5/official230/kernel.patch-1257-@@ -21,6 +21,9 @@
+.ci/stage5/official230/kernel.patch-1258- #include <linux/shmem_fs.h>
+.ci/stage5/official230/kernel.patch-1259- #include <linux/uaccess.h>
+.ci/stage5/official230/kernel.patch-1260- #include <linux/pkeys.h>
+.ci/stage5/official230/kernel.patch:1261:+#if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+.ci/stage5/official230/kernel.patch-1262-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch:1263:+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+.ci/stage5/official230/kernel.patch-1264- 
+.ci/stage5/official230/kernel.patch-1265- #include <asm/elf.h>
+.ci/stage5/official230/kernel.patch-1266- #include <asm/tlb.h>
+.ci/stage5/official230/kernel.patch-1267-@@ -269,6 +272,14 @@ static void show_vma_header_prefix(struct seq_file *m,
+.ci/stage5/official230/kernel.patch-1268- 	seq_putc(m, ' ');
+.ci/stage5/official230/kernel.patch-1269- }
+.ci/stage5/official230/kernel.patch-1270- 
+.ci/stage5/official230/kernel.patch-1271-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1272-+extern void susfs_sus_kstat_spoof_show_map_vma(struct inode *inode, dev_t *out_dev, unsigned long *out_ino);
+.ci/stage5/official230/kernel.patch-1273-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch:1274:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-1275-+extern struct srcu_struct susfs_srcu_open_redirect;
+.ci/stage5/official230/kernel.patch-1276-+extern int susfs_open_redirect_spoof_show_map_vma_srcu(struct inode *inode, unsigned long *out_ino, dev_t *out_dev, char **out_spoofed_name);
+.ci/stage5/official230/kernel.patch:1277:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch-1278-+
+.ci/stage5/official230/kernel.patch-1279- static void
+.ci/stage5/official230/kernel.patch-1280- show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+.ci/stage5/official230/kernel.patch-1281- {
+.ci/stage5/official230/kernel.patch-1282-@@ -283,9 +294,36 @@ show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+.ci/stage5/official230/kernel.patch-1283- 
+.ci/stage5/official230/kernel.patch-1284- 	if (file) {
+.ci/stage5/official230/kernel.patch-1285- 		struct inode *inode = file_inode(vma->vm_file);
+.ci/stage5/official230/kernel.patch:1286:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch:1287:+		if (SUSFS_IS_INODE_OPEN_REDIRECT(inode)) {
+.ci/stage5/official230/kernel.patch-1288-+			char *spoofed_redirected_name = NULL;
+.ci/stage5/official230/kernel.patch-1289-+			int srcu_idx = srcu_read_lock(&susfs_srcu_open_redirect);
+.ci/stage5/official230/kernel.patch-1290-+			int ret = susfs_open_redirect_spoof_show_map_vma_srcu(inode, &ino, &dev, &spoofed_redirected_name);
+.ci/stage5/official230/kernel.patch-1291-+			if (!ret) {
+.ci/stage5/official230/kernel.patch-1292-+				pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+.ci/stage5/official230/kernel.patch-1293-+				start = vma->vm_start;
+.ci/stage5/official230/kernel.patch-1294-+				end = VMA_PAD_START(vma);
+.ci/stage5/official230/kernel.patch-1295-+				show_vma_header_prefix(m, start, end, flags, pgoff, dev, ino);
+.ci/stage5/official230/kernel.patch-1296-+				seq_pad(m, ' ');
+.ci/stage5/official230/kernel.patch-1297-+				if (spoofed_redirected_name)
+.ci/stage5/official230/kernel.patch-1298-+					seq_puts(m, spoofed_redirected_name);
+.ci/stage5/official230/kernel.patch-1299-+				seq_putc(m, '\n');
+.ci/stage5/official230/kernel.patch-1300-+				srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+.ci/stage5/official230/kernel.patch-1301-+				return;
+.ci/stage5/official230/kernel.patch-1302-+			}
+.ci/stage5/official230/kernel.patch-1303-+			srcu_read_unlock(&susfs_srcu_open_redirect, srcu_idx);
+.ci/stage5/official230/kernel.patch-1304-+		}
+.ci/stage5/official230/kernel.patch:1305:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/kernel.patch:1306:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch:1307:+		if (SUSFS_IS_INODE_SUS_MAP(inode))
+.ci/stage5/official230/kernel.patch-1308-+			return;
+.ci/stage5/official230/kernel.patch:1309:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1310- 		dev = inode->i_sb->s_dev;
+.ci/stage5/official230/kernel.patch-1311- 		ino = inode->i_ino;
+.ci/stage5/official230/kernel.patch-1312- 		pgoff = ((loff_t)vma->vm_pgoff) << PAGE_SHIFT;
+.ci/stage5/official230/kernel.patch-1313-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1314-+		susfs_sus_kstat_spoof_show_map_vma(inode, &dev, &ino);
+.ci/stage5/official230/kernel.patch-1315-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1316- 	}
+.ci/stage5/official230/kernel.patch-1317- 
+.ci/stage5/official230/kernel.patch-1318- 	start = vma->vm_start;
+.ci/stage5/official230/kernel.patch-1319-@@ -857,6 +895,13 @@ static int show_smap(struct seq_file *m, void *v)
+.ci/stage5/official230/kernel.patch-1320- 	struct vm_area_struct *vma = v;
+.ci/stage5/official230/kernel.patch-1321- 	struct mem_size_stats mss;
+.ci/stage5/official230/kernel.patch-1322- 
+.ci/stage5/official230/kernel.patch:1323:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1324-+	if (vma->vm_file) {
+.ci/stage5/official230/kernel.patch:1325:+		if (SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+.ci/stage5/official230/kernel.patch-1326-+			return 0;
+.ci/stage5/official230/kernel.patch-1327-+	}
+.ci/stage5/official230/kernel.patch:1328:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1329-+
+.ci/stage5/official230/kernel.patch-1330- 	memset(&mss, 0, sizeof(mss));
+.ci/stage5/official230/kernel.patch-1331- 
+.ci/stage5/official230/kernel.patch-1332- 	if (!vma_pages(vma))
+.ci/stage5/official230/kernel.patch-1333-@@ -914,7 +959,14 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
+.ci/stage5/official230/kernel.patch-1334- 	hold_task_mempolicy(priv);
+.ci/stage5/official230/kernel.patch-1335- 
+.ci/stage5/official230/kernel.patch-1336- 	for (vma = priv->mm->mmap; vma;) {
+.ci/stage5/official230/kernel.patch:1337:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch:1338:+		if (vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+.ci/stage5/official230/kernel.patch-1339-+			goto bypass_orig_flow;
+.ci/stage5/official230/kernel.patch:1340:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1341- 		smap_gather_stats(vma, &mss, 0);
+.ci/stage5/official230/kernel.patch:1342:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1343-+bypass_orig_flow:
+.ci/stage5/official230/kernel.patch:1344:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1345- 		last_vma_end = vma->vm_end;
+.ci/stage5/official230/kernel.patch-1346- 
+.ci/stage5/official230/kernel.patch-1347- 		/*
+.ci/stage5/official230/kernel.patch-1348-@@ -976,7 +1028,14 @@ static int show_smaps_rollup(struct seq_file *m, void *v)
+.ci/stage5/official230/kernel.patch-1349- 
+.ci/stage5/official230/kernel.patch-1350- 			/* Case 4 above */
+.ci/stage5/official230/kernel.patch-1351- 			if (vma->vm_end > last_vma_end)
+.ci/stage5/official230/kernel.patch:1352:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1353-+			{
+.ci/stage5/official230/kernel.patch:1354:+				if (!vma->vm_file || !(SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file))))
+.ci/stage5/official230/kernel.patch-1355-+					smap_gather_stats(vma, &mss, last_vma_end);
+.ci/stage5/official230/kernel.patch-1356-+			}
+.ci/stage5/official230/kernel.patch-1357-+#else
+.ci/stage5/official230/kernel.patch-1358- 				smap_gather_stats(vma, &mss, last_vma_end);
+.ci/stage5/official230/kernel.patch:1359:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1360- 		}
+.ci/stage5/official230/kernel.patch-1361- 		/* Case 2 above */
+.ci/stage5/official230/kernel.patch-1362- 		vma = vma->vm_next;
+.ci/stage5/official230/kernel.patch-1363-@@ -1687,6 +1746,9 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
+.ci/stage5/official230/kernel.patch-1364- 	while (count && (start_vaddr < end_vaddr)) {
+.ci/stage5/official230/kernel.patch-1365- 		int len;
+.ci/stage5/official230/kernel.patch-1366- 		unsigned long end;
+.ci/stage5/official230/kernel.patch:1367:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1368-+		struct vm_area_struct *vma;
+.ci/stage5/official230/kernel.patch:1369:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1370- 
+.ci/stage5/official230/kernel.patch-1371- 		pm.pos = 0;
+.ci/stage5/official230/kernel.patch-1372- 		end = (start_vaddr + PAGEMAP_WALK_SIZE) & PAGEMAP_WALK_MASK;
+.ci/stage5/official230/kernel.patch-1373-@@ -1696,7 +1758,15 @@ static ssize_t pagemap_read(struct file *file, char __user *buf,
+.ci/stage5/official230/kernel.patch-1374- 		ret = mmap_read_lock_killable(mm);
+.ci/stage5/official230/kernel.patch-1375- 		if (ret)
+.ci/stage5/official230/kernel.patch-1376- 			goto out_free;
+.ci/stage5/official230/kernel.patch:1377:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1378-+		vma = vma_lookup(mm, start_vaddr);
+.ci/stage5/official230/kernel.patch:1379:+		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+.ci/stage5/official230/kernel.patch-1380-+			goto bypass_orig_flow;
+.ci/stage5/official230/kernel.patch:1381:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1382- 		ret = walk_page_range(mm, start_vaddr, end, &pagemap_ops, &pm);
+.ci/stage5/official230/kernel.patch:1383:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1384-+bypass_orig_flow:
+.ci/stage5/official230/kernel.patch:1385:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-1386- 		mmap_read_unlock(mm);
+.ci/stage5/official230/kernel.patch-1387- 		start_vaddr = end;
+.ci/stage5/official230/kernel.patch-1388- 
+.ci/stage5/official230/kernel.patch-1389-diff --git a/fs/proc_namespace.c b/fs/proc_namespace.c
+.ci/stage5/official230/kernel.patch-1390-index 49650e54d..4499feb54 100644
+.ci/stage5/official230/kernel.patch-1391---- a/fs/proc_namespace.c
+.ci/stage5/official230/kernel.patch-1392-+++ b/fs/proc_namespace.c
+.ci/stage5/official230/kernel.patch-1393-@@ -12,12 +12,20 @@
+.ci/stage5/official230/kernel.patch-1394- #include <linux/security.h>
+.ci/stage5/official230/kernel.patch-1395- #include <linux/fs_struct.h>
+.ci/stage5/official230/kernel.patch-1396- #include <linux/sched/task.h>
+.ci/stage5/official230/kernel.patch-1397-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1398-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch-1399-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1400- 
+.ci/stage5/official230/kernel.patch-1401- #include "proc/internal.h" /* only for get_proc_task() in ->open() */
+.ci/stage5/official230/kernel.patch-1402- 
+.ci/stage5/official230/kernel.patch-1403- #include "pnode.h"
+.ci/stage5/official230/kernel.patch-1404- #include "internal.h"
+.ci/stage5/official230/kernel.patch-1405- 
+.ci/stage5/official230/kernel.patch-1406-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:1407:+extern struct static_key_false susfs_is_hide_sus_mnts_for_non_su_procs_enabled;
+.ci/stage5/official230/kernel.patch-1408-+extern bool susfs_is_current_ksu_domain(void);
+.ci/stage5/official230/kernel.patch-1409-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1410-+
+.ci/stage5/official230/kernel.patch-1411- static __poll_t mounts_poll(struct file *file, poll_table *wait)
+.ci/stage5/official230/kernel.patch-1412- {
+.ci/stage5/official230/kernel.patch-1413- 	struct seq_file *m = file->private_data;
+.ci/stage5/official230/kernel.patch-1414-@@ -239,6 +247,158 @@ static int show_vfsstat(struct seq_file *m, struct vfsmount *mnt)
+.ci/stage5/official230/kernel.patch-1415- 	return err;
+.ci/stage5/official230/kernel.patch-1416- }
+.ci/stage5/official230/kernel.patch-1417- 
+.ci/stage5/official230/kernel.patch-1418-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1419-+static int susfs_show_vfsmnt(struct seq_file *m, struct vfsmount *mnt)
+.ci/stage5/official230/kernel.patch-1420-+{
+.ci/stage5/official230/kernel.patch-1421-+	struct proc_mounts *p = m->private;
+.ci/stage5/official230/kernel.patch-1422-+	struct mount *r = real_mount(mnt);
+.ci/stage5/official230/kernel.patch-1423-+	struct path mnt_path = { .dentry = mnt->mnt_root, .mnt = mnt };
+--
+.ci/stage5/official230/kernel.patch-1562-+	}
+.ci/stage5/official230/kernel.patch-1563-+
+.ci/stage5/official230/kernel.patch-1564-+	seq_putc(m, '\n');
+.ci/stage5/official230/kernel.patch-1565-+out:
+.ci/stage5/official230/kernel.patch-1566-+	return err;
+.ci/stage5/official230/kernel.patch-1567-+}
+.ci/stage5/official230/kernel.patch-1568-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1569-+
+.ci/stage5/official230/kernel.patch-1570- static int mounts_open_common(struct inode *inode, struct file *file,
+.ci/stage5/official230/kernel.patch-1571- 			      int (*show)(struct seq_file *, struct vfsmount *))
+.ci/stage5/official230/kernel.patch-1572- {
+.ci/stage5/official230/kernel.patch-1573-@@ -308,16 +468,34 @@ static int mounts_release(struct inode *inode, struct file *file)
+.ci/stage5/official230/kernel.patch-1574- 
+.ci/stage5/official230/kernel.patch-1575- static int mounts_open(struct inode *inode, struct file *file)
+.ci/stage5/official230/kernel.patch-1576- {
+.ci/stage5/official230/kernel.patch-1577-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:1578:+	if (static_branch_likely(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)) {
+.ci/stage5/official230/kernel.patch-1579-+		if (likely(!susfs_is_current_ksu_domain()))
+.ci/stage5/official230/kernel.patch-1580-+			return mounts_open_common(inode, file, susfs_show_vfsmnt);
+.ci/stage5/official230/kernel.patch-1581-+	}
+.ci/stage5/official230/kernel.patch-1582-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1583- 	return mounts_open_common(inode, file, show_vfsmnt);
+.ci/stage5/official230/kernel.patch-1584- }
+.ci/stage5/official230/kernel.patch-1585- 
+.ci/stage5/official230/kernel.patch-1586- static int mountinfo_open(struct inode *inode, struct file *file)
+.ci/stage5/official230/kernel.patch-1587- {
+.ci/stage5/official230/kernel.patch-1588-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:1589:+	if (static_branch_likely(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)) {
+.ci/stage5/official230/kernel.patch-1590-+		if (likely(!susfs_is_current_ksu_domain()))
+.ci/stage5/official230/kernel.patch-1591-+			return mounts_open_common(inode, file, susfs_show_mountinfo);
+.ci/stage5/official230/kernel.patch-1592-+	}
+.ci/stage5/official230/kernel.patch-1593-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1594- 	return mounts_open_common(inode, file, show_mountinfo);
+.ci/stage5/official230/kernel.patch-1595- }
+.ci/stage5/official230/kernel.patch-1596- 
+.ci/stage5/official230/kernel.patch-1597- static int mountstats_open(struct inode *inode, struct file *file)
+.ci/stage5/official230/kernel.patch-1598- {
+.ci/stage5/official230/kernel.patch-1599-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:1600:+	if (static_branch_likely(&susfs_is_hide_sus_mnts_for_non_su_procs_enabled)) {
+.ci/stage5/official230/kernel.patch-1601-+		if (likely(!susfs_is_current_ksu_domain()))
+.ci/stage5/official230/kernel.patch-1602-+			return mounts_open_common(inode, file, susfs_show_vfsstat);
+.ci/stage5/official230/kernel.patch-1603-+	}
+.ci/stage5/official230/kernel.patch-1604-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-1605- 	return mounts_open_common(inode, file, show_vfsstat);
+.ci/stage5/official230/kernel.patch-1606- }
+.ci/stage5/official230/kernel.patch-1607- 
+.ci/stage5/official230/kernel.patch-1608-diff --git a/fs/read_write.c b/fs/read_write.c
+.ci/stage5/official230/kernel.patch-1609-index 3f6818620..10608b7d8 100644
+.ci/stage5/official230/kernel.patch-1610---- a/fs/read_write.c
+.ci/stage5/official230/kernel.patch-1611-+++ b/fs/read_write.c
+.ci/stage5/official230/kernel.patch-1612-@@ -628,8 +628,18 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
+.ci/stage5/official230/kernel.patch-1613- 	return ret;
+.ci/stage5/official230/kernel.patch-1614- }
+.ci/stage5/official230/kernel.patch-1615- 
+.ci/stage5/official230/kernel.patch-1616-+#ifdef CONFIG_KSU_SUSFS
+--
+.ci/stage5/official230/kernel.patch-1897- #include <linux/compat.h>
+.ci/stage5/official230/kernel.patch-1898- 
+.ci/stage5/official230/kernel.patch-1899-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1900-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch-1901-+#endif // #ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1902- #include <linux/uaccess.h>
+.ci/stage5/official230/kernel.patch-1903- #include <asm/unistd.h>
+.ci/stage5/official230/kernel.patch-1904- 
+.ci/stage5/official230/kernel.patch-1905- #include "internal.h"
+.ci/stage5/official230/kernel.patch-1906- #include "mount.h"
+.ci/stage5/official230/kernel.patch-1907- 
+.ci/stage5/official230/kernel.patch-1908-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1909-+extern struct static_key_true ksu_is_init_rc_hook_enabled;
+.ci/stage5/official230/kernel.patch-1910-+extern void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr);
+.ci/stage5/official230/kernel.patch-1911-+extern struct static_key_true ksu_su_compat_enabled;
+.ci/stage5/official230/kernel.patch-1912-+extern bool __ksu_is_allow_uid_for_current(uid_t uid);
+.ci/stage5/official230/kernel.patch:1913:+extern int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
+.ci/stage5/official230/kernel.patch-1914-+#endif // #ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-1915-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1916-+extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
+.ci/stage5/official230/kernel.patch-1917-+extern void susfs_sus_kstat_spoof_generic_fillattr(struct inode *inode, struct kstat *stat, u32 result_mask);
+.ci/stage5/official230/kernel.patch-1918-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1919-+
+.ci/stage5/official230/kernel.patch-1920- /**
+.ci/stage5/official230/kernel.patch-1921-  * generic_fillattr - Fill in the basic attributes from the inode struct
+.ci/stage5/official230/kernel.patch-1922-  * @mnt_userns:	user namespace of the mount the inode was found from
+.ci/stage5/official230/kernel.patch-1923-@@ -119,9 +134,51 @@ int vfs_getattr_nosec(const struct path *path, struct kstat *stat,
+.ci/stage5/official230/kernel.patch-1924- 				  STATX_ATTR_DAX);
+.ci/stage5/official230/kernel.patch-1925- 
+.ci/stage5/official230/kernel.patch-1926- 	mnt_userns = mnt_user_ns(path->mnt);
+.ci/stage5/official230/kernel.patch-1927-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-1928-+	if (susfs_is_current_app_uid()) {
+.ci/stage5/official230/kernel.patch-1929-+		bool is_fuse = false;
+--
+.ci/stage5/official230/kernel.patch-1992-+#endif
+.ci/stage5/official230/kernel.patch-1993- 
+.ci/stage5/official230/kernel.patch-1994- 	if (flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT | AT_EMPTY_PATH |
+.ci/stage5/official230/kernel.patch-1995- 		      AT_STATX_SYNC_TYPE))
+.ci/stage5/official230/kernel.patch-1996-@@ -218,12 +282,38 @@ static int vfs_statx(int dfd, const char __user *filename, int flags,
+.ci/stage5/official230/kernel.patch-1997- 		lookup_flags |= LOOKUP_EMPTY;
+.ci/stage5/official230/kernel.patch-1998- 
+.ci/stage5/official230/kernel.patch-1999- retry:
+.ci/stage5/official230/kernel.patch-2000-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-2001-+	fname = getname_flags(filename, lookup_flags, NULL);
+.ci/stage5/official230/kernel.patch-2002-+
+.ci/stage5/official230/kernel.patch-2003-+	if (likely(susfs_is_current_proc_no_su()))
+.ci/stage5/official230/kernel.patch-2004-+		goto orig_flow;
+.ci/stage5/official230/kernel.patch-2005-+
+.ci/stage5/official230/kernel.patch-2006-+	if (static_branch_likely(&ksu_su_compat_enabled)) {
+.ci/stage5/official230/kernel.patch-2007-+		if (unlikely(__ksu_is_allow_uid_for_current(current_uid().val)))
+.ci/stage5/official230/kernel.patch:2008:+			ksu_handle_stat(&dfd, &fname, &flags);
+.ci/stage5/official230/kernel.patch-2009-+	}
+.ci/stage5/official230/kernel.patch-2010-+
+.ci/stage5/official230/kernel.patch-2011-+orig_flow:
+.ci/stage5/official230/kernel.patch-2012-+	error = filename_lookup(dfd, fname, lookup_flags, &path, NULL);
+.ci/stage5/official230/kernel.patch-2013-+	putname(fname);
+.ci/stage5/official230/kernel.patch-2014-+#else
+.ci/stage5/official230/kernel.patch-2015- 	error = user_path_at(dfd, filename, lookup_flags, &path);
+.ci/stage5/official230/kernel.patch-2016-+#endif
+.ci/stage5/official230/kernel.patch-2017- 	if (error)
+.ci/stage5/official230/kernel.patch-2018- 		goto out;
+.ci/stage5/official230/kernel.patch-2019- 
+.ci/stage5/official230/kernel.patch-2020- 	error = vfs_getattr(&path, stat, request_mask, flags);
+.ci/stage5/official230/kernel.patch-2021-+
+.ci/stage5/official230/kernel.patch-2022-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-2023-+	if (stat->result_mask & (STATX_SUS_KSTAT_FUSE | STATX_SUS_KSTAT)) {
+.ci/stage5/official230/kernel.patch-2024-+		stat->result_mask &= ~(STATX_SUS_KSTAT_FUSE | STATX_SUS_KSTAT);
+--
+.ci/stage5/official230/kernel.patch-2038-+++ b/fs/statfs.c
+.ci/stage5/official230/kernel.patch-2039-@@ -9,8 +9,20 @@
+.ci/stage5/official230/kernel.patch-2040- #include <linux/security.h>
+.ci/stage5/official230/kernel.patch-2041- #include <linux/uaccess.h>
+.ci/stage5/official230/kernel.patch-2042- #include <linux/compat.h>
+.ci/stage5/official230/kernel.patch-2043-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-2044-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch-2045-+#endif // #ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-2046-+
+.ci/stage5/official230/kernel.patch-2047- #include "internal.h"
+.ci/stage5/official230/kernel.patch-2048- 
+.ci/stage5/official230/kernel.patch-2049-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-2050-+extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
+.ci/stage5/official230/kernel.patch-2051-+extern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);
+.ci/stage5/official230/kernel.patch-2052-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-2053-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch:2054:+extern struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt);
+.ci/stage5/official230/kernel.patch-2055-+#endif //#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-2056-+
+.ci/stage5/official230/kernel.patch-2057- static int flags_by_mnt(int mnt_flags)
+.ci/stage5/official230/kernel.patch-2058- {
+.ci/stage5/official230/kernel.patch-2059- 	int flags = 0;
+.ci/stage5/official230/kernel.patch-2060-@@ -69,6 +81,28 @@ static int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)
+.ci/stage5/official230/kernel.patch-2061- 	return retval;
+.ci/stage5/official230/kernel.patch-2062- }
+.ci/stage5/official230/kernel.patch-2063- 
+.ci/stage5/official230/kernel.patch-2064-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-2065-+static int susfs_statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf, bool *is_fuse)
+.ci/stage5/official230/kernel.patch-2066-+{
+.ci/stage5/official230/kernel.patch-2067-+	int retval;
+.ci/stage5/official230/kernel.patch-2068-+
+.ci/stage5/official230/kernel.patch-2069-+	if (!dentry->d_sb->s_op->statfs)
+.ci/stage5/official230/kernel.patch-2070-+		return -ENOSYS;
+--
+.ci/stage5/official230/kernel.patch-2092- 
+.ci/stage5/official230/kernel.patch-2093-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-2094-+	if (susfs_is_current_app_uid()) {
+.ci/stage5/official230/kernel.patch-2095-+		struct inode *inode = d_backing_inode(path->dentry);
+.ci/stage5/official230/kernel.patch-2096-+		bool is_fuse = false;
+.ci/stage5/official230/kernel.patch-2097-+		if (susfs_is_inode_sus_kstat(inode, &is_fuse)) {
+.ci/stage5/official230/kernel.patch-2098-+			// - here we do not call calculate_f_flags() as buf->f_flags will be spoofed
+.ci/stage5/official230/kernel.patch-2099-+			//   by susfs_statfs_by_dentry().
+.ci/stage5/official230/kernel.patch-2100-+			return susfs_statfs_by_dentry(path->dentry, buf, &is_fuse);
+.ci/stage5/official230/kernel.patch-2101-+		}
+.ci/stage5/official230/kernel.patch-2102-+	}
+.ci/stage5/official230/kernel.patch-2103-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/kernel.patch-2104-+
+.ci/stage5/official230/kernel.patch-2105-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/kernel.patch-2106-+	if (likely(susfs_is_current_proc_umounted())) {
+.ci/stage5/official230/kernel.patch-2107-+		struct vfsmount *no_sus_vfsmnt = NULL;
+.ci/stage5/official230/kernel.patch:2108:+		no_sus_vfsmnt = susfs_get_non_sus_vfsmnt_from_vfsmnt(path->mnt);
+.ci/stage5/official230/kernel.patch-2109-+		if (path->mnt == no_sus_vfsmnt) {
+.ci/stage5/official230/kernel.patch-2110-+			dput(no_sus_vfsmnt->mnt_root);
+.ci/stage5/official230/kernel.patch-2111-+			mntput(no_sus_vfsmnt);
+.ci/stage5/official230/kernel.patch-2112-+			error = statfs_by_dentry(path->dentry, buf);
+.ci/stage5/official230/kernel.patch-2113-+			if (!error)
+.ci/stage5/official230/kernel.patch-2114-+				buf->f_flags = calculate_f_flags(path->mnt);
+.ci/stage5/official230/kernel.patch-2115-+			return error;
+.ci/stage5/official230/kernel.patch-2116-+		}
+.ci/stage5/official230/kernel.patch-2117-+		error = statfs_by_dentry(no_sus_vfsmnt->mnt_root, buf);
+.ci/stage5/official230/kernel.patch-2118-+		if (!error)
+.ci/stage5/official230/kernel.patch-2119-+			buf->f_flags = calculate_f_flags(no_sus_vfsmnt);
+.ci/stage5/official230/kernel.patch-2120-+		dput(no_sus_vfsmnt->mnt_root);
+.ci/stage5/official230/kernel.patch-2121-+		mntput(no_sus_vfsmnt);
+.ci/stage5/official230/kernel.patch-2122-+		return error;
+.ci/stage5/official230/kernel.patch-2123-+	}
+.ci/stage5/official230/kernel.patch-2124-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+--
+.ci/stage5/official230/kernel.patch-2297- 	memcpy(&tmp, utsname(), sizeof(tmp));
+.ci/stage5/official230/kernel.patch-2298-+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+.ci/stage5/official230/kernel.patch-2299-+	if (static_branch_likely(&susfs_is_uname_spoof_buffer_set))
+.ci/stage5/official230/kernel.patch-2300-+		susfs_spoof_uname(&tmp);
+.ci/stage5/official230/kernel.patch-2301-+#endif
+.ci/stage5/official230/kernel.patch-2302- 	up_read(&uts_sem);
+.ci/stage5/official230/kernel.patch-2303- 	if (copy_to_user(name, &tmp, sizeof(tmp)))
+.ci/stage5/official230/kernel.patch-2304- 		return -EFAULT;
+.ci/stage5/official230/kernel.patch-2305-diff --git a/mm/memory.c b/mm/memory.c
+.ci/stage5/official230/kernel.patch-2306-index 3bd6be833..6d8d6b4e7 100644
+.ci/stage5/official230/kernel.patch-2307---- a/mm/memory.c
+.ci/stage5/official230/kernel.patch-2308-+++ b/mm/memory.c
+.ci/stage5/official230/kernel.patch-2309-@@ -74,6 +74,9 @@
+.ci/stage5/official230/kernel.patch-2310- #include <linux/perf_event.h>
+.ci/stage5/official230/kernel.patch-2311- #include <linux/ptrace.h>
+.ci/stage5/official230/kernel.patch-2312- #include <linux/vmalloc.h>
+.ci/stage5/official230/kernel.patch:2313:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-2314-+#include <linux/susfs_def.h>
+.ci/stage5/official230/kernel.patch:2315:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-2316- #include <trace/hooks/mm.h>
+.ci/stage5/official230/kernel.patch-2317- 
+.ci/stage5/official230/kernel.patch-2318- #include <trace/events/kmem.h>
+.ci/stage5/official230/kernel.patch-2319-@@ -5664,12 +5667,21 @@ int __access_remote_vm(struct mm_struct *mm, unsigned long addr, void *buf,
+.ci/stage5/official230/kernel.patch-2320- 	if (mmap_read_lock_killable(mm))
+.ci/stage5/official230/kernel.patch-2321- 		return 0;
+.ci/stage5/official230/kernel.patch-2322- 
+.ci/stage5/official230/kernel.patch:2323:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-2324-+	vma = vma_lookup(mm, addr);
+.ci/stage5/official230/kernel.patch:2325:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-2326-+
+.ci/stage5/official230/kernel.patch-2327- 	/* ignore errors, just check how much was successfully transferred */
+.ci/stage5/official230/kernel.patch-2328- 	while (len) {
+.ci/stage5/official230/kernel.patch-2329- 		int bytes, ret, offset;
+.ci/stage5/official230/kernel.patch-2330- 		void *maddr;
+.ci/stage5/official230/kernel.patch-2331- 		struct page *page = NULL;
+.ci/stage5/official230/kernel.patch-2332- 
+.ci/stage5/official230/kernel.patch:2333:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch:2334:+		if (vma && vma->vm_file && SUSFS_IS_INODE_SUS_MAP(file_inode(vma->vm_file)))
+.ci/stage5/official230/kernel.patch-2335-+			break;
+.ci/stage5/official230/kernel.patch:2336:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/kernel.patch-2337-+
+.ci/stage5/official230/kernel.patch-2338- 		ret = get_user_pages_remote(mm, addr, 1,
+.ci/stage5/official230/kernel.patch-2339- 				gup_flags, &page, &vma, NULL);
+.ci/stage5/official230/kernel.patch-2340- 		if (ret <= 0) {
+.ci/stage5/official230/kernel.patch-2341-diff --git a/security/selinux/avc.c b/security/selinux/avc.c
+.ci/stage5/official230/kernel.patch-2342-index 2ee2c8a31..490280141 100644
+.ci/stage5/official230/kernel.patch-2343---- a/security/selinux/avc.c
+.ci/stage5/official230/kernel.patch-2344-+++ b/security/selinux/avc.c
+.ci/stage5/official230/kernel.patch-2345-@@ -47,6 +47,12 @@
+.ci/stage5/official230/kernel.patch-2346- #undef CREATE_TRACE_POINTS
+.ci/stage5/official230/kernel.patch-2347- #include <trace/hooks/avc.h>
+.ci/stage5/official230/kernel.patch-2348- 
+.ci/stage5/official230/kernel.patch-2349-+#ifdef CONFIG_KSU_SUSFS
+.ci/stage5/official230/kernel.patch-2350-+extern u32 susfs_ksu_sid;
+.ci/stage5/official230/kernel.patch-2351-+extern u32 susfs_priv_app_sid;
+.ci/stage5/official230/kernel.patch-2352-+extern struct static_key_false susfs_is_avc_log_spoofing_enabled;
+--
+.ci/stage5/official230/ksu.patch-65-+	bool "KernelSU addon - SUSFS"
+.ci/stage5/official230/ksu.patch-66-+	depends on KSU
+.ci/stage5/official230/ksu.patch-67-+	depends on THREAD_INFO_IN_TASK
+.ci/stage5/official230/ksu.patch-68-+	default y
+.ci/stage5/official230/ksu.patch-69-+	help
+.ci/stage5/official230/ksu.patch-70-+	  Patch and Enable SUSFS to kernel with KernelSU.
+.ci/stage5/official230/ksu.patch-71-+
+.ci/stage5/official230/ksu.patch-72-+config KSU_SUSFS_SUS_PATH
+.ci/stage5/official230/ksu.patch-73-+	bool "Enable to hide suspicious path"
+.ci/stage5/official230/ksu.patch-74-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-75-+	default y
+.ci/stage5/official230/ksu.patch-76-+	help
+.ci/stage5/official230/ksu.patch-77-+	  - Allow hiding the user-defined path and all its sub-paths from various system calls.
+.ci/stage5/official230/ksu.patch-78-+	  - Use "add_sus_path_loop" instead of "add_sus_path" if the user-defined path is frequently modified.
+.ci/stage5/official230/ksu.patch-79-+	  - Use with cautious as it may cause performance loss and will be vulnerable to side channel attacks,
+.ci/stage5/official230/ksu.patch-80-+	  	just disable this feature if it doesn't work for you or you don't need it at all.
+.ci/stage5/official230/ksu.patch:81:+	  - Effective only on zygote/zygote_next spawned user app process that is marked with TIF_PROC_UMOUNTED.
+.ci/stage5/official230/ksu.patch-82-+
+.ci/stage5/official230/ksu.patch-83-+config KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/ksu.patch-84-+	bool "Enable to hide suspicious mounts"
+.ci/stage5/official230/ksu.patch-85-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-86-+	default y
+.ci/stage5/official230/ksu.patch-87-+	help
+.ci/stage5/official230/ksu.patch-88-+	  - Automatically assign fake mnt_id and fake mnt_group_id for mounts mounted by ksu process until
+.ci/stage5/official230/ksu.patch-89-+	    /sdcard is  decrypted, this is to evade from mnt_id/mnt_group_id gap detections.
+.ci/stage5/official230/ksu.patch-90-+	  - Allow hiding all sus mounts from /proc/self/[mounts|mountinfo|mountstat] for non-su processes.
+.ci/stage5/official230/ksu.patch:91:+	  - Effective only on zygote/zygote_next spawned user app process that is marked with TIF_PROC_UMOUNTED.
+.ci/stage5/official230/ksu.patch-92-+
+.ci/stage5/official230/ksu.patch-93-+config KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/ksu.patch-94-+	bool "Enable to spoof suspicious kstat"
+.ci/stage5/official230/ksu.patch-95-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-96-+	default y
+.ci/stage5/official230/ksu.patch-97-+	help
+.ci/stage5/official230/ksu.patch-98-+	  - Allow spoofing the kstat of user-defined file/directory.
+.ci/stage5/official230/ksu.patch-99-+	  - Effective on all processes with (uid % 100000) >= 10000.
+.ci/stage5/official230/ksu.patch-100-+
+.ci/stage5/official230/ksu.patch-101-+config KSU_SUSFS_SPOOF_UNAME
+.ci/stage5/official230/ksu.patch-102-+	bool "Enable to spoof uname"
+.ci/stage5/official230/ksu.patch-103-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-104-+	default y
+.ci/stage5/official230/ksu.patch-105-+	help
+.ci/stage5/official230/ksu.patch-106-+	  - Allow spoofing the string returned by uname syscall to user-defined string.
+.ci/stage5/official230/ksu.patch-107-+	  - Effective on all processes.
+--
+.ci/stage5/official230/ksu.patch-118-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-119-+	default y
+.ci/stage5/official230/ksu.patch-120-+	help
+.ci/stage5/official230/ksu.patch-121-+	  - Automatically hide ksu and susfs symbols from '/proc/kallsyms'.
+.ci/stage5/official230/ksu.patch-122-+	  - Effective on all processes.
+.ci/stage5/official230/ksu.patch-123-+
+.ci/stage5/official230/ksu.patch-124-+config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+.ci/stage5/official230/ksu.patch-125-+	bool "Enable to spoof /proc/bootconfig (gki) or /proc/cmdline (non-gki)"
+.ci/stage5/official230/ksu.patch-126-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-127-+	default y
+.ci/stage5/official230/ksu.patch-128- 	help
+.ci/stage5/official230/ksu.patch-129--	  Dynamically patch x64's hardened syscall dispatcher to support syscall hooks. This is a
+.ci/stage5/official230/ksu.patch-130--	  replacement for a kernel source code patch, and is useful for x86_64 LKM mode.
+.ci/stage5/official230/ksu.patch-131-+	  - Spoof the output of /proc/bootconfig (gki) or /proc/cmdline (non-gki) with a user-defined file.
+.ci/stage5/official230/ksu.patch-132-+	  - Effective on all processes.
+.ci/stage5/official230/ksu.patch-133-+
+.ci/stage5/official230/ksu.patch:134:+config KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/ksu.patch-135-+	bool "Enable to redirect a path to be opened with another path"
+.ci/stage5/official230/ksu.patch-136-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-137-+	default y
+.ci/stage5/official230/ksu.patch-138-+	help
+.ci/stage5/official230/ksu.patch-139-+	  - Allow redirecting a target path to be opened with another user-defined path.
+.ci/stage5/official230/ksu.patch-140-+	  - Both target path and redirected path must be existed before they can be added to the kernel.
+.ci/stage5/official230/ksu.patch-141-+	  - Users have to take care of the selinux permission of both target path and redirected path by themselves.
+.ci/stage5/official230/ksu.patch:142:+	  - OPEN_REDIRECT does not bypass some detections by default, but users can work with SUS_KSTAT to bypass them.
+.ci/stage5/official230/ksu.patch-143-+	  - Effective only on processes with pre-defined uid scheme.
+.ci/stage5/official230/ksu.patch-144-+
+.ci/stage5/official230/ksu.patch:145:+config KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/ksu.patch-146-+	bool "Enable to hide some mmapped real file from different proc maps interfaces"
+.ci/stage5/official230/ksu.patch-147-+	depends on KSU_SUSFS
+.ci/stage5/official230/ksu.patch-148-+	default y
+.ci/stage5/official230/ksu.patch-149-+	help
+.ci/stage5/official230/ksu.patch-150-+	  - Allow hiding mmapped real file from /proc/<pid>/[maps|smaps|smaps_rollup|map_files|mem|pagemap]
+.ci/stage5/official230/ksu.patch-151-+	  - It does NOT support hiding for anon memory.
+.ci/stage5/official230/ksu.patch-152-+	  - It does NOT hide any inline hooks or plt hooks cause by the injected library itself.
+.ci/stage5/official230/ksu.patch-153-+	  - It may not be able to evade detections by apps that implement a good injection detection.
+.ci/stage5/official230/ksu.patch:154:+	  - Effective only on zygote/zygote_next spawned user app process that is marked with TIF_PROC_UMOUNTED
+.ci/stage5/official230/ksu.patch-155-+	    and with (uid % 100000) >= 10000.
+.ci/stage5/official230/ksu.patch-156-+
+.ci/stage5/official230/ksu.patch-157-+endmenu
+.ci/stage5/official230/ksu.patch-158- 
+.ci/stage5/official230/ksu.patch-159- endmenu
+.ci/stage5/official230/ksu.patch-160-diff --git a/kernel/Makefile b/kernel/Makefile
+.ci/stage5/official230/ksu.patch-161-index f3485588..14a40b61 100644
+.ci/stage5/official230/ksu.patch-162---- a/kernel/Makefile
+.ci/stage5/official230/ksu.patch-163-+++ b/kernel/Makefile
+.ci/stage5/official230/ksu.patch-164-@@ -33,4 +33,14 @@ format:
+.ci/stage5/official230/ksu.patch-165- check-format:
+.ci/stage5/official230/ksu.patch-166- 	find . \( -name "*.c" -o -name "*.h" \) -print0 | xargs -0 clang-format --dry-run --Werror
+.ci/stage5/official230/ksu.patch-167- 
+.ci/stage5/official230/ksu.patch-168-+## For susfs stuff ##
+.ci/stage5/official230/ksu.patch-169-+ifeq ($(shell test -e $(srctree)/fs/susfs.c; echo $$?),0)
+.ci/stage5/official230/ksu.patch-170-+$(eval SUSFS_VERSION=$(shell cat $(srctree)/include/linux/susfs.h | grep -E '^#define SUSFS_VERSION' | cut -d' ' -f3 | sed 's/"//g'))
+--
+.ci/stage5/official230/ksu.patch-1224- 
+.ci/stage5/official230/ksu.patch-1225--static bool is_ksud_exists()
+.ci/stage5/official230/ksu.patch-1226--{
+.ci/stage5/official230/ksu.patch-1227--    struct path path;
+.ci/stage5/official230/ksu.patch-1228-+        if (get_user(compat, argv.ptr.compat + nr))
+.ci/stage5/official230/ksu.patch-1229-+            return ERR_PTR(-EFAULT);
+.ci/stage5/official230/ksu.patch-1230- 
+.ci/stage5/official230/ksu.patch-1231--    if (kern_path(KSUD_PATH, 0, &path) < 0) {
+.ci/stage5/official230/ksu.patch-1232--        return false;
+.ci/stage5/official230/ksu.patch-1233-+        return compat_ptr(compat);
+.ci/stage5/official230/ksu.patch-1234-     }
+.ci/stage5/official230/ksu.patch-1235--    path_put(&path);
+.ci/stage5/official230/ksu.patch-1236--    return true;
+.ci/stage5/official230/ksu.patch-1237--}
+.ci/stage5/official230/ksu.patch-1238-+#endif
+.ci/stage5/official230/ksu.patch-1239- 
+.ci/stage5/official230/ksu.patch:1240:-long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs)
+.ci/stage5/official230/ksu.patch-1241--{
+.ci/stage5/official230/ksu.patch-1242--    const char __user **filename_user, *orig_filename;
+.ci/stage5/official230/ksu.patch-1243--    long ret;
+.ci/stage5/official230/ksu.patch-1244--    const struct cred *old_cred;
+.ci/stage5/official230/ksu.patch-1245-+    if (get_user(native, argv.ptr.native + nr))
+.ci/stage5/official230/ksu.patch-1246-+        return ERR_PTR(-EFAULT);
+.ci/stage5/official230/ksu.patch-1247- 
+.ci/stage5/official230/ksu.patch-1248--    if (!ksu_is_allow_uid_for_current(current_uid().val)) {
+.ci/stage5/official230/ksu.patch-1249--        goto do_orig_facessat;
+.ci/stage5/official230/ksu.patch-1250--    }
+.ci/stage5/official230/ksu.patch-1251-+    return native;
+.ci/stage5/official230/ksu.patch-1252-+}
+.ci/stage5/official230/ksu.patch-1253- 
+.ci/stage5/official230/ksu.patch-1254--    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
+.ci/stage5/official230/ksu.patch-1255--
+.ci/stage5/official230/ksu.patch-1256--    char path[sizeof(su_path) + 1];
+--
+.ci/stage5/official230/ksu.patch-1271--            revert_creds(old_cred);
+.ci/stage5/official230/ksu.patch-1272--        }
+.ci/stage5/official230/ksu.patch-1273--    }
+.ci/stage5/official230/ksu.patch-1274-+/*
+.ci/stage5/official230/ksu.patch-1275-+ * return 0 -> No further checks should be required afterwards
+.ci/stage5/official230/ksu.patch-1276-+ * return non-zero -> Further checks should be continued afterwards
+.ci/stage5/official230/ksu.patch-1277-+ */
+.ci/stage5/official230/ksu.patch-1278-+int ksu_handle_execveat_init(struct filename *filename, struct user_arg_ptr *argv_user, struct user_arg_ptr *envp_user) {
+.ci/stage5/official230/ksu.patch-1279-+    int ret;
+.ci/stage5/official230/ksu.patch-1280- 
+.ci/stage5/official230/ksu.patch-1281--do_orig_facessat:
+.ci/stage5/official230/ksu.patch-1282--    return ksu_syscall_table[orig_nr](regs);
+.ci/stage5/official230/ksu.patch-1283--}
+.ci/stage5/official230/ksu.patch-1284-+    if (current->pid == 1)
+.ci/stage5/official230/ksu.patch-1285-+        return -EINVAL;
+.ci/stage5/official230/ksu.patch-1286- 
+.ci/stage5/official230/ksu.patch:1287:-long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
+.ci/stage5/official230/ksu.patch-1288--{
+.ci/stage5/official230/ksu.patch-1289--    const char __user **filename_user, *orig_filename;
+.ci/stage5/official230/ksu.patch-1290--    long ret;
+.ci/stage5/official230/ksu.patch-1291--    const struct cred *old_cred;
+.ci/stage5/official230/ksu.patch-1292-+    if (!is_init(get_current_cred()))
+.ci/stage5/official230/ksu.patch-1293-+        return -EINVAL;
+.ci/stage5/official230/ksu.patch-1294- 
+.ci/stage5/official230/ksu.patch-1295--    if (!ksu_is_allow_uid_for_current(current_uid().val)) {
+.ci/stage5/official230/ksu.patch-1296--        goto do_orig_stat;
+.ci/stage5/official230/ksu.patch-1297--    }
+.ci/stage5/official230/ksu.patch-1298-+    if (unlikely(!strcmp(filename->name, KSUD_PATH))) {
+.ci/stage5/official230/ksu.patch-1299-+        const char __user *argv_user_ptr = get_user_arg_ptr(*argv_user, 0);
+.ci/stage5/official230/ksu.patch-1300-+        struct ksu_sulog_pending_event *pending_sucompat = NULL;
+.ci/stage5/official230/ksu.patch-1301- 
+.ci/stage5/official230/ksu.patch-1302--    filename_user = (const char __user **)&PT_REGS_PARM2(regs);
+.ci/stage5/official230/ksu.patch-1303--
+--
+.ci/stage5/official230/ksu.patch-1499--long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, struct pt_regs *regs)
+.ci/stage5/official230/ksu.patch-1500-+extern struct static_key_true is_first_zygote;
+.ci/stage5/official230/ksu.patch-1501-+
+.ci/stage5/official230/ksu.patch-1502-+int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
+.ci/stage5/official230/ksu.patch-1503-+            void *envp, int *flags)
+.ci/stage5/official230/ksu.patch-1504- {
+.ci/stage5/official230/ksu.patch-1505--    return ksu_handle_execve_sucompat_common(filename_user, (const char __user *const __user *)PT_REGS_PARM2(regs),
+.ci/stage5/official230/ksu.patch-1506--                                             PT_REGS_PARM3(regs), false, orig_nr, regs);
+.ci/stage5/official230/ksu.patch-1507-+    if (static_branch_unlikely(&is_first_zygote))
+.ci/stage5/official230/ksu.patch-1508-+        (void)ksu_handle_execveat_ksud(fd, filename_ptr, argv, envp, flags);
+.ci/stage5/official230/ksu.patch-1509-+
+.ci/stage5/official230/ksu.patch-1510-+    return ksu_handle_execveat_sucompat(fd, filename_ptr, argv, envp,
+.ci/stage5/official230/ksu.patch-1511-+                        flags);
+.ci/stage5/official230/ksu.patch-1512- }
+.ci/stage5/official230/ksu.patch-1513- 
+.ci/stage5/official230/ksu.patch-1514--long ksu_handle_execveat_sucompat(const char __user **filename_user, int orig_nr, struct pt_regs *regs)
+.ci/stage5/official230/ksu.patch:1515:+int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode,
+.ci/stage5/official230/ksu.patch-1516-+             int *__unused_flags)
+.ci/stage5/official230/ksu.patch-1517- {
+.ci/stage5/official230/ksu.patch-1518--    return ksu_handle_execve_sucompat_common(filename_user, (const char __user *const __user *)PT_REGS_PARM3(regs),
+.ci/stage5/official230/ksu.patch-1519--                                             PT_REGS_SYSCALL_PARM4(regs), true, orig_nr, regs);
+.ci/stage5/official230/ksu.patch-1520-+    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL))
+.ci/stage5/official230/ksu.patch-1521-+        return 0;
+.ci/stage5/official230/ksu.patch-1522-+
+.ci/stage5/official230/ksu.patch-1523-+    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path))))
+.ci/stage5/official230/ksu.patch-1524-+        return 0;
+.ci/stage5/official230/ksu.patch-1525-+
+.ci/stage5/official230/ksu.patch-1526-+    if (current_chrooted())
+.ci/stage5/official230/ksu.patch-1527-+    {
+.ci/stage5/official230/ksu.patch:1528:+        pr_err("ksu_handle_faccessat: su found but NOT allowed! Because current process is running in chrooted environment\n");
+.ci/stage5/official230/ksu.patch-1529-+        return 0;
+.ci/stage5/official230/ksu.patch-1530-+    }
+.ci/stage5/official230/ksu.patch-1531-+
+.ci/stage5/official230/ksu.patch:1532:+    pr_info("ksu_handle_faccessat: su->sh!\n");
+.ci/stage5/official230/ksu.patch-1533-+    memcpy((void *)((*filename)->name), sh_path, sizeof(sh_path));
+.ci/stage5/official230/ksu.patch-1534-+    return 0;
+.ci/stage5/official230/ksu.patch-1535-+}
+.ci/stage5/official230/ksu.patch-1536-+
+.ci/stage5/official230/ksu.patch:1537:+int ksu_handle_stat(int *dfd, struct filename **filename, int *flags) {
+.ci/stage5/official230/ksu.patch-1538-+    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL))
+.ci/stage5/official230/ksu.patch-1539-+        return 0;
+.ci/stage5/official230/ksu.patch-1540-+
+.ci/stage5/official230/ksu.patch-1541-+    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path))))
+.ci/stage5/official230/ksu.patch-1542-+        return 0;
+.ci/stage5/official230/ksu.patch-1543-+
+.ci/stage5/official230/ksu.patch-1544-+    if (current_chrooted())
+.ci/stage5/official230/ksu.patch-1545-+    {
+.ci/stage5/official230/ksu.patch:1546:+        pr_err("ksu_handle_stat: su found but NOT allowed! Because current process is running in chrooted environment\n");
+.ci/stage5/official230/ksu.patch-1547-+        return 0;
+.ci/stage5/official230/ksu.patch-1548-+    }
+.ci/stage5/official230/ksu.patch-1549-+
+.ci/stage5/official230/ksu.patch:1550:+    pr_info("ksu_handle_stat: su->sh!\n");
+.ci/stage5/official230/ksu.patch-1551-+    memcpy((void *)((*filename)->name), sh_path, sizeof(sh_path));
+.ci/stage5/official230/ksu.patch-1552-+    return 0;
+.ci/stage5/official230/ksu.patch-1553- }
+.ci/stage5/official230/ksu.patch-1554- 
+.ci/stage5/official230/ksu.patch-1555- // sucompat: permitted process can execute 'su' to gain root access.
+.ci/stage5/official230/ksu.patch-1556- void __init ksu_sucompat_init()
+.ci/stage5/official230/ksu.patch-1557- {
+.ci/stage5/official230/ksu.patch-1558--    if (ksu_register_feature_handler(&su_compat_handler)) {
+.ci/stage5/official230/ksu.patch-1559-+    if (ksu_register_feature_handler(&su_compat_handler))
+.ci/stage5/official230/ksu.patch-1560-         pr_err("Failed to register su_compat feature handler\n");
+.ci/stage5/official230/ksu.patch-1561--    }
+.ci/stage5/official230/ksu.patch-1562- }
+.ci/stage5/official230/ksu.patch-1563- 
+.ci/stage5/official230/ksu.patch-1564- void __exit ksu_sucompat_exit()
+.ci/stage5/official230/ksu.patch-1565-diff --git a/kernel/feature/sucompat.h b/kernel/feature/sucompat.h
+.ci/stage5/official230/ksu.patch-1566-index 5e2cfe11..a4a6a7de 100644
+.ci/stage5/official230/ksu.patch-1567---- a/kernel/feature/sucompat.h
+.ci/stage5/official230/ksu.patch-1568-+++ b/kernel/feature/sucompat.h
+.ci/stage5/official230/ksu.patch-1569-@@ -3,15 +3,15 @@
+.ci/stage5/official230/ksu.patch-1570- #include <asm/ptrace.h>
+.ci/stage5/official230/ksu.patch-1571- #include <linux/types.h>
+.ci/stage5/official230/ksu.patch-1572- 
+.ci/stage5/official230/ksu.patch-1573--extern bool ksu_su_compat_enabled;
+.ci/stage5/official230/ksu.patch-1574-+extern struct static_key_true ksu_su_compat_enabled;
+.ci/stage5/official230/ksu.patch-1575- 
+.ci/stage5/official230/ksu.patch-1576- void ksu_sucompat_init(void);
+.ci/stage5/official230/ksu.patch-1577- void ksu_sucompat_exit(void);
+.ci/stage5/official230/ksu.patch-1578- 
+.ci/stage5/official230/ksu.patch-1579--// Handler functions exported for hook_manager
+.ci/stage5/official230/ksu.patch:1580:-long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs);
+.ci/stage5/official230/ksu.patch:1581:-long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs);
+.ci/stage5/official230/ksu.patch-1582--long ksu_handle_execve_sucompat(const char __user **filename_user, int orig_nr, struct pt_regs *regs);
+.ci/stage5/official230/ksu.patch-1583--long ksu_handle_execveat_sucompat(const char __user **filename_user, int orig_nr, struct pt_regs *regs);
+.ci/stage5/official230/ksu.patch:1584:+int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
+.ci/stage5/official230/ksu.patch:1585:+int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
+.ci/stage5/official230/ksu.patch-1586-+int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
+.ci/stage5/official230/ksu.patch-1587-+                 void *argv_user, void *envp_user,
+.ci/stage5/official230/ksu.patch-1588-+                 int *__never_use_flags);
+.ci/stage5/official230/ksu.patch-1589- 
+.ci/stage5/official230/ksu.patch-1590--#endif
+.ci/stage5/official230/ksu.patch-1591-+#endif
+.ci/stage5/official230/ksu.patch-1592-\ No newline at end of file
+.ci/stage5/official230/ksu.patch-1593-diff --git a/kernel/hook/setuid_hook.c b/kernel/hook/setuid_hook.c
+.ci/stage5/official230/ksu.patch-1594-index d3f3ac49..1f1e91be 100644
+.ci/stage5/official230/ksu.patch-1595---- a/kernel/hook/setuid_hook.c
+.ci/stage5/official230/ksu.patch-1596-+++ b/kernel/hook/setuid_hook.c
+.ci/stage5/official230/ksu.patch-1597-@@ -11,6 +11,8 @@
+.ci/stage5/official230/ksu.patch-1598- #include <linux/types.h>
+.ci/stage5/official230/ksu.patch-1599- #include <linux/uaccess.h>
+.ci/stage5/official230/ksu.patch-1600- #include <linux/uidgid.h>
+.ci/stage5/official230/ksu.patch-1601-+#include <linux/susfs_def.h>
+.ci/stage5/official230/ksu.patch-1602-+#include "selinux/selinux.h"
+.ci/stage5/official230/ksu.patch-1603- 
+.ci/stage5/official230/ksu.patch-1604- #include "policy/allowlist.h"
+.ci/stage5/official230/ksu.patch-1605- #include "hook/setuid_hook.h"
+.ci/stage5/official230/ksu.patch-1606-@@ -18,43 +20,138 @@
+.ci/stage5/official230/ksu.patch-1607- #include "manager/manager_identity.h"
+.ci/stage5/official230/ksu.patch-1608- #include "infra/seccomp_cache.h"
+.ci/stage5/official230/ksu.patch-1609- #include "supercall/supercall.h"
+.ci/stage5/official230/ksu.patch-1610--#include "hook/tp_marker.h"
+.ci/stage5/official230/ksu.patch-1611- #include "feature/kernel_umount.h"
+.ci/stage5/official230/ksu.patch-1612- 
+.ci/stage5/official230/ksu.patch-1613--int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
+.ci/stage5/official230/ksu.patch-1614-+extern u32 susfs_zygote_sid;
+.ci/stage5/official230/ksu.patch:1615:+extern u32 susfs_zygote_next_sid;
+.ci/stage5/official230/ksu.patch-1616-+extern void disable_seccomp(void);
+.ci/stage5/official230/ksu.patch-1617-+extern struct work_struct susfs_extra_works;
+.ci/stage5/official230/ksu.patch-1618-+
+.ci/stage5/official230/ksu.patch-1619-+static inline void ksu_handle_extra_susfs_work(void)
+.ci/stage5/official230/ksu.patch-1620- {
+.ci/stage5/official230/ksu.patch-1621--    // we rely on the fact that zygote always call setresuid(3) with same uids
+.ci/stage5/official230/ksu.patch-1622-+    if (work_pending(&susfs_extra_works))
+.ci/stage5/official230/ksu.patch-1623-+        return;
+.ci/stage5/official230/ksu.patch-1624- 
+.ci/stage5/official230/ksu.patch-1625--    pr_info("handle_setresuid from %d to %d\n", old_uid, new_uid);
+.ci/stage5/official230/ksu.patch-1626-+    schedule_work(&susfs_extra_works);
+.ci/stage5/official230/ksu.patch-1627-+}
+.ci/stage5/official230/ksu.patch-1628- 
+.ci/stage5/official230/ksu.patch-1629--    if (unlikely(is_uid_manager(new_uid))) {
+.ci/stage5/official230/ksu.patch-1630--        spin_lock_irq(&current->sighand->siglock);
+.ci/stage5/official230/ksu.patch-1631--        ksu_seccomp_allow_cache(current->seccomp.filter, __NR_reboot);
+--
+.ci/stage5/official230/ksu.patch-1679-+    // Process not umounted but also root not allowed
+.ci/stage5/official230/ksu.patch-1680-+    susfs_set_current_proc_no_su();
+.ci/stage5/official230/ksu.patch-1681-+    return 0;
+.ci/stage5/official230/ksu.patch-1682-+
+.ci/stage5/official230/ksu.patch-1683-+do_umount:
+.ci/stage5/official230/ksu.patch-1684-+    {
+.ci/stage5/official230/ksu.patch-1685-+        // Handle kernel umount
+.ci/stage5/official230/ksu.patch-1686-+        ksu_handle_umount(current_uid().val, ruid);
+.ci/stage5/official230/ksu.patch-1687-+
+.ci/stage5/official230/ksu.patch-1688-+        // Handle extra susfs work
+.ci/stage5/official230/ksu.patch-1689-+        ksu_handle_extra_susfs_work();
+.ci/stage5/official230/ksu.patch-1690-+    }
+.ci/stage5/official230/ksu.patch-1691- 
+.ci/stage5/official230/ksu.patch-1692-     return 0;
+.ci/stage5/official230/ksu.patch-1693- }
+.ci/stage5/official230/ksu.patch-1694- 
+.ci/stage5/official230/ksu.patch:1695:+static int handle_zygote_next_setresuid(uid_t ruid) {
+.ci/stage5/official230/ksu.patch-1696-+    // Check if spawned process is isolated service first, and force to do umount if so
+.ci/stage5/official230/ksu.patch-1697-+    if (is_isolated_process(ruid)) {
+.ci/stage5/official230/ksu.patch-1698-+        susfs_set_current_proc_no_su();
+.ci/stage5/official230/ksu.patch-1699-+        susfs_set_current_proc_umounted();
+.ci/stage5/official230/ksu.patch:1700:+        susfs_set_current_proc_umounted_for_zygote_next();
+.ci/stage5/official230/ksu.patch-1701-+        goto do_susfs_work;
+.ci/stage5/official230/ksu.patch-1702-+    }
+.ci/stage5/official230/ksu.patch-1703-+
+.ci/stage5/official230/ksu.patch-1704-+    // - Since ksu maanger app uid is excluded in allow_list_arr, so ksu_uid_should_umount(manager_uid)
+.ci/stage5/official230/ksu.patch-1705-+    //   will always return true, that's why we need to explicitly check if new_uid belongs to
+.ci/stage5/official230/ksu.patch-1706-+    //   ksu manager.
+.ci/stage5/official230/ksu.patch-1707-+    // - Disable seccomp restriction for KSU manager since running with "su" will disable seccomp anyway
+.ci/stage5/official230/ksu.patch-1708-+    if (likely(ksu_is_manager_appid_valid()) && unlikely(is_uid_manager(ruid))) {
+.ci/stage5/official230/ksu.patch-1709-+        disable_seccomp();
+.ci/stage5/official230/ksu.patch-1710-+        pr_info("install fd for manager: %d\n", ruid);
+.ci/stage5/official230/ksu.patch-1711-+        ksu_install_fd();
+.ci/stage5/official230/ksu.patch-1712-+        return 0;
+.ci/stage5/official230/ksu.patch-1713-+    }
+.ci/stage5/official230/ksu.patch-1714-+
+.ci/stage5/official230/ksu.patch-1715-+    // - Check if spawned process is normal user app and needs to be umounted
+.ci/stage5/official230/ksu.patch-1716-+    // - Now app_profile for webview_zygote is available in KernelSU manager
+.ci/stage5/official230/ksu.patch-1717-+    if (likely(is_appuid(ruid) && ksu_uid_should_umount(ruid))) {
+.ci/stage5/official230/ksu.patch-1718-+        susfs_set_current_proc_no_su();
+.ci/stage5/official230/ksu.patch-1719-+        susfs_set_current_proc_umounted();
+.ci/stage5/official230/ksu.patch:1720:+        susfs_set_current_proc_umounted_for_zygote_next();
+.ci/stage5/official230/ksu.patch-1721-+        goto do_susfs_work;
+.ci/stage5/official230/ksu.patch-1722-+    }
+.ci/stage5/official230/ksu.patch-1723-+
+.ci/stage5/official230/ksu.patch-1724-+    // Disable seccomp restriction for root allowed apps since running with "su" will disable seccomp anyway
+.ci/stage5/official230/ksu.patch-1725-+    if (ksu_is_allow_uid_for_current(ruid)) {
+.ci/stage5/official230/ksu.patch-1726-+        disable_seccomp();
+.ci/stage5/official230/ksu.patch-1727-+        return 0;
+.ci/stage5/official230/ksu.patch-1728-+    }
+.ci/stage5/official230/ksu.patch-1729-+
+.ci/stage5/official230/ksu.patch-1730-+    // Process not umounted but also root not allowed
+.ci/stage5/official230/ksu.patch-1731-+    susfs_set_current_proc_no_su();
+.ci/stage5/official230/ksu.patch-1732-+    return 0;
+.ci/stage5/official230/ksu.patch-1733-+
+.ci/stage5/official230/ksu.patch-1734-+do_susfs_work:
+.ci/stage5/official230/ksu.patch-1735-+    {
+.ci/stage5/official230/ksu.patch-1736-+        // Do not umount here as we are in init namespace now
+.ci/stage5/official230/ksu.patch-1737-+
+.ci/stage5/official230/ksu.patch-1738-+        // Handle extra susfs work
+.ci/stage5/official230/ksu.patch-1739-+        ksu_handle_extra_susfs_work();
+.ci/stage5/official230/ksu.patch-1740-+    }
+.ci/stage5/official230/ksu.patch-1741-+
+.ci/stage5/official230/ksu.patch-1742-+    return 0;
+.ci/stage5/official230/ksu.patch-1743-+}
+.ci/stage5/official230/ksu.patch-1744-+
+.ci/stage5/official230/ksu.patch-1745-+int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
+.ci/stage5/official230/ksu.patch-1746-+{
+.ci/stage5/official230/ksu.patch-1747-+    uid_t cur_uid = current_uid().val;
+.ci/stage5/official230/ksu.patch-1748-+
+.ci/stage5/official230/ksu.patch-1749-+    if (cur_uid != 0)
+.ci/stage5/official230/ksu.patch-1750-+        return 0;
+.ci/stage5/official230/ksu.patch-1751-+
+.ci/stage5/official230/ksu.patch:1752:+    // We only interest in process spwaned by zygote or zygote_next
+.ci/stage5/official230/ksu.patch-1753-+    if (susfs_is_sid_equal(current_cred(), susfs_zygote_sid))
+.ci/stage5/official230/ksu.patch-1754-+        return handle_zygote_setresuid(ruid);
+.ci/stage5/official230/ksu.patch-1755-+
+.ci/stage5/official230/ksu.patch:1756:+    if (susfs_is_sid_equal(current_cred(), susfs_zygote_next_sid))
+.ci/stage5/official230/ksu.patch:1757:+        return handle_zygote_next_setresuid(ruid);
+.ci/stage5/official230/ksu.patch-1758-+
+.ci/stage5/official230/ksu.patch-1759-+    return 0;
+.ci/stage5/official230/ksu.patch-1760-+
+.ci/stage5/official230/ksu.patch-1761-+}
+.ci/stage5/official230/ksu.patch-1762-+
+.ci/stage5/official230/ksu.patch-1763- void __init ksu_setuid_hook_init(void)
+.ci/stage5/official230/ksu.patch-1764- {
+.ci/stage5/official230/ksu.patch-1765-     ksu_kernel_umount_init();
+.ci/stage5/official230/ksu.patch-1766-diff --git a/kernel/hook/setuid_hook.h b/kernel/hook/setuid_hook.h
+.ci/stage5/official230/ksu.patch-1767-index 3a3dfea8..b8486238 100644
+.ci/stage5/official230/ksu.patch-1768---- a/kernel/hook/setuid_hook.h
+.ci/stage5/official230/ksu.patch-1769-+++ b/kernel/hook/setuid_hook.h
+.ci/stage5/official230/ksu.patch-1770-@@ -7,7 +7,4 @@
+.ci/stage5/official230/ksu.patch-1771- void ksu_setuid_hook_init(void);
+.ci/stage5/official230/ksu.patch-1772- void ksu_setuid_hook_exit(void);
+.ci/stage5/official230/ksu.patch-1773- 
+--
+.ci/stage5/official230/ksu.patch-2435-+
+.ci/stage5/official230/ksu.patch-2436-+    susfs_set_batch_sid();
+.ci/stage5/official230/ksu.patch-2437- out_unlock:
+.ci/stage5/official230/ksu.patch-2438-     mutex_unlock(&selinux_state.policy_mutex);
+.ci/stage5/official230/ksu.patch-2439- }
+.ci/stage5/official230/ksu.patch-2440-diff --git a/kernel/selinux/selinux.c b/kernel/selinux/selinux.c
+.ci/stage5/official230/ksu.patch-2441-index 7bc6d6d0..3b0fcb3d 100644
+.ci/stage5/official230/ksu.patch-2442---- a/kernel/selinux/selinux.c
+.ci/stage5/official230/ksu.patch-2443-+++ b/kernel/selinux/selinux.c
+.ci/stage5/official230/ksu.patch-2444-@@ -220,3 +220,92 @@ void escape_to_root_for_adb_root(void)
+.ci/stage5/official230/ksu.patch-2445-     }
+.ci/stage5/official230/ksu.patch-2446-     commit_creds(cred);
+.ci/stage5/official230/ksu.patch-2447- }
+.ci/stage5/official230/ksu.patch-2448-+
+.ci/stage5/official230/ksu.patch-2449-+#define KERNEL_INIT_DOMAIN "u:r:init:s0"
+.ci/stage5/official230/ksu.patch-2450-+#define KERNEL_ZYGOTE_DOMAIN "u:r:zygote:s0"
+.ci/stage5/official230/ksu.patch:2451:+#define KERNEL_ZYGOTE_NEXT_DOMAIN "u:r:zygote_next:s0"
+.ci/stage5/official230/ksu.patch-2452-+#define KERNEL_PRIV_APP_DOMAIN "u:r:priv_app:s0:c512,c768"
+.ci/stage5/official230/ksu.patch-2453-+
+.ci/stage5/official230/ksu.patch-2454-+u32 susfs_ksu_sid __read_mostly = 0;
+.ci/stage5/official230/ksu.patch-2455-+u32 susfs_init_sid __read_mostly = 0;
+.ci/stage5/official230/ksu.patch-2456-+u32 susfs_zygote_sid __read_mostly = 0;
+.ci/stage5/official230/ksu.patch:2457:+u32 susfs_zygote_next_sid __read_mostly = 0;
+.ci/stage5/official230/ksu.patch-2458-+u32 susfs_priv_app_sid __read_mostly = 0;
+.ci/stage5/official230/ksu.patch-2459-+
+.ci/stage5/official230/ksu.patch-2460-+static inline void susfs_set_sid(const char *secctx_name, u32 *out_sid)
+.ci/stage5/official230/ksu.patch-2461-+{
+.ci/stage5/official230/ksu.patch-2462-+    int err;
+.ci/stage5/official230/ksu.patch-2463-+    
+.ci/stage5/official230/ksu.patch-2464-+    if (!secctx_name || !out_sid) {
+.ci/stage5/official230/ksu.patch-2465-+        pr_err("secctx_name || out_sid is NULL\n");
+.ci/stage5/official230/ksu.patch-2466-+        return;
+.ci/stage5/official230/ksu.patch-2467-+    }
+.ci/stage5/official230/ksu.patch-2468-+
+.ci/stage5/official230/ksu.patch-2469-+    err = security_secctx_to_secid(secctx_name, strlen(secctx_name),
+.ci/stage5/official230/ksu.patch-2470-+                       out_sid);
+.ci/stage5/official230/ksu.patch-2471-+    if (err) {
+.ci/stage5/official230/ksu.patch-2472-+        pr_err("failed setting sid for '%s', err: %d\n", secctx_name, err);
+.ci/stage5/official230/ksu.patch-2473-+        return;
+--
+.ci/stage5/official230/ksu.patch-2501-+                       &out_sid);
+.ci/stage5/official230/ksu.patch-2502-+    if (err) {
+.ci/stage5/official230/ksu.patch-2503-+        pr_err("failed getting sid from secctx_name: %s, err: %d\n", secctx_name, err);
+.ci/stage5/official230/ksu.patch-2504-+        return 0;
+.ci/stage5/official230/ksu.patch-2505-+    }
+.ci/stage5/official230/ksu.patch-2506-+    return out_sid;
+.ci/stage5/official230/ksu.patch-2507-+}
+.ci/stage5/official230/ksu.patch-2508-+
+.ci/stage5/official230/ksu.patch-2509-+u32 susfs_get_current_sid(void) {
+.ci/stage5/official230/ksu.patch-2510-+    return current_sid();
+.ci/stage5/official230/ksu.patch-2511-+}
+.ci/stage5/official230/ksu.patch-2512-+
+.ci/stage5/official230/ksu.patch-2513-+bool susfs_is_current_zygote_domain(void) {
+.ci/stage5/official230/ksu.patch-2514-+    return unlikely(current_sid() == susfs_zygote_sid);
+.ci/stage5/official230/ksu.patch-2515-+}
+.ci/stage5/official230/ksu.patch-2516-+
+.ci/stage5/official230/ksu.patch:2517:+bool susfs_is_current_zygote_next_domain(void) {
+.ci/stage5/official230/ksu.patch:2518:+    return unlikely(current_sid() == susfs_zygote_next_sid);
+.ci/stage5/official230/ksu.patch-2519-+}
+.ci/stage5/official230/ksu.patch-2520-+
+.ci/stage5/official230/ksu.patch-2521-+bool susfs_is_current_ksu_domain(void) {
+.ci/stage5/official230/ksu.patch-2522-+    return unlikely(current_sid() == susfs_ksu_sid);
+.ci/stage5/official230/ksu.patch-2523-+}
+.ci/stage5/official230/ksu.patch-2524-+
+.ci/stage5/official230/ksu.patch-2525-+bool susfs_is_current_init_domain(void) {
+.ci/stage5/official230/ksu.patch-2526-+    return unlikely(current_sid() == susfs_init_sid);
+.ci/stage5/official230/ksu.patch-2527-+}
+.ci/stage5/official230/ksu.patch-2528-+
+.ci/stage5/official230/ksu.patch-2529-+void susfs_set_batch_sid(void)
+.ci/stage5/official230/ksu.patch-2530-+{
+.ci/stage5/official230/ksu.patch-2531-+    susfs_set_sid(KERNEL_ZYGOTE_DOMAIN, &susfs_zygote_sid);
+.ci/stage5/official230/ksu.patch:2532:+    susfs_set_sid(KERNEL_ZYGOTE_NEXT_DOMAIN, &susfs_zygote_next_sid);
+.ci/stage5/official230/ksu.patch-2533-+    susfs_set_sid(KERNEL_SU_CONTEXT, &susfs_ksu_sid);
+.ci/stage5/official230/ksu.patch-2534-+    susfs_set_sid(KERNEL_INIT_DOMAIN, &susfs_init_sid);
+.ci/stage5/official230/ksu.patch-2535-+    susfs_set_sid(KERNEL_PRIV_APP_DOMAIN, &susfs_priv_app_sid);
+.ci/stage5/official230/ksu.patch-2536-+}
+.ci/stage5/official230/ksu.patch-2537-diff --git a/kernel/selinux/selinux.h b/kernel/selinux/selinux.h
+.ci/stage5/official230/ksu.patch-2538-index a17ed226..c8db3cea 100644
+.ci/stage5/official230/ksu.patch-2539---- a/kernel/selinux/selinux.h
+.ci/stage5/official230/ksu.patch-2540-+++ b/kernel/selinux/selinux.h
+.ci/stage5/official230/ksu.patch-2541-@@ -39,4 +39,13 @@ void escape_to_root_for_adb_root();
+.ci/stage5/official230/ksu.patch-2542- 
+.ci/stage5/official230/ksu.patch-2543- extern u32 ksu_file_sid;
+.ci/stage5/official230/ksu.patch-2544- 
+.ci/stage5/official230/ksu.patch-2545-+bool susfs_is_sid_equal(const struct cred *cred, u32 sid2);
+.ci/stage5/official230/ksu.patch-2546-+u32 susfs_get_sid_from_name(const char *secctx_name);
+.ci/stage5/official230/ksu.patch-2547-+u32 susfs_get_current_sid(void);
+.ci/stage5/official230/ksu.patch-2548-+void susfs_set_batch_sid(void);
+.ci/stage5/official230/ksu.patch-2549-+bool susfs_is_current_zygote_domain(void);
+.ci/stage5/official230/ksu.patch:2550:+bool susfs_is_current_zygote_next_domain(void);
+.ci/stage5/official230/ksu.patch-2551-+bool susfs_is_current_ksu_domain(void);
+.ci/stage5/official230/ksu.patch-2552-+bool susfs_is_current_init_domain(void);
+.ci/stage5/official230/ksu.patch-2553-+
+.ci/stage5/official230/ksu.patch-2554- #endif
+.ci/stage5/official230/ksu.patch-2555-diff --git a/kernel/sulog/event.c b/kernel/sulog/event.c
+.ci/stage5/official230/ksu.patch-2556-index 51d6fa84..9f996cc0 100644
+.ci/stage5/official230/ksu.patch-2557---- a/kernel/sulog/event.c
+.ci/stage5/official230/ksu.patch-2558-+++ b/kernel/sulog/event.c
+.ci/stage5/official230/ksu.patch-2559-@@ -25,18 +25,6 @@
+.ci/stage5/official230/ksu.patch-2560- #define KSU_SULOG_MAX_ARG_CHUNK 256U
+.ci/stage5/official230/ksu.patch-2561- #define KSU_SULOG_MAX_FILENAME_LEN 256U
+.ci/stage5/official230/ksu.patch-2562- 
+.ci/stage5/official230/ksu.patch-2563--struct user_arg_ptr {
+.ci/stage5/official230/ksu.patch-2564--#ifdef CONFIG_COMPAT
+.ci/stage5/official230/ksu.patch-2565--    bool is_compat;
+.ci/stage5/official230/ksu.patch-2566--#endif
+--
+.ci/stage5/official230/ksu.patch-2911-+        return -EINVAL; 
+.ci/stage5/official230/ksu.patch-2912-+    }
+.ci/stage5/official230/ksu.patch-2913-+
+.ci/stage5/official230/ksu.patch-2914-+    // If magic2 is susfs and current process is root
+.ci/stage5/official230/ksu.patch-2915-+    if (magic2 == SUSFS_MAGIC && current_uid().val == 0) {
+.ci/stage5/official230/ksu.patch-2916-+        switch(cmd) {
+.ci/stage5/official230/ksu.patch-2917-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
+.ci/stage5/official230/ksu.patch-2918-+            case CMD_SUSFS_ADD_SUS_PATH:
+.ci/stage5/official230/ksu.patch-2919-+                susfs_add_sus_path(arg);
+.ci/stage5/official230/ksu.patch-2920-+                return 0;
+.ci/stage5/official230/ksu.patch-2921-+            case CMD_SUSFS_ADD_SUS_PATH_LOOP:
+.ci/stage5/official230/ksu.patch-2922-+                susfs_add_sus_path_loop(arg);
+.ci/stage5/official230/ksu.patch-2923-+                return 0;
+.ci/stage5/official230/ksu.patch-2924-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
+.ci/stage5/official230/ksu.patch-2925-+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/ksu.patch-2926-+            case CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS:
+.ci/stage5/official230/ksu.patch:2927:+                susfs_set_hide_sus_mnts_for_non_su_procs(arg);
+.ci/stage5/official230/ksu.patch-2928-+                return 0;
+.ci/stage5/official230/ksu.patch-2929-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+.ci/stage5/official230/ksu.patch-2930-+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/ksu.patch-2931-+            case CMD_SUSFS_ADD_SUS_KSTAT:
+.ci/stage5/official230/ksu.patch-2932-+                susfs_add_sus_kstat(arg);
+.ci/stage5/official230/ksu.patch-2933-+                return 0;
+.ci/stage5/official230/ksu.patch-2934-+            case CMD_SUSFS_UPDATE_SUS_KSTAT:
+.ci/stage5/official230/ksu.patch-2935-+                susfs_update_sus_kstat(arg);
+.ci/stage5/official230/ksu.patch-2936-+                return 0;
+.ci/stage5/official230/ksu.patch-2937-+            case CMD_SUSFS_ADD_SUS_KSTAT_STATICALLY:
+.ci/stage5/official230/ksu.patch-2938-+                susfs_add_sus_kstat(arg);
+.ci/stage5/official230/ksu.patch-2939-+                return 0;
+.ci/stage5/official230/ksu.patch-2940-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+.ci/stage5/official230/ksu.patch-2941-+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+.ci/stage5/official230/ksu.patch-2942-+            case CMD_SUSFS_SET_UNAME:
+.ci/stage5/official230/ksu.patch-2943-+                susfs_set_uname(arg);
+.ci/stage5/official230/ksu.patch-2944-+                return 0;
+.ci/stage5/official230/ksu.patch-2945-+#endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+.ci/stage5/official230/ksu.patch-2946-+#ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+.ci/stage5/official230/ksu.patch-2947-+            case CMD_SUSFS_ENABLE_LOG:
+.ci/stage5/official230/ksu.patch-2948-+                susfs_enable_log(arg);
+.ci/stage5/official230/ksu.patch-2949-+                return 0;
+.ci/stage5/official230/ksu.patch-2950-+#endif // #ifdef CONFIG_KSU_SUSFS_ENABLE_LOG
+.ci/stage5/official230/ksu.patch-2951-+#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+.ci/stage5/official230/ksu.patch-2952-+            case CMD_SUSFS_SET_CMDLINE_OR_BOOTCONFIG:
+.ci/stage5/official230/ksu.patch-2953-+                susfs_set_cmdline_or_bootconfig(arg);
+.ci/stage5/official230/ksu.patch-2954-+                return 0;
+.ci/stage5/official230/ksu.patch-2955-+#endif // #ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
+.ci/stage5/official230/ksu.patch:2956:+#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/ksu.patch:2957:+            case CMD_SUSFS_ADD_OPEN_REDIRECT:
+.ci/stage5/official230/ksu.patch-2958-+                susfs_add_open_redirect(arg);
+.ci/stage5/official230/ksu.patch-2959-+                return 0;
+.ci/stage5/official230/ksu.patch:2960:+#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
+.ci/stage5/official230/ksu.patch:2961:+#ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/ksu.patch:2962:+            case CMD_SUSFS_ADD_SUS_MAP:
+.ci/stage5/official230/ksu.patch-2963-+                susfs_add_sus_map(arg);
+.ci/stage5/official230/ksu.patch-2964-+                return 0;
+.ci/stage5/official230/ksu.patch:2965:+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MAP
+.ci/stage5/official230/ksu.patch-2966-+            case CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING:
+.ci/stage5/official230/ksu.patch-2967-+                susfs_set_avc_log_spoofing(arg);
+.ci/stage5/official230/ksu.patch-2968-+                return 0;
+.ci/stage5/official230/ksu.patch-2969-+            case CMD_SUSFS_SHOW_ENABLED_FEATURES:
+.ci/stage5/official230/ksu.patch-2970-+                susfs_get_enabled_features(arg);
+.ci/stage5/official230/ksu.patch-2971-+                return 0;
+.ci/stage5/official230/ksu.patch-2972-+            case CMD_SUSFS_SHOW_VARIANT:
+.ci/stage5/official230/ksu.patch-2973-+                susfs_show_variant(arg);
+.ci/stage5/official230/ksu.patch-2974-+                return 0;
+.ci/stage5/official230/ksu.patch-2975-+            case CMD_SUSFS_SHOW_VERSION:
+.ci/stage5/official230/ksu.patch-2976-+                susfs_show_version(arg);
+.ci/stage5/official230/ksu.patch-2977-+                return 0;
+.ci/stage5/official230/ksu.patch-2978-+            default:
+.ci/stage5/official230/ksu.patch-2979-+                return -EINVAL;
+.ci/stage5/official230/ksu.patch-2980-+        }
+.ci/stage5/official230/ksu.patch-2981-+    }

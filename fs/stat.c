@@ -17,9 +17,15 @@
 #include <linux/syscalls.h>
 #include <linux/pagemap.h>
 #include <linux/compat.h>
+#if defined(CONFIG_KSU_SUSFS) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT) || defined(CONFIG_KSU_SUSFS_SUS_MOUNT)
+#include <linux/susfs_def.h>
+#endif
 
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
+
+#include "internal.h"
+
 
 /**
  * generic_fillattr - Fill in the basic attributes from the inode struct
@@ -163,12 +169,22 @@ EXPORT_SYMBOL(vfs_statx_fd);
  *
  * 0 will be returned on success, and a -ve error code if unsuccessful.
  */
+#ifdef CONFIG_KSU_SUSFS
+extern bool ksu_sucompat_enabled_samsung419(void);
+extern int ksu_handle_stat_samsung419(int *dfd,
+                                      const char __user **filename_user,
+                                      int *flags);
+#endif
+
 int vfs_statx(int dfd, const char __user *filename, int flags,
 	      struct kstat *stat, u32 request_mask)
 {
 	struct path path;
 	int error = -EINVAL;
 	unsigned int lookup_flags = LOOKUP_FOLLOW | LOOKUP_AUTOMOUNT;
+#ifdef CONFIG_KSU_SUSFS
+	struct filename *susfs_stat_fname = NULL;
+#endif
 
 	if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |
 		       AT_EMPTY_PATH | KSTAT_QUERY_FLAGS)) != 0)
@@ -182,7 +198,37 @@ int vfs_statx(int dfd, const char __user *filename, int flags,
 		lookup_flags |= LOOKUP_EMPTY;
 
 retry:
+#ifdef CONFIG_KSU_SUSFS
+	/* susfs_stage5_trial22_inline_stat_no_su */
+	susfs_stat_fname = getname_flags(filename, lookup_flags, NULL);
+	if (IS_ERR(susfs_stat_fname)) {
+		error = PTR_ERR(susfs_stat_fname);
+		goto out;
+	}
+
+	if (!susfs_is_current_proc_no_su() &&
+	    ksu_sucompat_enabled_samsung419()) {
+		const char __user *susfs_stat_user_filename = filename;
+
+		ksu_handle_stat_samsung419(&dfd, &susfs_stat_user_filename, &flags);
+		putname(susfs_stat_fname);
+		susfs_stat_fname = getname_flags(susfs_stat_user_filename,
+						lookup_flags, NULL);
+		if (IS_ERR(susfs_stat_fname)) {
+			error = PTR_ERR(susfs_stat_fname);
+			goto out;
+		}
+	}
+
+	/*
+	 * susfs_stage6_trial32_stat_filename_ownership
+	 * Samsung 4.19 filename_lookup() consumes the struct filename
+	 * reference. Do not putname() it again here.
+	 */
+	error = filename_lookup(dfd, susfs_stat_fname, lookup_flags, &path, NULL);
+#else
 	error = user_path_at(dfd, filename, lookup_flags, &path);
+#endif
 	if (error)
 		goto out;
 
