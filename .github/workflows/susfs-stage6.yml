@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 101
+name: SUSFS Samsung 4.19 Stage 6 - Trial 103
 
 permissions:
   contents: read
@@ -12,12 +12,12 @@ on:
     paths:
       - ".github/workflows/susfs-stage6.yml"
 
-# Trial 101 fixes the Trial 98 GitHub Actions trigger mistake.
+# Trial 103 fixes the Trial 98 GitHub Actions trigger mistake.
 # workflow_dispatch alone cannot auto-run on a branch push; this workflow now
 # runs when .github/workflows/susfs-stage6.yml is committed to the active branch.
 
 jobs:
-  trial101:
+  trial103:
     runs-on: ubuntu-22.04
 
     steps:
@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # Trial 101 starts from the exact disposable Trial 92 source commit
+          # Trial 103 starts from the exact disposable Trial 92 source commit
           # that was runtime-green on this M127F. This freezes the SUSFS
           # backport and avoids the moving upstream 2.3.0 branch.
           git fetch origin ci-susfs-stage6-trial92-35934393973
@@ -46,7 +46,7 @@ jobs:
           test -s .ci/stage5/build-ksun-stage5.yml
           test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
 
-      - name: Trial 101 backport ptrace stop-state lifetime fix
+      - name: Trial 103 backport ptrace stop-state lifetime fix
         shell: bash
         run: |
           set -euxo pipefail
@@ -70,40 +70,40 @@ jobs:
           p = Path("kernel/ptrace.c")
           s = p.read_text()
 
-          marker = "trial101_ptrace_state_lifetime_fix"
+          marker = "trial103_ptrace_state_lifetime_fix"
           if marker in s:
               raise SystemExit("Trial98 marker already present")
 
           old = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\tptrace_link(task, current);\n"""
-          new = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\t/* trial101_ptrace_state_lifetime_fix: do not inherit stale event state */\n\ttask->ptrace_message = 0;\n\n\tptrace_link(task, current);\n"""
+          new = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\t/* trial103_ptrace_state_lifetime_fix: do not inherit stale event state */\n\ttask->ptrace_message = 0;\n\n\tptrace_link(task, current);\n"""
           if s.count(old) != 1:
-              raise SystemExit("Trial98: ptrace_attach anchor mismatch")
+              raise SystemExit("Trial103: ptrace_attach anchor mismatch")
           s = s.replace(old, new, 1)
 
           old = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
-          new = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\t/* trial101_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
+          new = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\t/* trial103_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
           if s.count(old) != 1:
-              raise SystemExit("Trial98: ptrace_resume anchor mismatch")
+              raise SystemExit("Trial103: ptrace_resume anchor mismatch")
           s = s.replace(old, new, 1)
 
           old = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
-          new = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\t/* trial101_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
+          new = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\t/* trial103_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
           if s.count(old) != 1:
-              raise SystemExit("Trial98: ptrace_detach anchor mismatch")
+              raise SystemExit("Trial103: ptrace_detach anchor mismatch")
           s = s.replace(old, new, 1)
 
           p.write_text(s)
           PY
 
           git diff --check
-          grep -n -A5 -B5 'trial101_ptrace_state_lifetime_fix' kernel/ptrace.c
-          test "$(grep -c 'trial101_ptrace_state_lifetime_fix' kernel/ptrace.c)" -eq 3
+          grep -n -A5 -B5 'trial103_ptrace_state_lifetime_fix' kernel/ptrace.c
+          test "$(grep -c 'trial103_ptrace_state_lifetime_fix' kernel/ptrace.c)" -eq 3
 
-          mkdir -p .ci/trial101
-          git diff -- kernel/ptrace.c > .ci/trial101/ptrace-state-lifetime-fix.patch
-          test -s .ci/trial101/ptrace-state-lifetime-fix.patch
+          mkdir -p .ci/trial103
+          git diff -- kernel/ptrace.c > .ci/trial103/ptrace-state-lifetime-fix.patch
+          test -s .ci/trial103/ptrace-state-lifetime-fix.patch
 
-      - name: Trial 101 fix SUSFS SUS_MAP macro precedence for clang 11
+      - name: Trial 103 fix SUSFS SUS_MAP macro precedence for clang 11
         shell: bash
         run: |
           set -euxo pipefail
@@ -149,32 +149,48 @@ jobs:
           grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           git diff --check
 
-          mkdir -p .ci/trial101
-          git diff -- include/linux/susfs_def.h             > .ci/trial101/susfs-sus-map-macro-precedence.patch
-          test -s .ci/trial101/susfs-sus-map-macro-precedence.patch
+          mkdir -p .ci/trial103
+          git diff -- include/linux/susfs_def.h             > .ci/trial103/susfs-sus-map-macro-precedence.patch
+          test -s .ci/trial103/susfs-sus-map-macro-precedence.patch
 
-      - name: Prepare Trial 101 build recipe
+      - name: Prepare Trial 103 build recipe
         run: |
           set -euxo pipefail
 
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial101-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial103-build.yml
 
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("/tmp/trial101-build.yml")
+          p = Path("/tmp/trial103-build.yml")
           s = p.read_text()
           old = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES"
-          new = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL101-PTRACE-STATE-FIX"
+          new = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX"
           if old not in s:
-              raise SystemExit("Trial98: Trial92 artifact name not found in pinned recipe")
+              raise SystemExit("Trial103: Trial92 artifact name not found in pinned recipe")
           s = s.replace(old, new)
+
+          stale = "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c\n"
+          semantic = (
+              "          # Trial103: pinned Trial92 faccessat semantic audit\n"
+              "          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n"
+              "          grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n"
+              "          grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n"
+          )
+          if s.count(stale) != 1:
+              raise SystemExit(
+                  f"Trial103: expected one stale Trial59 faccessat audit, got {s.count(stale)}"
+              )
+          s = s.replace(stale, semantic, 1)
+
           p.write_text(s)
           PY
 
-          grep -q 'TRIAL101-PTRACE-STATE-FIX' /tmp/trial101-build.yml
+          grep -q 'TRIAL103-PTRACE-STATE-FIX' /tmp/trial103-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial103-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial103-build.yml
 
-      - name: Execute pinned Trial 92 build recipe with Trial 101 ptrace fix
+      - name: Execute pinned Trial 92 build recipe with Trial 103 ptrace fix
         run: |
           set -euxo pipefail
 
@@ -182,7 +198,7 @@ jobs:
           from pathlib import Path
           import yaml
 
-          wf = yaml.safe_load(Path("/tmp/trial101-build.yml").read_text())
+          wf = yaml.safe_load(Path("/tmp/trial103-build.yml").read_text())
           jobs = wf.get("jobs", {})
           if len(jobs) != 1:
               raise SystemExit(f"expected one build job, got {list(jobs)}")
@@ -196,39 +212,39 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Trial 101: {name} ====="',
+                  f'echo "===== Trial 103: {name} ====="',
                   script,
                   "",
               ]
-          Path("/tmp/trial101-build.sh").write_text("\n".join(chunks))
+          Path("/tmp/trial103-build.sh").write_text("\n".join(chunks))
           PY
 
-          chmod +x /tmp/trial101-build.sh
-          bash /tmp/trial101-build.sh
+          chmod +x /tmp/trial103-build.sh
+          bash /tmp/trial103-build.sh
 
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL101-PTRACE-STATE-FIX.zip
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 101 invariants
+      - name: Verify Trial 103 invariants
         run: |
           set -euxo pipefail
 
           test "$(git -C KernelSU-Next rev-parse HEAD)" = \
             "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
 
-          grep -q 'trial101_ptrace_state_lifetime_fix' kernel/ptrace.c
+          grep -q 'trial103_ptrace_state_lifetime_fix' kernel/ptrace.c
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
 
           ! grep -R -q 'prezygote_services' KernelSU-Next/kernel \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
 
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial101-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial101-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial101-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial103-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial103-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial103-build.yml
 
           {
-            echo "Trial 101"
+            echo "Trial 103"
             echo "base=c9022cdf5d640d267068172fba54c12e7d58103c (Trial92 runtime-green)"
             echo "single_change=ptrace_message lifetime reset on attach/resume/detach"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
@@ -236,19 +252,19 @@ jobs:
             echo "fbe_trigger=Trial92 zygote-start preserved"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL101-PTRACE-STATE-FIX.zip
-          } | tee .ci/trial101/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX.zip
+          } | tee .ci/trial103/manifest.txt
 
-      - name: Upload Trial 101 outputs
+      - name: Upload Trial 103 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL101-PTRACE-STATE-FIX
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL101-PTRACE-STATE-FIX.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial101/
+            .ci/trial103/
