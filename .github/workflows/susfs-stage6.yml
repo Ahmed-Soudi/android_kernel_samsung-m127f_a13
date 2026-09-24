@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 103
+name: SUSFS Samsung 4.19 Stage 6 - Trial 107 ZygiskNext SELinux Compatibility
 
 permissions:
   contents: read
@@ -12,12 +12,8 @@ on:
     paths:
       - ".github/workflows/susfs-stage6.yml"
 
-# Trial 103 fixes the Trial 98 GitHub Actions trigger mistake.
-# workflow_dispatch alone cannot auto-run on a branch push; this workflow now
-# runs when .github/workflows/susfs-stage6.yml is committed to the active branch.
-
 jobs:
-  trial103:
+  trial107:
     runs-on: ubuntu-22.04
 
     steps:
@@ -27,244 +23,180 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Restore exact Trial 92 green source
+      - name: Restore exact Trial 92 runtime-green source
         run: |
           set -euxo pipefail
-
-          # Trial 103 starts from the exact disposable Trial 92 source commit
-          # that was runtime-green on this M127F. This freezes the SUSFS
-          # backport and avoids the moving upstream 2.3.0 branch.
           git fetch origin ci-susfs-stage6-trial92-35934393973
           git reset --hard c9022cdf5d640d267068172fba54c12e7d58103c
           git submodule update --init --recursive
-
-          test "$(git rev-parse HEAD)" = \
-            "c9022cdf5d640d267068172fba54c12e7d58103c"
-          test "$(git -C KernelSU-Next rev-parse HEAD)" = \
-            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
-
+          test "$(git rev-parse HEAD)" = "c9022cdf5d640d267068172fba54c12e7d58103c"
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           test -s .ci/stage5/build-ksun-stage5.yml
           test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
 
-      - name: Trial 103 backport ptrace stop-state lifetime fix
-        shell: bash
+      - name: Preserve Trial 92 SUS_MAP semantics under clang 11
         run: |
           set -euxo pipefail
+          cat >> fs/proc/Makefile <<'EOF107WARN'
 
-          # Evidence from VexZygisk debug:
-          # app_process64 reaches Vex's deliberate __libc_init GOT fault at
-          # 0xfffffffffffffff0, but the ptrace transaction does not recover.
-          # Upstream ptrace maintainers later fixed stale ptrace_message state
-          # because event payloads could survive into unrelated ptrace stops.
-          #
-          # ONE Trial98 functional change:
-          # clear ptrace_message on attach, resume and detach so each ptrace
-          # transaction starts with clean event state.
-          #
-          # Trial92 KSUN/FBE timing, SUSFS, PS5 UAC1 and all other source are
-          # preserved exactly.
+          # trial107_preserve_trial92_susmap_semantics
+          CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
+          EOF107WARN
+          grep -q 'trial107_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
+          ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
-          python3 - <<'PY'
+      - name: Prepare Trial 107 pinned build recipe
+        run: |
+          set -euxo pipefail
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial107-build.yml
+
+          python3 - <<'PY107'
           from pathlib import Path
-
-          p = Path("kernel/ptrace.c")
+          p = Path('/tmp/trial107-build.yml')
           s = p.read_text()
 
-          marker = "trial103_ptrace_state_lifetime_fix"
-          if marker in s:
-              raise SystemExit("Trial98 marker already present")
+          old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY'
+          if old_artifact not in s:
+              raise SystemExit('Trial107: Trial92 artifact name not found')
+          s = s.replace(old_artifact, new_artifact)
 
-          old = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\tptrace_link(task, current);\n"""
-          new = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\t/* trial103_ptrace_state_lifetime_fix: do not inherit stale event state */\n\ttask->ptrace_message = 0;\n\n\tptrace_link(task, current);\n"""
-          if s.count(old) != 1:
-              raise SystemExit("Trial103: ptrace_attach anchor mismatch")
-          s = s.replace(old, new, 1)
-
-          old = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
-          new = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\t/* trial103_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
-          if s.count(old) != 1:
-              raise SystemExit("Trial103: ptrace_resume anchor mismatch")
-          s = s.replace(old, new, 1)
-
-          old = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
-          new = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\t/* trial103_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
-          if s.count(old) != 1:
-              raise SystemExit("Trial103: ptrace_detach anchor mismatch")
-          s = s.replace(old, new, 1)
-
-          p.write_text(s)
-          PY
-
-          git diff --check
-          grep -n -A5 -B5 'trial103_ptrace_state_lifetime_fix' kernel/ptrace.c
-          test "$(grep -c 'trial103_ptrace_state_lifetime_fix' kernel/ptrace.c)" -eq 3
-
-          mkdir -p .ci/trial103
-          git diff -- kernel/ptrace.c > .ci/trial103/ptrace-state-lifetime-fix.patch
-          test -s .ci/trial103/ptrace-state-lifetime-fix.patch
-
-      - name: Trial 103 fix SUSFS SUS_MAP macro precedence for clang 11
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          # Trial 99 proved the ptrace patch itself applies. The build stopped
-          # in fs/proc/task_mmu.c because SUSFS_IS_INODE_SUS_MAP expands to a
-          # bare && chain and is negated inside || expressions. Clang 11 emits
-          # -Wlogical-op-parentheses, and this kernel treats warnings as errors.
-          #
-          # Single Trial101 compile fix: wrap the complete macro expression.
-          # Boolean behavior is unchanged.
-
-          python3 - <<'PY101'
-          from pathlib import Path
-
-          p = Path("include/linux/susfs_def.h")
-          t = p.read_text()
-
-          old = (
-              "#define SUSFS_IS_INODE_SUS_MAP(inode) \\\n"
-              "\t\tinode && inode->i_mapping && \\\n"
-              "\t\tunlikely(test_bit(AS_FLAGS_SUS_MAP, &inode->i_mapping->flags)) && \\\n"
-              "\t\tsusfs_is_current_proc_umounted_app()\n"
-          )
-          new = (
-              "#define SUSFS_IS_INODE_SUS_MAP(inode) \\\n"
-              "\t\t((inode) && (inode)->i_mapping && \\\n"
-              "\t\t unlikely(test_bit(AS_FLAGS_SUS_MAP, &(inode)->i_mapping->flags)) && \\\n"
-              "\t\t susfs_is_current_proc_umounted_app())\n"
-          )
-
-          count = t.count(old)
-          if count != 1:
-              raise SystemExit(
-                  "Trial101: expected exactly one SUSFS_IS_INODE_SUS_MAP macro, "
-                  f"got {count}"
-              )
-
-          p.write_text(t.replace(old, new, 1))
-          PY101
-
-          grep -n -A5 -B2 'SUSFS_IS_INODE_SUS_MAP' include/linux/susfs_def.h
-          grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
-          git diff --check
-
-          mkdir -p .ci/trial103
-          git diff -- include/linux/susfs_def.h             > .ci/trial103/susfs-sus-map-macro-precedence.patch
-          test -s .ci/trial103/susfs-sus-map-macro-precedence.patch
-
-      - name: Prepare Trial 103 build recipe
-        run: |
-          set -euxo pipefail
-
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial103-build.yml
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("/tmp/trial103-build.yml")
-          s = p.read_text()
-          old = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES"
-          new = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX"
-          if old not in s:
-              raise SystemExit("Trial103: Trial92 artifact name not found in pinned recipe")
-          s = s.replace(old, new)
-
-          stale = "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c\n"
+          stale = "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c\\n"
           semantic = (
-              "          # Trial103: pinned Trial92 faccessat semantic audit\n"
-              "          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n"
-              "          grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n"
-              "          grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n"
+              "          # Trial107: pinned Trial92 faccessat semantic audit\\n"
+              "          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\\n"
+              "          grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\\n"
+              "          grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\\n"
           )
           if s.count(stale) != 1:
-              raise SystemExit(
-                  f"Trial103: expected one stale Trial59 faccessat audit, got {s.count(stale)}"
-              )
+              raise SystemExit(f'Trial107: expected one stale Trial59 audit, got {s.count(stale)}')
           s = s.replace(stale, semantic, 1)
 
+          next_step = '      - name: Patch KSUN file wrapper for Samsung 4.19\\n'
+          if s.count(next_step) != 1:
+              raise SystemExit(f'Trial107: file-wrapper anchor count {s.count(next_step)}')
+
+          policy_step_lines = [
+              '      - name: Trial 107 add ZygiskNext SELinux compatibility grants',
+              '        run: |',
+              '          set -euxo pipefail',
+              "          python3 - <<'PY107POL'",
+              '          from pathlib import Path',
+              "          p = Path('KernelSU-Next/kernel/selinux/rules.c')",
+              '          s = p.read_text()',
+              "          marker = 'ksu_trial107_zygisknext_selinux_compat'",
+              '          if marker in s:',
+              "              raise SystemExit('Trial107: policy marker already present')",
+              '          anchor = (',
+              "              '    // Allow system server kill su process\\n'",
+              "              '    ksu_allow(db, \\\"system_server\\\", KERNEL_SU_DOMAIN, \\\"process\\\", \\\"getpgid\\\");\\n'",
+              "              '    ksu_allow(db, \\\"system_server\\\", KERNEL_SU_DOMAIN, \\\"process\\\", \\\"sigkill\\\");\\n'",
+              '          )',
+              '          if s.count(anchor) != 1:',
+              "              raise SystemExit(f'Trial107: rules anchor mismatch: {s.count(anchor)}')",
+              '          add = [',
+              "              anchor.rstrip('\\n'),",
+              "              '',",
+              "              '    /* ksu_trial107_zygisknext_selinux_compat */',",
+              "              '    ksu_allow(db, \\\"system_server\\\", \\\"system_server\\\", \\\"process\\\", \\\"execmem\\\");',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"zygote\\\", \\\"process\\\", \\\"execmem\\\");',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"appdomain_tmpfs\\\", \\\"dir\\\", ALL);',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"appdomain_tmpfs\\\", \\\"file\\\", ALL);',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"adb_data_file\\\", \\\"dir\\\", \\\"search\\\");',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"mnt_vendor_file\\\", \\\"dir\\\", \\\"search\\\");',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"system_file\\\", \\\"dir\\\", \\\"mounton\\\");',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"labeledfs\\\", \\\"filesystem\\\", \\\"mount\\\");',",
+              "              '    ksu_allow(db, \\\"zygote\\\", \\\"fs_type\\\", \\\"filesystem\\\", \\\"unmount\\\");',",
+              "              '',",
+              '          ]',
+              "          p.write_text(s.replace(anchor, '\\n'.join(add), 1))",
+              '          PY107POL',
+              "          grep -n -A30 -B5 'ksu_trial107_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c",
+              "          test \\\"$(grep -c 'ksu_trial107_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c)\\\" -eq 1",
+              '          git -C KernelSU-Next diff --check',
+              '',
+          ]
+          s = s.replace(next_step, '\\n'.join(policy_step_lines) + next_step, 1)
           p.write_text(s)
-          PY
+          PY107
 
-          grep -q 'TRIAL103-PTRACE-STATE-FIX' /tmp/trial103-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial103-build.yml
-          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial103-build.yml
+          grep -q 'TRIAL107-ZYGISKNEXT-SEPOLICY' /tmp/trial107-build.yml
+          grep -q 'Trial 107 add ZygiskNext SELinux compatibility grants' /tmp/trial107-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial107-build.yml
 
-      - name: Execute pinned Trial 92 build recipe with Trial 103 ptrace fix
+          python3 - <<'PY107YAML'
+          import yaml
+          from pathlib import Path
+          wf = yaml.safe_load(Path('/tmp/trial107-build.yml').read_text())
+          assert len(wf.get('jobs', {})) == 1
+          print('Trial107 nested build recipe YAML valid')
+          PY107YAML
+
+      - name: Execute Trial 107 build
         run: |
           set -euxo pipefail
-
-          python3 - <<'PY'
+          python3 - <<'PY107EXEC'
           from pathlib import Path
           import yaml
-
-          wf = yaml.safe_load(Path("/tmp/trial103-build.yml").read_text())
-          jobs = wf.get("jobs", {})
+          wf = yaml.safe_load(Path('/tmp/trial107-build.yml').read_text())
+          jobs = wf.get('jobs', {})
           if len(jobs) != 1:
-              raise SystemExit(f"expected one build job, got {list(jobs)}")
-
-          steps = next(iter(jobs.values())).get("steps", [])
-          chunks = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
+              raise SystemExit(f'expected one build job, got {list(jobs)}')
+          steps = next(iter(jobs.values())).get('steps', [])
+          chunks = ['#!/usr/bin/env bash', 'set -euo pipefail', '']
           for idx, step in enumerate(steps, 1):
-              name = step.get("name", f"step-{idx}")
-              script = step.get("run")
+              name = step.get('name', f'step-{idx}')
+              script = step.get('run')
               if script is None:
-                  print(f"skip action-only step: {name}")
+                  print(f'skip action-only step: {name}')
                   continue
-              chunks += [
-                  f'echo "===== Trial 103: {name} ====="',
-                  script,
-                  "",
-              ]
-          Path("/tmp/trial103-build.sh").write_text("\n".join(chunks))
-          PY
-
-          chmod +x /tmp/trial103-build.sh
-          bash /tmp/trial103-build.sh
-
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX.zip
+              chunks += [f'echo "===== Trial 107: {name} ====="', script, '']
+          Path('/tmp/trial107-build.sh').write_text('\\n'.join(chunks))
+          PY107EXEC
+          chmod +x /tmp/trial107-build.sh
+          bash /tmp/trial107-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 103 invariants
+      - name: Verify Trial 107 invariants
         run: |
           set -euxo pipefail
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+          ! grep -q 'ptrace_state_lifetime_fix' kernel/ptrace.c
+          ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
+          grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
+          grep -q 'ksu_trial107_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c
+          grep -q 'ksu_allow(db, "zygote", "zygote", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
+          grep -q 'ksu_allow(db, "system_server", "system_server", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
+          grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial107-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial107-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial107-build.yml
 
-          test "$(git -C KernelSU-Next rev-parse HEAD)" = \
-            "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
-
-          grep -q 'trial103_ptrace_state_lifetime_fix' kernel/ptrace.c
-          grep -q 'susfs_stage6_trial92_fbe_zygote_services' \
-            .github/patches/stage5-ksun-susfs-compile-probe.patch
-
-          ! grep -R -q 'prezygote_services' KernelSU-Next/kernel \
-            .github/patches/stage5-ksun-susfs-compile-probe.patch
-
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial103-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial103-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial103-build.yml
-
+          mkdir -p .ci/trial107
           {
-            echo "Trial 103"
-            echo "base=c9022cdf5d640d267068172fba54c12e7d58103c (Trial92 runtime-green)"
-            echo "single_change=ptrace_message lifetime reset on attach/resume/detach"
+            echo "Trial 107"
+            echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
+            echo "runtime_change=KernelSU built-in ZygiskNext SELinux compatibility grants"
+            echo "ptrace_patch=NONE"
+            echo "susmap_semantics=Trial92 preserved; warning suppressed only"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
-            echo "susfs=Trial92 pinned 2.3.0 Samsung 4.19 backport"
-            echo "fbe_trigger=Trial92 zygote-start preserved"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX.zip
-          } | tee .ci/trial103/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY.zip
+          } | tee .ci/trial107/manifest.txt
 
-      - name: Upload Trial 103 outputs
+      - name: Upload Trial 107 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL103-PTRACE-STATE-FIX.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial103/
+            .ci/trial107/
