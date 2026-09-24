@@ -1,0 +1,6 @@
+===== OPEN_REDIRECT focused =====
+fs/namei.c:43:#if defined(CONFIG_KSU_SUSFS_SUS_PATH) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+fs/open.c:436:/* susfs_stage6_trial53_faccessat_redirect_only */
+fs/open.c:441:			redirected_fname = getname_flags(susfs_user_filename,
+fs/open.c:448:			susfs_fname = redirected_fname;
+===== SUS_MAP focused =====

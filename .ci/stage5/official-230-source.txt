@@ -1,0 +1,6 @@
+Stage 5 Trial 7
+Official branch: gki-android13-5.15
+#define SUSFS_VERSION "v2.3.0"
+9b3db050a2b7a73c42c63ecdea526f85a6de23229295f9d7ad90b1e9b6f7763e  fs/susfs.c
+e755bf34538b8f2eec1e401d2d6b18811d82931770f56cf98448eaad5757cb79  include/linux/susfs.h
+db7f98dcf8119a4eb5c45c05205b6c1065766047d6f803b0e86f3d14b1a251f0  include/linux/susfs_def.h
