@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 98
+name: SUSFS Samsung 4.19 Stage 6 - Trial 99
 
 permissions:
   contents: read
@@ -6,9 +6,18 @@ permissions:
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ksun-3.3.0-ps5-susfs230
+    paths:
+      - ".github/workflows/susfs-stage6.yml"
+
+# Trial 99 fixes the Trial 98 GitHub Actions trigger mistake.
+# workflow_dispatch alone cannot auto-run on a branch push; this workflow now
+# runs when .github/workflows/susfs-stage6.yml is committed to the active branch.
 
 jobs:
-  trial98:
+  trial99:
     runs-on: ubuntu-22.04
 
     steps:
@@ -22,7 +31,7 @@ jobs:
         run: |
           set -euxo pipefail
 
-          # Trial 98 starts from the exact disposable Trial 92 source commit
+          # Trial 99 starts from the exact disposable Trial 92 source commit
           # that was runtime-green on this M127F. This freezes the SUSFS
           # backport and avoids the moving upstream 2.3.0 branch.
           git fetch origin ci-susfs-stage6-trial92-35934393973
@@ -37,7 +46,7 @@ jobs:
           test -s .ci/stage5/build-ksun-stage5.yml
           test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
 
-      - name: Trial 98 backport ptrace stop-state lifetime fix
+      - name: Trial 99 backport ptrace stop-state lifetime fix
         shell: bash
         run: |
           set -euxo pipefail
@@ -61,24 +70,24 @@ jobs:
           p = Path("kernel/ptrace.c")
           s = p.read_text()
 
-          marker = "trial98_ptrace_state_lifetime_fix"
+          marker = "trial99_ptrace_state_lifetime_fix"
           if marker in s:
               raise SystemExit("Trial98 marker already present")
 
           old = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\tptrace_link(task, current);\n"""
-          new = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\t/* trial98_ptrace_state_lifetime_fix: do not inherit stale event state */\n\ttask->ptrace_message = 0;\n\n\tptrace_link(task, current);\n"""
+          new = """\tif (seize)\n\t\tflags |= PT_SEIZED;\n\ttask->ptrace = flags;\n\n\t/* trial99_ptrace_state_lifetime_fix: do not inherit stale event state */\n\ttask->ptrace_message = 0;\n\n\tptrace_link(task, current);\n"""
           if s.count(old) != 1:
               raise SystemExit("Trial98: ptrace_attach anchor mismatch")
           s = s.replace(old, new, 1)
 
           old = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
-          new = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\t/* trial98_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
+          new = """\tif (need_siglock)\n\t\tspin_lock_irq(&child->sighand->siglock);\n\t/* trial99_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\twake_up_state(child, __TASK_TRACED);\n"""
           if s.count(old) != 1:
               raise SystemExit("Trial98: ptrace_resume anchor mismatch")
           s = s.replace(old, new, 1)
 
           old = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
-          new = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\t/* trial98_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
+          new = """\t/*\n\t * tasklist_lock avoids the race with wait_task_stopped(), see\n\t * the comment in ptrace_resume().\n\t */\n\t/* trial99_ptrace_state_lifetime_fix */\n\tchild->ptrace_message = 0;\n\tchild->exit_code = data;\n\t__ptrace_detach(current, child);\n"""
           if s.count(old) != 1:
               raise SystemExit("Trial98: ptrace_detach anchor mismatch")
           s = s.replace(old, new, 1)
@@ -87,35 +96,35 @@ jobs:
           PY
 
           git diff --check
-          grep -n -A5 -B5 'trial98_ptrace_state_lifetime_fix' kernel/ptrace.c
-          test "$(grep -c 'trial98_ptrace_state_lifetime_fix' kernel/ptrace.c)" -eq 3
+          grep -n -A5 -B5 'trial99_ptrace_state_lifetime_fix' kernel/ptrace.c
+          test "$(grep -c 'trial99_ptrace_state_lifetime_fix' kernel/ptrace.c)" -eq 3
 
-          mkdir -p .ci/trial98
-          git diff -- kernel/ptrace.c > .ci/trial98/ptrace-state-lifetime-fix.patch
-          test -s .ci/trial98/ptrace-state-lifetime-fix.patch
+          mkdir -p .ci/trial99
+          git diff -- kernel/ptrace.c > .ci/trial99/ptrace-state-lifetime-fix.patch
+          test -s .ci/trial99/ptrace-state-lifetime-fix.patch
 
-      - name: Prepare Trial 98 build recipe
+      - name: Prepare Trial 99 build recipe
         run: |
           set -euxo pipefail
 
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial98-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial99-build.yml
 
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("/tmp/trial98-build.yml")
+          p = Path("/tmp/trial99-build.yml")
           s = p.read_text()
           old = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES"
-          new = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL98-PTRACE-STATE-FIX"
+          new = "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL99-PTRACE-STATE-FIX"
           if old not in s:
               raise SystemExit("Trial98: Trial92 artifact name not found in pinned recipe")
           s = s.replace(old, new)
           p.write_text(s)
           PY
 
-          grep -q 'TRIAL98-PTRACE-STATE-FIX' /tmp/trial98-build.yml
+          grep -q 'TRIAL99-PTRACE-STATE-FIX' /tmp/trial99-build.yml
 
-      - name: Execute pinned Trial 92 build recipe with Trial 98 ptrace fix
+      - name: Execute pinned Trial 92 build recipe with Trial 99 ptrace fix
         run: |
           set -euxo pipefail
 
@@ -123,7 +132,7 @@ jobs:
           from pathlib import Path
           import yaml
 
-          wf = yaml.safe_load(Path("/tmp/trial98-build.yml").read_text())
+          wf = yaml.safe_load(Path("/tmp/trial99-build.yml").read_text())
           jobs = wf.get("jobs", {})
           if len(jobs) != 1:
               raise SystemExit(f"expected one build job, got {list(jobs)}")
@@ -137,39 +146,39 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Trial 98: {name} ====="',
+                  f'echo "===== Trial 99: {name} ====="',
                   script,
                   "",
               ]
-          Path("/tmp/trial98-build.sh").write_text("\n".join(chunks))
+          Path("/tmp/trial99-build.sh").write_text("\n".join(chunks))
           PY
 
-          chmod +x /tmp/trial98-build.sh
-          bash /tmp/trial98-build.sh
+          chmod +x /tmp/trial99-build.sh
+          bash /tmp/trial99-build.sh
 
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL98-PTRACE-STATE-FIX.zip
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL99-PTRACE-STATE-FIX.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 98 invariants
+      - name: Verify Trial 99 invariants
         run: |
           set -euxo pipefail
 
           test "$(git -C KernelSU-Next rev-parse HEAD)" = \
             "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
 
-          grep -q 'trial98_ptrace_state_lifetime_fix' kernel/ptrace.c
+          grep -q 'trial99_ptrace_state_lifetime_fix' kernel/ptrace.c
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
 
           ! grep -R -q 'prezygote_services' KernelSU-Next/kernel \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
 
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial98-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial98-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial98-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial99-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial99-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial99-build.yml
 
           {
-            echo "Trial 98"
+            echo "Trial 99"
             echo "base=c9022cdf5d640d267068172fba54c12e7d58103c (Trial92 runtime-green)"
             echo "single_change=ptrace_message lifetime reset on attach/resume/detach"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
@@ -177,19 +186,19 @@ jobs:
             echo "fbe_trigger=Trial92 zygote-start preserved"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL98-PTRACE-STATE-FIX.zip
-          } | tee .ci/trial98/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL99-PTRACE-STATE-FIX.zip
+          } | tee .ci/trial99/manifest.txt
 
-      - name: Upload Trial 98 outputs
+      - name: Upload Trial 99 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL98-PTRACE-STATE-FIX
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL99-PTRACE-STATE-FIX
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL98-PTRACE-STATE-FIX.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL99-PTRACE-STATE-FIX.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial98/
+            .ci/trial99/
