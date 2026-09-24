@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 94
+name: SUSFS Samsung 4.19 Stage 6 - Trial 95
 
 permissions:
   contents: write
@@ -1090,6 +1090,57 @@ jobs:
           PY
 
           grep -n -A14 -B5 'susfs_statfs_kdp_samsung419' fs/statfs.c
+
+      - name: Trial 95 restore official SUSFS statfs helper
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Trial 94 reached final link but failed because current SUSFS 2.3.0
+          # fs/susfs.c references the upstream helper susfs_calculate_f_flags(),
+          # while the Samsung 4.19 statfs backport omitted its definition.
+          # Keep every Trial 94 source change and restore only that missing helper
+          # next to calculate_f_flags() in fs/statfs.c.
+          python3 - <<'PY95STATFS'
+          from pathlib import Path
+
+          p = Path("fs/statfs.c")
+          t = p.read_text()
+
+          marker = "susfs_stage6_trial95_calculate_f_flags_bridge"
+          if marker in t:
+              raise SystemExit("Trial95: statfs helper unexpectedly already present")
+
+          if "int susfs_calculate_f_flags(struct vfsmount *mnt)" in t:
+              raise SystemExit("Trial95: helper already defined without Trial95 marker")
+
+          anchor = "static int statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf)"
+          pos = t.find(anchor)
+          if pos < 0:
+              raise SystemExit("Trial95: statfs_by_dentry anchor missing")
+
+          # calculate_f_flags() is a static helper in this same translation unit.
+          # SUSFS 2.3.0 needs a global wrapper so fs/susfs.c can reuse exactly
+          # the kernel's native mount-flag calculation.
+          block = (
+              "#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT\n"
+              "/* susfs_stage6_trial95_calculate_f_flags_bridge */\n"
+              "int susfs_calculate_f_flags(struct vfsmount *mnt)\n"
+              "{\n"
+              "\treturn calculate_f_flags(mnt);\n"
+              "}\n"
+              "#endif\n\n"
+          )
+
+          t = t[:pos] + block + t[pos:]
+          p.write_text(t)
+          PY95STATFS
+
+          grep -n -A8 -B4 'susfs_stage6_trial95_calculate_f_flags_bridge' fs/statfs.c
+          grep -q '^int susfs_calculate_f_flags(struct vfsmount \*mnt)$' fs/statfs.c
+          grep -q 'return calculate_f_flags(mnt);' fs/statfs.c
+          grep -q 'extern int susfs_calculate_f_flags(struct vfsmount \*mnt);' fs/susfs.c
+          test "$(grep -c '^int susfs_calculate_f_flags(struct vfsmount \*mnt)$' fs/statfs.c)" -eq 1
 
       - name: Resolve Samsung overlayfs readdir reject
         run: |
@@ -3743,12 +3794,12 @@ jobs:
           done
 
           echo "Trial82: native KSUN 3.3.0 <-> SUSFS 2.3.0 supercall dispatcher added."
-      - name: Trial 94 run KSUN services before FBE zygote-start
+      - name: Trial 95 retain pre-zygote KSUN services timing
         shell: bash
         run: |
           set -euxo pipefail
 
-          # Trial 94 starts from the boot-green Trial 90 baseline and keeps every
+          # Trial 95 starts from the boot-green Trial 90 baseline and keeps every
           # Trial 92-era fix except for ONE functional timing change: run
           # `ksud services` synchronously in the KSU post-fs-data action, after
           # `ksud post-fs-data` completes and BEFORE Android queues zygote-start.
@@ -3758,15 +3809,15 @@ jobs:
           test "$(git -C KernelSU-Next rev-parse HEAD)" = \
             "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
 
-          python3 - <<'PY93'
+          python3 - <<'PY95'
           from pathlib import Path
 
           p = Path("KernelSU-Next/kernel/runtime/ksud_integration.c")
           t = p.read_text()
 
-          marker = "susfs_stage6_trial94_prezygote_services"
+          marker = "susfs_stage6_trial95_prezygote_services"
           if marker in t:
-              raise SystemExit("Trial94: pre-zygote services marker unexpectedly already present")
+              raise SystemExit("Trial95: pre-zygote services marker unexpectedly already present")
 
           # Exact pinned KSUN 3.3.0 source shape at commit 3b18216f.
           # Preserve legacy nonencrypted/vold service triggers.  The only
@@ -3782,14 +3833,14 @@ jobs:
               '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
           )
           if old not in t:
-              raise SystemExit("Trial94: exact pinned post-fs-data/services anchor changed")
+              raise SystemExit("Trial95: exact pinned post-fs-data/services anchor changed")
 
           new = (
               '    "on post-fs-data\\n"\n'
               '    "    start logd\\n"\n'
               '    // We should wait for the post-fs-data finish\n'
               '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " post-fs-data\\n"\n'
-              '    /* susfs_stage6_trial94_prezygote_services */\n'
+              '    /* susfs_stage6_trial95_prezygote_services */\n'
               '    "    exec u:r:" KERNEL_SU_DOMAIN ":s0 root -- " KSUD_PATH " services\\n"\n'
               '    "\\n"\n'
               '    "on nonencrypted\\n"\n'
@@ -3798,34 +3849,34 @@ jobs:
 
           t = t.replace(old, new, 1)
           p.write_text(t)
-          PY93
+          PY95
 
           git -C KernelSU-Next diff --check
           git -C KernelSU-Next diff -- kernel/runtime/ksud_integration.c \
-            > /tmp/trial94-prezygote-services.patch
-          test -s /tmp/trial94-prezygote-services.patch
+            > /tmp/trial95-prezygote-services.patch
+          test -s /tmp/trial95-prezygote-services.patch
 
-          grep -q 'susfs_stage6_trial94_prezygote_services' \
+          grep -q 'susfs_stage6_trial95_prezygote_services' \
             KernelSU-Next/kernel/runtime/ksud_integration.c
 
-          python3 - <<'PY93AUDIT'
+          python3 - <<'PY95AUDIT'
           from pathlib import Path
           t = Path("KernelSU-Next/kernel/runtime/ksud_integration.c").read_text()
-          marker = "susfs_stage6_trial94_prezygote_services"
+          marker = "susfs_stage6_trial95_prezygote_services"
           pos = t.index(marker)
           w = t[max(0, pos-300):pos+350]
           if 'KSUD_PATH " post-fs-data\\n"' not in w:
-              raise SystemExit("Trial94: post-fs-data command missing before marker")
+              raise SystemExit("Trial95: post-fs-data command missing before marker")
           if 'KSUD_PATH " services\\n"' not in w:
-              raise SystemExit("Trial94: services command missing near marker")
+              raise SystemExit("Trial95: services command missing near marker")
           if w.index('KSUD_PATH " post-fs-data\\n"') > w.index(marker):
-              raise SystemExit("Trial94: services marker is not after post-fs-data")
+              raise SystemExit("Trial95: services marker is not after post-fs-data")
           if '"on zygote-start\\n"' in t:
-              raise SystemExit("Trial94: workflow patch must not add a zygote-start services action")
-          print("Trial94: post-fs-data -> services pre-zygote source audit passed")
-          PY93AUDIT
+              raise SystemExit("Trial95: workflow patch must not add a zygote-start services action")
+          print("Trial95: post-fs-data -> services pre-zygote source audit passed")
+          PY95AUDIT
 
-          cat /tmp/trial94-prezygote-services.patch \
+          cat /tmp/trial95-prezygote-services.patch \
             >> .github/patches/stage5-ksun-susfs-compile-probe.patch
 
           git -C KernelSU-Next reset --hard
@@ -3834,12 +3885,12 @@ jobs:
           git -C KernelSU-Next apply --check \
             ../.github/patches/stage5-ksun-susfs-compile-probe.patch
 
-          grep -q 'susfs_stage6_trial94_prezygote_services' \
+          grep -q 'susfs_stage6_trial95_prezygote_services' \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
           ! grep -q 'susfs_stage6_trial92_fbe_zygote_services' \
             .github/patches/stage5-ksun-susfs-compile-probe.patch
 
-          echo "Trial94: ksud services now completes during post-fs-data, before zygote-start."
+          echo "Trial95: ksud services now completes during post-fs-data, before zygote-start."
 
       - name: Trial 90 bridge raw reboot SUSFS manager reporting
         shell: bash
@@ -4096,11 +4147,11 @@ jobs:
 
           s = s.replace(
               "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230.zip",
-              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL94-PREZYGOTE-SERVICES.zip"
+              "M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL95-PREZYGOTE-SERVICES.zip"
           )
           s = s.replace(
               "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS230\n",
-              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL94-PREZYGOTE-SERVICES\n"
+              "name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL95-PREZYGOTE-SERVICES\n"
           )
           p.write_text(s)
           PY
@@ -4136,7 +4187,8 @@ jobs:
           grep -q '^CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y$' arch/arm64/configs/exynos850-m12nsxx_defconfig
           grep -q 'susfs_stage6_trial90_raw_reboot_manager_bridge' kernel/reboot.c
           grep -q 'Trial90 SUSFS RAW REBOOT: cmd=' kernel/reboot.c
-          grep -q 'susfs_stage6_trial94_prezygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial95_prezygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'susfs_stage6_trial95_calculate_f_flags_bridge' fs/statfs.c
           ! grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
           test -z "$(git -C KernelSU-Next status --porcelain)"
           test "$(find . -name '*.rej' -type f | wc -l)" -eq 0
@@ -4174,7 +4226,7 @@ jobs:
             echo "===== $term =====" >> .ci/stage5/final-audit/live-semantic-inventory.txt
             grep -RIn --exclude-dir=.git --exclude-dir=.ci "$term" fs include KernelSU-Next/kernel 2>/dev/null >> .ci/stage5/final-audit/live-semantic-inventory.txt || true
           done
-          echo 'Stage 6 Trial 94: Trial90 baseline preserved; FBE ksud services complete before zygote-start.'
+          echo 'Stage 6 Trial 95: Trial90 baseline preserved; FBE ksud services complete before zygote-start.'
           grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' .github/workflows/build-ksun.yml
           # The known-good PS5 workflow enables UAC1 but does not carry an explicit
           # CONFIG_USB_CONFIGFS_F_UAC2=n source line.  Absence of UAC2=y is the
@@ -4186,7 +4238,7 @@ jobs:
           echo 'Trial31 PS5 audit: UAC1 enabled; UAC2 not enabled in known-good build workflow' \
             > .ci/stage5/final-audit/trial31-ps5-uac-audit.txt
           cat > .ci/stage5/final-audit/README.txt <<'EOF'
-          Stage 6 Trial 94 full-feature semantic-parity audit.
+          Stage 6 Trial 95 full-feature semantic-parity audit.
           Green audit + green full build = FLASH CANDIDATE, not runtime proof.
           Covers Samsung/KDP mount semantics, zygote SUS_MOUNT, KSUN 3.3 VFS bridges,
           SUS_MAP proc visibility, OPEN_REDIRECT proc behavior, map_files and PS5 UAC1.
@@ -4199,7 +4251,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          BRANCH="ci-susfs-stage6-trial94-${GITHUB_RUN_ID}"
+          BRANCH="ci-susfs-stage6-trial95-${GITHUB_RUN_ID}"
           echo "STAGE4_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
           git config user.name "github-actions[bot]"
@@ -4225,7 +4277,7 @@ jobs:
             .ci/stage5
 
           git status --short
-          git commit -m "CI: SUSFS Stage 6 Trial 94 run KSUN services before FBE zygote-start"
+          git commit -m "CI: SUSFS Stage 6 Trial 95 retain pre-zygote KSUN services timing"
           git push origin "$BRANCH"
           echo "Disposable Stage 4 branch pushed: $BRANCH"
 
@@ -4987,7 +5039,7 @@ jobs:
                   print(f"skip action-only step: {name}")
                   continue
               chunks += [
-                  f'echo "===== Stage 6 Trial 94: {name} ====="',
+                  f'echo "===== Stage 6 Trial 95: {name} ====="',
                   script,
                   "",
               ]
@@ -4998,33 +5050,33 @@ jobs:
           chmod +x /tmp/stage4-build-recipe.sh
           bash /tmp/stage4-build-recipe.sh
 
-          echo "Stage 6 Trial 94 full build recipe completed."
+          echo "Stage 6 Trial 95 full build recipe completed."
           echo "Trial81 full build completed; runtime boot + Manager SUSFS detection validation required."
 
-      - name: Mark Stage 6 Trial 94 flash candidate
+      - name: Mark Stage 6 Trial 95 flash candidate
         run: |
           set -euxo pipefail
           mkdir -p .ci/stage5/flash-candidate
           cp .ci/stage5/final-audit/README.txt .ci/stage5/flash-candidate/README.txt
           cp .ci/stage5/final-audit/live-semantic-inventory.txt .ci/stage5/flash-candidate/live-semantic-inventory.txt
           {
-           echo "Stage 6 Trial 94 FLASH CANDIDATE"
+           echo "Stage 6 Trial 95 FLASH CANDIDATE"
            echo "source_head=${GITHUB_SHA}"
            echo "kernel=Samsung M127F Android 13 Linux 4.19.111"
            echo "kernelsu_next=3.3.0"
            echo "susfs=2.3.0 Samsung 4.19 backport"
            echo "ps5_uac1=preserved"
-           echo "zygisk=external-module;trial94_prezygote_services=enabled"
+           echo "zygisk=external-module;trial95_prezygote_services=enabled"
            echo "runtime_validation=trial77_full_features_boot_green;trial78_pending"
            [ ! -f Image ] || sha256sum Image
           } | tee .ci/stage5/flash-candidate/manifest.txt
 
 
-      - name: Upload Stage 6 Trial 94 outputs
+      - name: Upload Stage 6 Trial 95 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m127f-susfs-stage6-trial94-prezygote-services
+          name: m127f-susfs-stage6-trial95-prezygote-services
           if-no-files-found: warn
           path: |
             Image
@@ -5032,5 +5084,5 @@ jobs:
             .config
             .ci/stage5/
             .ci/stage6-trial86/
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL94-PREZYGOTE-SERVICES.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL95-PREZYGOTE-SERVICES.zip
 
