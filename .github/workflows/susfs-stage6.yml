@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 123 ReZygisk Baseline
+name: SUSFS Samsung 4.19 Stage 6 - Trial 124 ReZygisk Baseline Script Fix
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ on:
       - ".github/workflows/susfs-stage6.yml"
 
 jobs:
-  trial123:
+  trial124:
     runs-on: ubuntu-22.04
 
     steps:
@@ -37,32 +37,32 @@ jobs:
       - name: Preserve Trial 92 SUS_MAP semantics under clang 11
         run: |
           set -euxo pipefail
-          cat >> fs/proc/Makefile <<'EOF123WARN'
+          cat >> fs/proc/Makefile <<'EOF124WARN'
 
-          # trial123_preserve_trial92_susmap_semantics
+          # trial124_preserve_trial92_susmap_semantics
           CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
-          EOF123WARN
-          grep -q 'trial123_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          EOF124WARN
+          grep -q 'trial124_preserve_trial92_susmap_semantics' fs/proc/Makefile
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
-      - name: Prepare Trial 123 pinned build recipe
+      - name: Prepare Trial 124 pinned build recipe
         run: |
           set -euxo pipefail
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial123-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial124-build.yml
 
-          python3 - <<'PY123'
+          python3 - <<'PY124'
           from pathlib import Path
-          p = Path('/tmp/trial123-build.yml')
+          p = Path('/tmp/trial124-build.yml')
           s = p.read_text()
 
           old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
-          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL123-REZYGISK-BASELINE'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE'
           if old_artifact not in s:
-              raise SystemExit('Trial123: Trial92 artifact name not found')
+              raise SystemExit('Trial124: Trial92 artifact name not found')
           s = s.replace(old_artifact, new_artifact)
 
-          # Trial123: update the stale Trial59 audit using line matching,
+          # Trial124: update the stale Trial59 audit using line matching,
           # avoiding fragile escaped-newline comparisons.
           lines = s.splitlines(keepends=True)
 
@@ -72,44 +72,43 @@ jobs:
           ]
           if len(stale_hits) != 1:
               raise SystemExit(
-                  f'Trial123: expected one stale Trial59 audit line, got {len(stale_hits)}'
+                  f'Trial124: expected one stale Trial59 audit line, got {len(stale_hits)}'
               )
 
           idx = stale_hits[0]
           indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
           lines[idx:idx + 1] = [
-              indent + '# Trial123: pinned Trial92 faccessat semantic audit\n',
+              indent + '# Trial124: pinned Trial92 faccessat semantic audit\n',
               indent + "grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n",
               indent + "grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n",
               indent + "grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n",
           ]
           s = ''.join(lines)
 
-          # Trial123 deliberately adds NO kernel runtime patch for ReZygisk.
-          # The exact Trial92 kernel semantics are the userspace-test baseline.
+          # Trial124: no kernel runtime patch; exact Trial92 semantics for ReZygisk.
 
           p.write_text(s)
-          PY123
+          PY124
 
-          grep -q 'TRIAL123-REZYGISK-BASELINE' /tmp/trial123-build.yml
-          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial123-build.yml
-          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial123-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial123-build.yml
-          python3 - <<'PY123YAML'
+          grep -q 'TRIAL124-REZYGISK-BASELINE' /tmp/trial124-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial124-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial124-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial124-build.yml
+          python3 - <<'PY124YAML'
           import yaml
           from pathlib import Path
-          wf = yaml.safe_load(Path('/tmp/trial123-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial124-build.yml').read_text())
           assert len(wf.get('jobs', {})) == 1
-          print('Trial123 nested build recipe YAML valid')
-          PY123YAML
+          print('Trial124 nested build recipe YAML valid')
+          PY124YAML
 
-      - name: Execute Trial 123 build
+      - name: Execute Trial 124 build
         run: |
           set -euxo pipefail
-          python3 - <<'PY123EXEC'
+          python3 - <<'PY124EXEC'
           from pathlib import Path
           import yaml
-          wf = yaml.safe_load(Path('/tmp/trial123-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial124-build.yml').read_text())
           jobs = wf.get('jobs', {})
           if len(jobs) != 1:
               raise SystemExit(f'expected one build job, got {list(jobs)}')
@@ -121,15 +120,18 @@ jobs:
               if script is None:
                   print(f'skip action-only step: {name}')
                   continue
-              chunks += [f'echo "===== Trial 123: {name} ====="', script, '']
-          Path('/tmp/trial123-build.sh').write_text('\\n'.join(chunks))
-          PY123EXEC
-          chmod +x /tmp/trial123-build.sh
-          bash /tmp/trial123-build.sh
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL123-REZYGISK-BASELINE.zip
+              chunks += [f'echo "===== Trial 124: {name} ====="', script, '']
+          Path('/tmp/trial124-build.sh').write_text('\n'.join(chunks))
+          PY124EXEC
+          # Fail before launching a long build if step separators were escaped incorrectly.
+          bash -n /tmp/trial124-build.sh
+          test "$(wc -l < /tmp/trial124-build.sh)" -gt 100
+          chmod +x /tmp/trial124-build.sh
+          bash /tmp/trial124-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 123 invariants
+      - name: Verify Trial 124 invariants
         run: |
           set -euxo pipefail
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
@@ -137,13 +139,13 @@ jobs:
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial123-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial123-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial123-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial124-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial124-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial124-build.yml
 
-          mkdir -p .ci/trial123
+          mkdir -p .ci/trial124
           {
-            echo "Trial 123"
+            echo "Trial 124"
             echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
             echo "runtime_change=NONE; exact Trial92 runtime semantics for ReZygisk userspace test"
             echo "ptrace_patch=NONE"
@@ -151,19 +153,19 @@ jobs:
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL123-REZYGISK-BASELINE.zip
-          } | tee .ci/trial123/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE.zip
+          } | tee .ci/trial124/manifest.txt
 
-      - name: Upload Trial 123 outputs
+      - name: Upload Trial 124 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL123-REZYGISK-BASELINE
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL123-REZYGISK-BASELINE.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial123/
+            .ci/trial124/
