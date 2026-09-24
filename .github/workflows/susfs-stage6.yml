@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 107 ZygiskNext SELinux Compatibility
+name: SUSFS Samsung 4.19 Stage 6 - Trial 110 ZygiskNext SELinux Compatibility
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ on:
       - ".github/workflows/susfs-stage6.yml"
 
 jobs:
-  trial107:
+  trial110:
     runs-on: ubuntu-22.04
 
     steps:
@@ -37,55 +37,44 @@ jobs:
       - name: Preserve Trial 92 SUS_MAP semantics under clang 11
         run: |
           set -euxo pipefail
-          cat >> fs/proc/Makefile <<'EOF107WARN'
+          cat >> fs/proc/Makefile <<'EOF110WARN'
 
-          # trial107_preserve_trial92_susmap_semantics
+          # trial110_preserve_trial92_susmap_semantics
           CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
-          EOF107WARN
-          grep -q 'trial107_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          EOF110WARN
+          grep -q 'trial110_preserve_trial92_susmap_semantics' fs/proc/Makefile
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
-      - name: Prepare Trial 107 pinned build recipe
+      - name: Prepare Trial 110 pinned build recipe
         run: |
           set -euxo pipefail
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial107-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial110-build.yml
 
-          python3 - <<'PY107'
+          python3 - <<'PY110'
           from pathlib import Path
-          p = Path('/tmp/trial107-build.yml')
+          p = Path('/tmp/trial110-build.yml')
           s = p.read_text()
 
           old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
-          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL110-ZYGISKNEXT-SEPOLICY'
           if old_artifact not in s:
               raise SystemExit('Trial107: Trial92 artifact name not found')
           s = s.replace(old_artifact, new_artifact)
 
-          stale = "          grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' fs/open.c\\n"
-          semantic = (
-              "          # Trial107: pinned Trial92 faccessat semantic audit\\n"
-              "          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\\n"
-              "          grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\\n"
-              "          grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\\n"
-          )
-          if s.count(stale) != 1:
-              raise SystemExit(f'Trial107: expected one stale Trial59 audit, got {s.count(stale)}')
-          s = s.replace(stale, semantic, 1)
-
-          next_step = '      - name: Patch KSUN file wrapper for Samsung 4.19\\n'
+          # Trial110: the exact Trial92 pinned recipe already carries the valid faccessat audit.\n          # Do not rewrite historical faccessat markers.\n\n          next_step = '      - name: Patch KSUN file wrapper for Samsung 4.19\\n'
           if s.count(next_step) != 1:
               raise SystemExit(f'Trial107: file-wrapper anchor count {s.count(next_step)}')
 
           policy_step_lines = [
-              '      - name: Trial 107 add ZygiskNext SELinux compatibility grants',
+              '      - name: Trial 110 add ZygiskNext SELinux compatibility grants',
               '        run: |',
               '          set -euxo pipefail',
-              "          python3 - <<'PY107POL'",
+              "          python3 - <<'PY110POL'",
               '          from pathlib import Path',
               "          p = Path('KernelSU-Next/kernel/selinux/rules.c')",
               '          s = p.read_text()',
-              "          marker = 'ksu_trial107_zygisknext_selinux_compat'",
+              "          marker = 'ksu_trial110_zygisknext_selinux_compat'",
               '          if marker in s:',
               "              raise SystemExit('Trial107: policy marker already present')",
               '          anchor = (',
@@ -98,7 +87,7 @@ jobs:
               '          add = [',
               "              anchor.rstrip('\\n'),",
               "              '',",
-              "              '    /* ksu_trial107_zygisknext_selinux_compat */',",
+              "              '    /* ksu_trial110_zygisknext_selinux_compat */',",
               "              '    ksu_allow(db, \\\"system_server\\\", \\\"system_server\\\", \\\"process\\\", \\\"execmem\\\");',",
               "              '    ksu_allow(db, \\\"zygote\\\", \\\"zygote\\\", \\\"process\\\", \\\"execmem\\\");',",
               "              '    ksu_allow(db, \\\"zygote\\\", \\\"appdomain_tmpfs\\\", \\\"dir\\\", ALL);',",
@@ -111,35 +100,35 @@ jobs:
               "              '',",
               '          ]',
               "          p.write_text(s.replace(anchor, '\\n'.join(add), 1))",
-              '          PY107POL',
-              "          grep -n -A30 -B5 'ksu_trial107_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c",
-              "          test \\\"$(grep -c 'ksu_trial107_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c)\\\" -eq 1",
+              '          PY110POL',
+              "          grep -n -A30 -B5 'ksu_trial110_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c",
+              "          test \\\"$(grep -c 'ksu_trial110_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c)\\\" -eq 1",
               '          git -C KernelSU-Next diff --check',
               '',
           ]
           s = s.replace(next_step, '\\n'.join(policy_step_lines) + next_step, 1)
           p.write_text(s)
-          PY107
+          PY110
 
-          grep -q 'TRIAL107-ZYGISKNEXT-SEPOLICY' /tmp/trial107-build.yml
-          grep -q 'Trial 107 add ZygiskNext SELinux compatibility grants' /tmp/trial107-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial107-build.yml
-
-          python3 - <<'PY107YAML'
+          grep -q 'TRIAL110-ZYGISKNEXT-SEPOLICY' /tmp/trial110-build.yml
+          grep -q 'Trial 110 add ZygiskNext SELinux compatibility grants' /tmp/trial110-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial110-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial110-build.yml
+          python3 - <<'PY110YAML'
           import yaml
           from pathlib import Path
-          wf = yaml.safe_load(Path('/tmp/trial107-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial110-build.yml').read_text())
           assert len(wf.get('jobs', {})) == 1
           print('Trial107 nested build recipe YAML valid')
-          PY107YAML
+          PY110YAML
 
-      - name: Execute Trial 107 build
+      - name: Execute Trial 110 build
         run: |
           set -euxo pipefail
-          python3 - <<'PY107EXEC'
+          python3 - <<'PY110EXEC'
           from pathlib import Path
           import yaml
-          wf = yaml.safe_load(Path('/tmp/trial107-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial110-build.yml').read_text())
           jobs = wf.get('jobs', {})
           if len(jobs) != 1:
               raise SystemExit(f'expected one build job, got {list(jobs)}')
@@ -151,32 +140,32 @@ jobs:
               if script is None:
                   print(f'skip action-only step: {name}')
                   continue
-              chunks += [f'echo "===== Trial 107: {name} ====="', script, '']
-          Path('/tmp/trial107-build.sh').write_text('\\n'.join(chunks))
-          PY107EXEC
-          chmod +x /tmp/trial107-build.sh
-          bash /tmp/trial107-build.sh
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY.zip
+              chunks += [f'echo "===== Trial 110: {name} ====="', script, '']
+          Path('/tmp/trial110-build.sh').write_text('\\n'.join(chunks))
+          PY110EXEC
+          chmod +x /tmp/trial110-build.sh
+          bash /tmp/trial110-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL110-ZYGISKNEXT-SEPOLICY.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 107 invariants
+      - name: Verify Trial 110 invariants
         run: |
           set -euxo pipefail
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           ! grep -q 'ptrace_state_lifetime_fix' kernel/ptrace.c
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
-          grep -q 'ksu_trial107_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c
+          grep -q 'ksu_trial110_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c
           grep -q 'ksu_allow(db, "zygote", "zygote", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
           grep -q 'ksu_allow(db, "system_server", "system_server", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial107-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial107-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial107-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial110-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial110-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial110-build.yml
 
-          mkdir -p .ci/trial107
+          mkdir -p .ci/trial110
           {
-            echo "Trial 107"
+            echo "Trial 110"
             echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
             echo "runtime_change=KernelSU built-in ZygiskNext SELinux compatibility grants"
             echo "ptrace_patch=NONE"
@@ -184,19 +173,19 @@ jobs:
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY.zip
-          } | tee .ci/trial107/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL110-ZYGISKNEXT-SEPOLICY.zip
+          } | tee .ci/trial110/manifest.txt
 
-      - name: Upload Trial 107 outputs
+      - name: Upload Trial 110 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL110-ZYGISKNEXT-SEPOLICY
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL107-ZYGISKNEXT-SEPOLICY.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL110-ZYGISKNEXT-SEPOLICY.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial107/
+            .ci/trial110/
