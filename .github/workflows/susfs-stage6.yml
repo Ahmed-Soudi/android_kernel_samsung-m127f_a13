@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 114 ZygiskNext SELinux Compatibility
+name: SUSFS Samsung 4.19 Stage 6 - Trial 118 ZygiskNext SELinux Compatibility
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ on:
       - ".github/workflows/susfs-stage6.yml"
 
 jobs:
-  trial114:
+  trial118:
     runs-on: ubuntu-22.04
 
     steps:
@@ -37,32 +37,32 @@ jobs:
       - name: Preserve Trial 92 SUS_MAP semantics under clang 11
         run: |
           set -euxo pipefail
-          cat >> fs/proc/Makefile <<'EOF114WARN'
+          cat >> fs/proc/Makefile <<'EOF118WARN'
 
-          # trial114_preserve_trial92_susmap_semantics
+          # trial118_preserve_trial92_susmap_semantics
           CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
-          EOF114WARN
-          grep -q 'trial114_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          EOF118WARN
+          grep -q 'trial118_preserve_trial92_susmap_semantics' fs/proc/Makefile
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
-      - name: Prepare Trial 114 pinned build recipe
+      - name: Prepare Trial 118 pinned build recipe
         run: |
           set -euxo pipefail
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial114-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial118-build.yml
 
-          python3 - <<'PY114'
+          python3 - <<'PY118'
           from pathlib import Path
-          p = Path('/tmp/trial114-build.yml')
+          p = Path('/tmp/trial118-build.yml')
           s = p.read_text()
 
           old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
-          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL114-ZYGISKNEXT-SEPOLICY'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL118-ZYGISKNEXT-EXECMEM'
           if old_artifact not in s:
-              raise SystemExit('Trial114: Trial92 artifact name not found')
+              raise SystemExit('Trial118: Trial92 artifact name not found')
           s = s.replace(old_artifact, new_artifact)
 
-          # Trial114: update the stale Trial59 audit using line matching,
+          # Trial118: update the stale Trial59 audit using line matching,
           # avoiding fragile escaped-newline comparisons.
           lines = s.splitlines(keepends=True)
 
@@ -72,13 +72,13 @@ jobs:
           ]
           if len(stale_hits) != 1:
               raise SystemExit(
-                  f'Trial114: expected one stale Trial59 audit line, got {len(stale_hits)}'
+                  f'Trial118: expected one stale Trial59 audit line, got {len(stale_hits)}'
               )
 
           idx = stale_hits[0]
           indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
           lines[idx:idx + 1] = [
-              indent + '# Trial114: pinned Trial92 faccessat semantic audit\n',
+              indent + '# Trial118: pinned Trial92 faccessat semantic audit\n',
               indent + "grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n",
               indent + "grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n",
               indent + "grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n",
@@ -90,74 +90,67 @@ jobs:
           next_marker = '- name: Patch KSUN file wrapper for Samsung 4.19'
           if s.count(next_marker) != 1:
               raise SystemExit(
-                  f'Trial114: file-wrapper marker count {s.count(next_marker)}'
+                  f'Trial118: file-wrapper marker count {s.count(next_marker)}'
               )
 
           policy_step_lines = [
-              '      - name: Trial 114 add ZygiskNext SELinux compatibility grants',
+              '      - name: Trial 118 add only Zygote execmem for ZygiskNext',
               '        run: |',
               '          set -euxo pipefail',
-              "          python3 - <<'PY114POL'",
+              "          python3 - <<'PY118POL'",
               '          from pathlib import Path',
               "          p = Path('KernelSU-Next/kernel/selinux/rules.c')",
               '          s = p.read_text()',
-              "          marker = 'ksu_trial114_zygisknext_selinux_compat'",
+              "          marker = 'ksu_trial118_zygisknext_selinux_compat'",
               '          if marker in s:',
-              "              raise SystemExit('Trial114: policy marker already present')",
+              "              raise SystemExit('Trial118: policy marker already present')",
               '          anchor = (',
               "              '    // Allow system server kill su process\\n'",
               "              '    ksu_allow(db, \\\"system_server\\\", KERNEL_SU_DOMAIN, \\\"process\\\", \\\"getpgid\\\");\\n'",
               "              '    ksu_allow(db, \\\"system_server\\\", KERNEL_SU_DOMAIN, \\\"process\\\", \\\"sigkill\\\");\\n'",
               '          )',
               '          if s.count(anchor) != 1:',
-              "              raise SystemExit(f'Trial114: rules anchor mismatch: {s.count(anchor)}')",
+              "              raise SystemExit(f'Trial118: rules anchor mismatch: {s.count(anchor)}')",
               '          add = [',
               "              anchor.rstrip('\\n'),",
               "              '',",
-              "              '    /* ksu_trial114_zygisknext_selinux_compat */',",
-              "              '    ksu_allow(db, \\\"system_server\\\", \\\"system_server\\\", \\\"process\\\", \\\"execmem\\\");',",
+              "              '    /* ksu_trial118_zygisknext_execmem */',",
+              "              '    /* Single Trial118 runtime change: Zygote self-execmem for ZygiskNext/LSPlant. */',",
               "              '    ksu_allow(db, \\\"zygote\\\", \\\"zygote\\\", \\\"process\\\", \\\"execmem\\\");',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"appdomain_tmpfs\\\", \\\"dir\\\", ALL);',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"appdomain_tmpfs\\\", \\\"file\\\", ALL);',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"adb_data_file\\\", \\\"dir\\\", \\\"search\\\");',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"mnt_vendor_file\\\", \\\"dir\\\", \\\"search\\\");',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"system_file\\\", \\\"dir\\\", \\\"mounton\\\");',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"labeledfs\\\", \\\"filesystem\\\", \\\"mount\\\");',",
-              "              '    ksu_allow(db, \\\"zygote\\\", \\\"fs_type\\\", \\\"filesystem\\\", \\\"unmount\\\");',",
               "              '',",
               '          ]',
               "          p.write_text(s.replace(anchor, '\\n'.join(add), 1))",
-              '          PY114POL',
-              "          grep -n -A30 -B5 'ksu_trial114_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c",
-              "          test \\\"$(grep -c 'ksu_trial114_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c)\\\" -eq 1",
+              '          PY118POL',
+              "          grep -n -A30 -B5 'ksu_trial118_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c",
+              "          test \\\"$(grep -c 'ksu_trial118_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c)\\\" -eq 1",
               '          git -C KernelSU-Next diff --check',
               '',
           ]
           pos = s.index('      ' + next_marker)
           s = s[:pos] + '\n'.join(policy_step_lines) + s[pos:]
           p.write_text(s)
-          PY114
+          PY118
 
-          grep -q 'TRIAL114-ZYGISKNEXT-SEPOLICY' /tmp/trial114-build.yml
-          grep -q 'Trial 114 add ZygiskNext SELinux compatibility grants' /tmp/trial114-build.yml
-          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial114-build.yml
-          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial114-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial114-build.yml
-          python3 - <<'PY114YAML'
+          grep -q 'TRIAL118-ZYGISKNEXT-SEPOLICY' /tmp/trial118-build.yml
+          grep -q 'Trial 118 add only Zygote execmem for ZygiskNext' /tmp/trial118-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial118-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial118-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial118-build.yml
+          python3 - <<'PY118YAML'
           import yaml
           from pathlib import Path
-          wf = yaml.safe_load(Path('/tmp/trial114-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial118-build.yml').read_text())
           assert len(wf.get('jobs', {})) == 1
-          print('Trial114 nested build recipe YAML valid')
-          PY114YAML
+          print('Trial118 nested build recipe YAML valid')
+          PY118YAML
 
-      - name: Execute Trial 114 build
+      - name: Execute Trial 118 build
         run: |
           set -euxo pipefail
-          python3 - <<'PY114EXEC'
+          python3 - <<'PY118EXEC'
           from pathlib import Path
           import yaml
-          wf = yaml.safe_load(Path('/tmp/trial114-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial118-build.yml').read_text())
           jobs = wf.get('jobs', {})
           if len(jobs) != 1:
               raise SystemExit(f'expected one build job, got {list(jobs)}')
@@ -169,52 +162,58 @@ jobs:
               if script is None:
                   print(f'skip action-only step: {name}')
                   continue
-              chunks += [f'echo "===== Trial 114: {name} ====="', script, '']
-          Path('/tmp/trial114-build.sh').write_text('\\n'.join(chunks))
-          PY114EXEC
-          chmod +x /tmp/trial114-build.sh
-          bash /tmp/trial114-build.sh
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL114-ZYGISKNEXT-SEPOLICY.zip
+              chunks += [f'echo "===== Trial 118: {name} ====="', script, '']
+          Path('/tmp/trial118-build.sh').write_text('\\n'.join(chunks))
+          PY118EXEC
+          chmod +x /tmp/trial118-build.sh
+          bash /tmp/trial118-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL118-ZYGISKNEXT-EXECMEM.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 114 invariants
+      - name: Verify Trial 118 invariants
         run: |
           set -euxo pipefail
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           ! grep -q 'ptrace_state_lifetime_fix' kernel/ptrace.c
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
-          grep -q 'ksu_trial114_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c
+          grep -q 'ksu_trial118_zygisknext_selinux_compat' KernelSU-Next/kernel/selinux/rules.c
           grep -q 'ksu_allow(db, "zygote", "zygote", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
-          grep -q 'ksu_allow(db, "system_server", "system_server", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "system_server", "system_server", "process", "execmem");' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "zygote", "appdomain_tmpfs"' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "zygote", "adb_data_file"' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "zygote", "mnt_vendor_file"' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "zygote", "system_file", "dir", "mounton");' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "zygote", "labeledfs", "filesystem", "mount");' KernelSU-Next/kernel/selinux/rules.c
+          ! grep -q 'ksu_allow(db, "zygote", "fs_type", "filesystem", "unmount");' KernelSU-Next/kernel/selinux/rules.c
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial114-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial114-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial114-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial118-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial118-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial118-build.yml
 
-          mkdir -p .ci/trial114
+          mkdir -p .ci/trial118
           {
-            echo "Trial 114"
+            echo "Trial 118"
             echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
-            echo "runtime_change=KernelSU built-in ZygiskNext SELinux compatibility grants"
+            echo "runtime_change=single KernelSU policy grant: zygote zygote process execmem"
             echo "ptrace_patch=NONE"
             echo "susmap_semantics=Trial92 preserved; warning suppressed only"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL114-ZYGISKNEXT-SEPOLICY.zip
-          } | tee .ci/trial114/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL118-ZYGISKNEXT-EXECMEM.zip
+          } | tee .ci/trial118/manifest.txt
 
-      - name: Upload Trial 114 outputs
+      - name: Upload Trial 118 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL114-ZYGISKNEXT-SEPOLICY
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL118-ZYGISKNEXT-EXECMEM
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL114-ZYGISKNEXT-SEPOLICY.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL118-ZYGISKNEXT-EXECMEM.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial114/
+            .ci/trial118/
