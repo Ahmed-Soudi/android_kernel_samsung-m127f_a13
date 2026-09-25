@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 124 ReZygisk Baseline Script Fix
+name: SUSFS Samsung 4.19 Stage 6 - Trial 125 NeoZygisk SELinux Policy ioctl Fix
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ on:
       - ".github/workflows/susfs-stage6.yml"
 
 jobs:
-  trial124:
+  trial125:
     runs-on: ubuntu-22.04
 
     steps:
@@ -39,30 +39,30 @@ jobs:
           set -euxo pipefail
           cat >> fs/proc/Makefile <<'EOF124WARN'
 
-          # trial124_preserve_trial92_susmap_semantics
+          # trial125_preserve_trial92_susmap_semantics
           CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
           EOF124WARN
-          grep -q 'trial124_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          grep -q 'trial125_preserve_trial92_susmap_semantics' fs/proc/Makefile
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
-      - name: Prepare Trial 124 pinned build recipe
+      - name: Prepare Trial 125 pinned build recipe
         run: |
           set -euxo pipefail
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial124-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial125-build.yml
 
-          python3 - <<'PY124'
+          python3 - <<'PY125'
           from pathlib import Path
-          p = Path('/tmp/trial124-build.yml')
+          p = Path('/tmp/trial125-build.yml')
           s = p.read_text()
 
           old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
-          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL125-NEOZYGISK-SEPOLICY-IOCTL'
           if old_artifact not in s:
-              raise SystemExit('Trial124: Trial92 artifact name not found')
+              raise SystemExit('Trial125: Trial92 artifact name not found')
           s = s.replace(old_artifact, new_artifact)
 
-          # Trial124: update the stale Trial59 audit using line matching,
+          # Trial125: update the stale Trial59 audit using line matching,
           # avoiding fragile escaped-newline comparisons.
           lines = s.splitlines(keepends=True)
 
@@ -72,43 +72,61 @@ jobs:
           ]
           if len(stale_hits) != 1:
               raise SystemExit(
-                  f'Trial124: expected one stale Trial59 audit line, got {len(stale_hits)}'
+                  f'Trial125: expected one stale Trial59 audit line, got {len(stale_hits)}'
               )
 
           idx = stale_hits[0]
           indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
           lines[idx:idx + 1] = [
-              indent + '# Trial124: pinned Trial92 faccessat semantic audit\n',
+              indent + '# Trial125: pinned Trial92 faccessat semantic audit\n',
               indent + "grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n",
               indent + "grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n",
               indent + "grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n",
           ]
           s = ''.join(lines)
 
-          # Trial124: no kernel runtime patch; exact Trial92 semantics for ReZygisk.
+          # Trial92's Samsung 4.19 diagnostic whitelist returns ENOTTY on the
+          # APPLY_SEPOLICY batch command (0xc0004b04), preventing module rules.
+          # Allow precisely this existing KSU command, retaining the other guards.
+          needle = 'cmd == 0x40004b03U || cmd == 0x80004b63U ||'
+          if s.count(needle) != 1:
+              raise SystemExit(f'Trial125: expected one ioctl whitelist, found {s.count(needle)}')
+          s = s.replace(needle,
+              'cmd == 0x40004b03U || cmd == 0xc0004b04U ||\n'
+              '                  cmd == 0x80004b63U ||', 1)
+          # The pinned builder verifies the original whitelist. Add a specific
+          # check for the command that was blocked in Trial92 dmesg.
+          anchor = '          if "cmd == 0x40004b03U" not in body:\n'
+          if s.count(anchor) != 1:
+              raise SystemExit('Trial125: expected one pinned builder audit anchor')
+          s = s.replace(anchor,
+              '          if "cmd == 0xc0004b04U" not in body:\n'
+              '              raise SystemExit("APPLY_SEPOLICY batch K04 allow path missing")\n'
+              + anchor, 1)
 
           p.write_text(s)
-          PY124
+          PY125
 
-          grep -q 'TRIAL124-REZYGISK-BASELINE' /tmp/trial124-build.yml
-          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial124-build.yml
-          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial124-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial124-build.yml
-          python3 - <<'PY124YAML'
+          grep -q 'TRIAL125-NEOZYGISK-SEPOLICY-IOCTL' /tmp/trial125-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial125-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial125-build.yml
+          grep -q 'APPLY_SEPOLICY batch K04 allow path missing' /tmp/trial125-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial125-build.yml
+          python3 - <<'PY125YAML'
           import yaml
           from pathlib import Path
-          wf = yaml.safe_load(Path('/tmp/trial124-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial125-build.yml').read_text())
           assert len(wf.get('jobs', {})) == 1
-          print('Trial124 nested build recipe YAML valid')
-          PY124YAML
+          print('Trial125 nested build recipe YAML valid')
+          PY125YAML
 
-      - name: Execute Trial 124 build
+      - name: Execute Trial 125 build
         run: |
           set -euxo pipefail
-          python3 - <<'PY124EXEC'
+          python3 - <<'PY125EXEC'
           from pathlib import Path
           import yaml
-          wf = yaml.safe_load(Path('/tmp/trial124-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial125-build.yml').read_text())
           jobs = wf.get('jobs', {})
           if len(jobs) != 1:
               raise SystemExit(f'expected one build job, got {list(jobs)}')
@@ -120,52 +138,53 @@ jobs:
               if script is None:
                   print(f'skip action-only step: {name}')
                   continue
-              chunks += [f'echo "===== Trial 124: {name} ====="', script, '']
-          Path('/tmp/trial124-build.sh').write_text('\n'.join(chunks))
-          PY124EXEC
+              chunks += [f'echo "===== Trial 125: {name} ====="', script, '']
+          Path('/tmp/trial125-build.sh').write_text('\n'.join(chunks))
+          PY125EXEC
           # Fail before launching a long build if step separators were escaped incorrectly.
-          bash -n /tmp/trial124-build.sh
-          test "$(wc -l < /tmp/trial124-build.sh)" -gt 100
-          chmod +x /tmp/trial124-build.sh
-          bash /tmp/trial124-build.sh
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE.zip
+          bash -n /tmp/trial125-build.sh
+          test "$(wc -l < /tmp/trial125-build.sh)" -gt 100
+          chmod +x /tmp/trial125-build.sh
+          bash /tmp/trial125-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL125-NEOZYGISK-SEPOLICY-IOCTL.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 124 invariants
+      - name: Verify Trial 125 invariants
         run: |
           set -euxo pipefail
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
           ! grep -q 'ptrace_state_lifetime_fix' kernel/ptrace.c
+          grep -q 'cmd == 0xc0004b04U' KernelSU-Next/kernel/supercall/supercall.c
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial124-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial124-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial124-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial125-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial125-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial125-build.yml
 
-          mkdir -p .ci/trial124
+          mkdir -p .ci/trial125
           {
-            echo "Trial 124"
+            echo "Trial 125"
             echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
-            echo "runtime_change=NONE; exact Trial92 runtime semantics for ReZygisk userspace test"
-            echo "ptrace_patch=NONE"
+            echo "runtime_change=allow K04 0xc0004b04 APPLY_SEPOLICY batch through existing Trial92 KSU handler"
+            echo "ptrace_patch=NONE; NeoZygisk ptrace already succeeds"
             echo "susmap_semantics=Trial92 preserved; warning suppressed only"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE.zip
-          } | tee .ci/trial124/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL125-NEOZYGISK-SEPOLICY-IOCTL.zip
+          } | tee .ci/trial125/manifest.txt
 
-      - name: Upload Trial 124 outputs
+      - name: Upload Trial 125 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL125-NEOZYGISK-SEPOLICY-IOCTL
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL124-REZYGISK-BASELINE.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL125-NEOZYGISK-SEPOLICY-IOCTL.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial124/
+            .ci/trial125/
