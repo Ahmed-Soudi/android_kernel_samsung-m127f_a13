@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 128 NeoZygisk Cmdline and Policy Fix
+name: SUSFS Samsung 4.19 Stage 6 - Trial 129 Init Exit Kmsg Diagnostic
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ on:
       - ".github/workflows/susfs-stage6.yml"
 
 jobs:
-  trial128:
+  trial129:
     runs-on: ubuntu-22.04
 
     steps:
@@ -37,19 +37,19 @@ jobs:
       - name: Preserve Trial 92 SUS_MAP semantics under clang 11
         run: |
           set -euxo pipefail
-          cat >> fs/proc/Makefile <<'EOF128WARN'
+          cat >> fs/proc/Makefile <<'EOF129WARN'
 
-          # trial128_preserve_trial92_susmap_semantics
+          # trial129_preserve_trial92_susmap_semantics
           CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
-          EOF128WARN
-          grep -q 'trial128_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          EOF129WARN
+          grep -q 'trial129_preserve_trial92_susmap_semantics' fs/proc/Makefile
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
       - name: Repair faccessat filename ownership before kernel build
         run: |
           set -euxo pipefail
-          python3 - <<'PY128NAME'
+          python3 - <<'PY129NAME'
           from pathlib import Path
           p = Path('fs/open.c')
           s = p.read_text()
@@ -57,7 +57,7 @@ jobs:
           end = s.index('SYSCALL_DEFINE3(faccessat', start)
           body = s[start:end]
           if 'susfs_stage6_trial53_faccessat_redirect_only' not in body:
-              raise SystemExit('Trial128: expected pinned Trial92 redirect logic')
+              raise SystemExit('Trial129: expected pinned Trial92 redirect logic')
           old_error = ("\t\t\tif (IS_ERR(redirected_fname)) {\n"
                        "\t\t\t\tres = PTR_ERR(redirected_fname);\n"
                        "\t\t\t\tgoto out;\n"
@@ -73,19 +73,19 @@ jobs:
                         "\tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);")
           for old in (old_error, old_lookup):
               if body.count(old) != 1:
-                  raise SystemExit('Trial128: pinned filename ownership anchor changed')
+                  raise SystemExit('Trial129: pinned filename ownership anchor changed')
           body = body.replace(old_error, new_error, 1).replace(old_lookup, new_lookup, 1)
           if body.count('putname(susfs_fname);') != 2 or new_lookup not in body:
-              raise SystemExit('Trial128: filename ownership audit failed')
+              raise SystemExit('Trial129: filename ownership audit failed')
           p.write_text(s[:start] + body + s[end:])
-          PY128NAME
+          PY129NAME
 
           grep -q 'filename_lookup() consumes susfs_fname' fs/open.c
 
       - name: Repair early SUSFS cmdline read before kernel build
         run: |
           set -euxo pipefail
-          python3 - <<'PY128CMDLINE'
+          python3 - <<'PY129CMDLINE'
           from pathlib import Path
           p = Path('fs/susfs.c')
           s = p.read_text()
@@ -124,32 +124,115 @@ jobs:
           \treturn ready ? 0 : -ENOENT;
           }'''
           if s.count(old) != 1:
-              raise SystemExit('Trial128: pinned SUSFS spoof helper changed')
+              raise SystemExit('Trial129: pinned SUSFS spoof helper changed')
           p.write_text(s.replace(old, new, 1))
           cmdline = Path('fs/proc/cmdline.c').read_text()
           if cmdline.count('extern int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);') != 1 or cmdline.count('if (!susfs_spoof_cmdline_or_bootconfig(m))') != 1:
-              raise SystemExit('Trial128: cmdline fallback contract changed')
-          PY128CMDLINE
+              raise SystemExit('Trial129: cmdline fallback contract changed')
+          PY129CMDLINE
           grep -q 'return ready ? 0 : -ENOENT;' fs/susfs.c
           grep -q 'if (!susfs_spoof_cmdline_or_bootconfig(m))' fs/proc/cmdline.c
 
-      - name: Prepare Trial 128 pinned build recipe
+      - name: Preserve init kmsg in Samsung panic summary
         run: |
           set -euxo pipefail
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial128-build.yml
-
-          python3 - <<'PY128'
+          python3 - <<'PY129DIAG'
           from pathlib import Path
-          p = Path('/tmp/trial128-build.yml')
+          
+          read_write = Path('fs/read_write.c')
+          source = read_write.read_text()
+          include_anchor = '#include <linux/uaccess.h>\n'
+          if source.count(include_anchor) != 1:
+              raise SystemExit('Trial129: pinned read_write include changed')
+          source = source.replace(include_anchor,
+                                  '#include <linux/string.h>\n' + include_anchor, 1)
+          
+          anchor = 'EXPORT_SYMBOL(kernel_write);\n\nssize_t vfs_write('
+          if source.count(anchor) != 1:
+              raise SystemExit('Trial129: vfs_write anchor changed')
+          source = source.replace(anchor, '''EXPORT_SYMBOL(kernel_write);
+          
+          /* Trial129: remember init's last /dev/kmsg line for Samsung panic history.
+           * This diagnostic does not modify the write, its return value, or the log.
+           */
+          char trial129_init_kmsg_last[160];
+          
+          ssize_t vfs_write(''', 1)
+          
+          old = '''\t\tif (ret > 0) {
+          \t\t\tfsnotify_modify(file);
+          \t\t\tadd_wchar(current, ret);
+          \t\t}'''
+          new = '''\t\tif (ret > 0) {
+          \t\t\t/* Capture only successful writes from PID 1 to /dev/kmsg. */
+          \t\t\tif (unlikely(current->pid == 1 && file->f_path.dentry &&
+          \t\t\t    !strcmp(file->f_path.dentry->d_name.name, "kmsg"))) {
+          \t\t\t\tchar line[sizeof(trial129_init_kmsg_last)];
+          \t\t\t\tsize_t i, n = min_t(size_t, ret, sizeof(line) - 1);
+          
+          \t\t\t\tif (!copy_from_user(line, buf, n)) {
+          \t\t\t\t\tline[n] = '\\0';
+          \t\t\t\t\tfor (i = 0; i < n; i++)
+          \t\t\t\t\t\tif (line[i] == '\\n' || line[i] == '\\r')
+          \t\t\t\t\t\t\tline[i] = ' ';
+          \t\t\t\t\tmemcpy(trial129_init_kmsg_last, line, n + 1);
+          \t\t\t\t}
+          \t\t\t}
+          \t\t\tfsnotify_modify(file);
+          \t\t\tadd_wchar(current, ret);
+          \t\t}'''
+          if source.count(old) != 1:
+              raise SystemExit('Trial129: pinned vfs_write successful-write block changed')
+          source = source.replace(old, new, 1)
+          read_write.write_text(source)
+          
+          kernel_exit = Path('kernel/exit.c')
+          source = kernel_exit.read_text()
+          old = '''#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
+          \tif (current->pid == 1) {
+          \t\tpr_err("[%s] trap before init(1) group exit, exit_code:%d\\n",
+          \t\t\t\tcurrent->comm, exit_code);
+          \t\tpanic("Attempted to kill init task group! exitcode=0x%08x\\n", exit_code);
+          \t}
+          #endif'''
+          new = '''#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
+          \tif (current->pid == 1) {
+          \t\textern char trial129_init_kmsg_last[160];
+          
+          \t\tpr_err("[%s] trap before init(1) group exit, exit_code:%d\\n",
+          \t\t\t\tcurrent->comm, exit_code);
+          \t\t/* Samsung's debug history retains the panic string when kmsg rolls. */
+          \t\tpanic("Attempted to kill init task group! exitcode=0x%08x last_init_kmsg=%.120s\\n",
+          \t\t      exit_code, trial129_init_kmsg_last);
+          \t}
+          #endif'''
+          if source.count(old) != 1:
+              raise SystemExit('Trial129: pinned Samsung init exit panic changed')
+          kernel_exit.write_text(source.replace(old, new, 1))
+          
+          assert 'last_init_kmsg=%.120s' in kernel_exit.read_text()
+          assert 'current->pid == 1 && file->f_path.dentry' in read_write.read_text()
+          PY129DIAG
+          grep -q 'trial129_init_kmsg_last' fs/read_write.c
+          grep -q 'last_init_kmsg=%.120s' kernel/exit.c
+
+      - name: Prepare Trial 129 pinned build recipe
+        run: |
+          set -euxo pipefail
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial129-build.yml
+
+          python3 - <<'PY129'
+          from pathlib import Path
+          p = Path('/tmp/trial129-build.yml')
           s = p.read_text()
 
           old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
-          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL128-NEOZYGISK-CMDLINE-POLICY'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL129-INIT-KMSG-DIAG'
           if old_artifact not in s:
-              raise SystemExit('Trial128: Trial92 artifact name not found')
+              raise SystemExit('Trial129: Trial92 artifact name not found')
           s = s.replace(old_artifact, new_artifact)
 
-          # Trial128: update the stale Trial59 audit using line matching,
+          # Trial129: update the stale Trial59 audit using line matching,
           # avoiding fragile escaped-newline comparisons.
           lines = s.splitlines(keepends=True)
 
@@ -159,13 +242,13 @@ jobs:
           ]
           if len(stale_hits) != 1:
               raise SystemExit(
-                  f'Trial128: expected one stale Trial59 audit line, got {len(stale_hits)}'
+                  f'Trial129: expected one stale Trial59 audit line, got {len(stale_hits)}'
               )
 
           idx = stale_hits[0]
           indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
           lines[idx:idx + 1] = [
-              indent + '# Trial128: pinned Trial92 faccessat semantic audit\n',
+              indent + '# Trial129: pinned Trial92 faccessat semantic audit\n',
               indent + "grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n",
               indent + "grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n",
               indent + "grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n",
@@ -177,7 +260,7 @@ jobs:
           # Allow precisely this existing KSU command, retaining the other guards.
           needle = 'cmd == 0x40004b03U || cmd == 0x80004b63U ||'
           if s.count(needle) != 1:
-              raise SystemExit(f'Trial128: expected one ioctl whitelist, found {s.count(needle)}')
+              raise SystemExit(f'Trial129: expected one ioctl whitelist, found {s.count(needle)}')
           s = s.replace(needle,
               'cmd == 0x40004b03U || cmd == 0xc0004b04U ||\n'
               '                  cmd == 0x80004b63U ||', 1)
@@ -185,35 +268,35 @@ jobs:
           # check for the command that was blocked in Trial92 dmesg.
           anchor = '          if "cmd == 0x40004b03U" not in body:\n'
           if s.count(anchor) != 1:
-              raise SystemExit('Trial128: expected one pinned builder audit anchor')
+              raise SystemExit('Trial129: expected one pinned builder audit anchor')
           s = s.replace(anchor,
               '          if "cmd == 0xc0004b04U" not in body:\n'
               '              raise SystemExit("APPLY_SEPOLICY batch K04 allow path missing")\n'
               + anchor, 1)
 
           p.write_text(s)
-          PY128
+          PY129
 
-          grep -q 'TRIAL128-NEOZYGISK-CMDLINE-POLICY' /tmp/trial128-build.yml
-          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial128-build.yml
-          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial128-build.yml
-          grep -q 'APPLY_SEPOLICY batch K04 allow path missing' /tmp/trial128-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial128-build.yml
-          python3 - <<'PY128YAML'
+          grep -q 'TRIAL129-INIT-KMSG-DIAG' /tmp/trial129-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial129-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial129-build.yml
+          grep -q 'APPLY_SEPOLICY batch K04 allow path missing' /tmp/trial129-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial129-build.yml
+          python3 - <<'PY129YAML'
           import yaml
           from pathlib import Path
-          wf = yaml.safe_load(Path('/tmp/trial128-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial129-build.yml').read_text())
           assert len(wf.get('jobs', {})) == 1
-          print('Trial128 nested build recipe YAML valid')
-          PY128YAML
+          print('Trial129 nested build recipe YAML valid')
+          PY129YAML
 
-      - name: Execute Trial 128 build
+      - name: Execute Trial 129 build
         run: |
           set -euxo pipefail
-          python3 - <<'PY128EXEC'
+          python3 - <<'PY129EXEC'
           from pathlib import Path
           import yaml
-          wf = yaml.safe_load(Path('/tmp/trial128-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial129-build.yml').read_text())
           jobs = wf.get('jobs', {})
           if len(jobs) != 1:
               raise SystemExit(f'expected one build job, got {list(jobs)}')
@@ -225,18 +308,18 @@ jobs:
               if script is None:
                   print(f'skip action-only step: {name}')
                   continue
-              chunks += [f'echo "===== Trial 128: {name} ====="', script, '']
-          Path('/tmp/trial128-build.sh').write_text('\n'.join(chunks))
-          PY128EXEC
+              chunks += [f'echo "===== Trial 129: {name} ====="', script, '']
+          Path('/tmp/trial129-build.sh').write_text('\n'.join(chunks))
+          PY129EXEC
           # Fail before launching a long build if step separators were escaped incorrectly.
-          bash -n /tmp/trial128-build.sh
-          test "$(wc -l < /tmp/trial128-build.sh)" -gt 100
-          chmod +x /tmp/trial128-build.sh
-          bash /tmp/trial128-build.sh
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL128-NEOZYGISK-CMDLINE-POLICY.zip
+          bash -n /tmp/trial129-build.sh
+          test "$(wc -l < /tmp/trial129-build.sh)" -gt 100
+          chmod +x /tmp/trial129-build.sh
+          bash /tmp/trial129-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL129-INIT-KMSG-DIAG.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 128 invariants
+      - name: Verify Trial 129 invariants
         run: |
           set -euxo pipefail
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
@@ -244,37 +327,39 @@ jobs:
           grep -q 'cmd == 0xc0004b04U' KernelSU-Next/kernel/supercall/supercall.c
           grep -q 'filename_lookup() consumes susfs_fname' fs/open.c
           grep -q 'return ready ? 0 : -ENOENT;' fs/susfs.c
+          grep -q 'last_init_kmsg=%.120s' kernel/exit.c
+          grep -q 'current->pid == 1 && file->f_path.dentry' fs/read_write.c
           grep -q 'if (!susfs_spoof_cmdline_or_bootconfig(m))' fs/proc/cmdline.c
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial128-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial128-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial128-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial129-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial129-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial129-build.yml
 
-          mkdir -p .ci/trial128
+          mkdir -p .ci/trial129
           {
-            echo "Trial 128"
+            echo "Trial 129"
             echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
-            echo "runtime_change=fix faccessat filename ownership; guard early SUSFS cmdline spoof; allow K04 0xc0004b04 APPLY_SEPOLICY batch"
+            echo "runtime_change=Trial128 runtime plus init /dev/kmsg panic-summary diagnostic; faccessat, cmdline, K04 retained"
             echo "ptrace_patch=NONE; NeoZygisk ptrace already succeeds"
             echo "susmap_semantics=Trial92 preserved; warning suppressed only"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL128-NEOZYGISK-CMDLINE-POLICY.zip
-          } | tee .ci/trial128/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL129-INIT-KMSG-DIAG.zip
+          } | tee .ci/trial129/manifest.txt
 
-      - name: Upload Trial 128 outputs
+      - name: Upload Trial 129 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL128-NEOZYGISK-CMDLINE-POLICY
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL129-INIT-KMSG-DIAG
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL128-NEOZYGISK-CMDLINE-POLICY.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL129-INIT-KMSG-DIAG.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial128/
+            .ci/trial129/
