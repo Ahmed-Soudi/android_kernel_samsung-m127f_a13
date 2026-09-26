@@ -1,4 +1,4 @@
-name: SUSFS Samsung 4.19 Stage 6 - Trial 130 Cmdline Bypass Diagnostic
+name: SUSFS Samsung 4.19 Stage 6 - Trial 131 Early Uname Initialization Fix
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ on:
       - ".github/workflows/susfs-stage6.yml"
 
 jobs:
-  trial130:
+  trial131:
     runs-on: ubuntu-22.04
 
     steps:
@@ -37,19 +37,19 @@ jobs:
       - name: Preserve Trial 92 SUS_MAP semantics under clang 11
         run: |
           set -euxo pipefail
-          cat >> fs/proc/Makefile <<'EOF130WARN'
+          cat >> fs/proc/Makefile <<'EOF131WARN'
 
-          # trial130_preserve_trial92_susmap_semantics
+          # trial131_preserve_trial92_susmap_semantics
           CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
-          EOF130WARN
-          grep -q 'trial130_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          EOF131WARN
+          grep -q 'trial131_preserve_trial92_susmap_semantics' fs/proc/Makefile
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
 
       - name: Repair faccessat filename ownership before kernel build
         run: |
           set -euxo pipefail
-          python3 - <<'PY130NAME'
+          python3 - <<'PY131NAME'
           from pathlib import Path
           p = Path('fs/open.c')
           s = p.read_text()
@@ -57,7 +57,7 @@ jobs:
           end = s.index('SYSCALL_DEFINE3(faccessat', start)
           body = s[start:end]
           if 'susfs_stage6_trial53_faccessat_redirect_only' not in body:
-              raise SystemExit('Trial130: expected pinned Trial92 redirect logic')
+              raise SystemExit('Trial131: expected pinned Trial92 redirect logic')
           old_error = ("\t\t\tif (IS_ERR(redirected_fname)) {\n"
                        "\t\t\t\tres = PTR_ERR(redirected_fname);\n"
                        "\t\t\t\tgoto out;\n"
@@ -73,19 +73,19 @@ jobs:
                         "\tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);")
           for old in (old_error, old_lookup):
               if body.count(old) != 1:
-                  raise SystemExit('Trial130: pinned filename ownership anchor changed')
+                  raise SystemExit('Trial131: pinned filename ownership anchor changed')
           body = body.replace(old_error, new_error, 1).replace(old_lookup, new_lookup, 1)
           if body.count('putname(susfs_fname);') != 2 or new_lookup not in body:
-              raise SystemExit('Trial130: filename ownership audit failed')
+              raise SystemExit('Trial131: filename ownership audit failed')
           p.write_text(s[:start] + body + s[end:])
-          PY130NAME
+          PY131NAME
 
           grep -q 'filename_lookup() consumes susfs_fname' fs/open.c
 
       - name: Repair early SUSFS cmdline read before kernel build
         run: |
           set -euxo pipefail
-          python3 - <<'PY130CMDLINE'
+          python3 - <<'PY131CMDLINE'
           from pathlib import Path
           p = Path('fs/susfs.c')
           s = p.read_text()
@@ -124,63 +124,73 @@ jobs:
           \treturn ready ? 0 : -ENOENT;
           }'''
           if s.count(old) != 1:
-              raise SystemExit('Trial130: pinned SUSFS spoof helper changed')
+              raise SystemExit('Trial131: pinned SUSFS spoof helper changed')
           p.write_text(s.replace(old, new, 1))
           cmdline = Path('fs/proc/cmdline.c').read_text()
           if cmdline.count('extern int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);') != 1 or cmdline.count('if (!susfs_spoof_cmdline_or_bootconfig(m))') != 1:
-              raise SystemExit('Trial130: cmdline fallback contract changed')
-          PY130CMDLINE
+              raise SystemExit('Trial131: cmdline fallback contract changed')
+          PY131CMDLINE
           grep -q 'return ready ? 0 : -ENOENT;' fs/susfs.c
           grep -q 'if (!susfs_spoof_cmdline_or_bootconfig(m))' fs/proc/cmdline.c
 
-      - name: Isolate early proc cmdline spoofing in Trial 130
+      - name: Prevent SUSFS from blanking uname before userspace configures it
         run: |
           set -euxo pipefail
-          python3 - <<'PY130BYPASS'
+          python3 - <<'PY131UNAME'
           from pathlib import Path
-          p = Path('fs/proc/cmdline.c')
+          p = Path('fs/susfs.c')
           s = p.read_text()
-          before = '''#ifdef CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG
-          	if (!susfs_spoof_cmdline_or_bootconfig(m)) {
-          		seq_putc(m, '\\n');
-          		return 0;
-          	}
-          #endif'''
-          after = '''#if 0 /* Trial130 diagnostic: use saved_command_line for PID 1. */
-          	if (!susfs_spoof_cmdline_or_bootconfig(m)) {
-          		seq_putc(m, '\\n');
-          		return 0;
-          	}
-          #endif'''
+          before = '''void susfs_spoof_uname(struct new_utsname* tmp) {
+          \tunsigned seq;
+
+          \tdo {
+          \t\tseq = read_seqbegin(&susfs_uname_seqlock);
+          \t\tstrscpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
+          \t\tstrscpy(tmp->version, my_uname.version, __NEW_UTS_LEN);
+          \t} while (read_seqretry(&susfs_uname_seqlock, seq));
+          }'''
+          after = '''void susfs_spoof_uname(struct new_utsname* tmp) {
+          \tunsigned seq;
+
+          \t/* First-stage init calls uname before any SUSFS setter runs. */
+          \tif (!static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))
+          \t\treturn;
+
+          \tdo {
+          \t\tseq = read_seqbegin(&susfs_uname_seqlock);
+          \t\tstrscpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
+          \t\tstrscpy(tmp->version, my_uname.version, __NEW_UTS_LEN);
+          \t} while (read_seqretry(&susfs_uname_seqlock, seq));
+          }'''
           if s.count(before) != 1:
-              raise SystemExit('Trial130: pinned proc cmdline spoof block changed')
+              raise SystemExit('Trial131: pinned SUSFS uname helper changed')
           p.write_text(s.replace(before, after, 1))
-          PY130BYPASS
-          grep -q 'Trial130 diagnostic: use saved_command_line for PID 1' fs/proc/cmdline.c
+          PY131UNAME
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' fs/susfs.c
 
       - name: Preserve init kmsg in Samsung panic summary
         run: |
           set -euxo pipefail
-          python3 - <<'PY130DIAG'
+          python3 - <<'PY131DIAG'
           from pathlib import Path
           
           read_write = Path('fs/read_write.c')
           source = read_write.read_text()
           include_anchor = '#include <linux/uaccess.h>\n'
           if source.count(include_anchor) != 1:
-              raise SystemExit('Trial130: pinned read_write include changed')
+              raise SystemExit('Trial131: pinned read_write include changed')
           source = source.replace(include_anchor,
                                   '#include <linux/string.h>\n' + include_anchor, 1)
           
           anchor = 'EXPORT_SYMBOL(kernel_write);\n\nssize_t vfs_write('
           if source.count(anchor) != 1:
-              raise SystemExit('Trial130: vfs_write anchor changed')
+              raise SystemExit('Trial131: vfs_write anchor changed')
           source = source.replace(anchor, '''EXPORT_SYMBOL(kernel_write);
           
-          /* Trial130: remember init's last /dev/kmsg line for Samsung panic history.
+          /* Trial131: remember init's last /dev/kmsg line for Samsung panic history.
            * This diagnostic does not modify the write, its return value, or the log.
            */
-          char trial130_init_kmsg_last[160];
+          char trial131_init_kmsg_last[160];
           
           ssize_t vfs_write(''', 1)
           
@@ -192,7 +202,7 @@ jobs:
           \t\t\t/* Capture only successful writes from PID 1 to /dev/kmsg. */
           \t\t\tif (unlikely(current->pid == 1 && file->f_path.dentry &&
           \t\t\t    !strcmp(file->f_path.dentry->d_name.name, "kmsg"))) {
-          \t\t\t\tchar line[sizeof(trial130_init_kmsg_last)];
+          \t\t\t\tchar line[sizeof(trial131_init_kmsg_last)];
           \t\t\t\tsize_t i, n = min_t(size_t, ret, sizeof(line) - 1);
           
           \t\t\t\tif (!copy_from_user(line, buf, n)) {
@@ -200,14 +210,14 @@ jobs:
           \t\t\t\t\tfor (i = 0; i < n; i++)
           \t\t\t\t\t\tif (line[i] == '\\n' || line[i] == '\\r')
           \t\t\t\t\t\t\tline[i] = ' ';
-          \t\t\t\t\tmemcpy(trial130_init_kmsg_last, line, n + 1);
+          \t\t\t\t\tmemcpy(trial131_init_kmsg_last, line, n + 1);
           \t\t\t\t}
           \t\t\t}
           \t\t\tfsnotify_modify(file);
           \t\t\tadd_wchar(current, ret);
           \t\t}'''
           if source.count(old) != 1:
-              raise SystemExit('Trial130: pinned vfs_write successful-write block changed')
+              raise SystemExit('Trial131: pinned vfs_write successful-write block changed')
           source = source.replace(old, new, 1)
           read_write.write_text(source)
           
@@ -222,42 +232,43 @@ jobs:
           #endif'''
           new = '''#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
           \tif (current->pid == 1) {
-          \t\textern char trial130_init_kmsg_last[160];
+          \t\textern char trial131_init_kmsg_last[160];
           
           \t\tpr_err("[%s] trap before init(1) group exit, exit_code:%d\\n",
           \t\t\t\tcurrent->comm, exit_code);
           \t\t/* Samsung's debug history retains the panic string when kmsg rolls. */
           \t\tpanic("Attempted to kill init task group! exitcode=0x%08x last_init_kmsg=%.120s\\n",
-          \t\t      exit_code, trial130_init_kmsg_last);
+          \t\t      exit_code, trial131_init_kmsg_last);
           \t}
           #endif'''
           if source.count(old) != 1:
-              raise SystemExit('Trial130: pinned Samsung init exit panic changed')
+              raise SystemExit('Trial131: pinned Samsung init exit panic changed')
           kernel_exit.write_text(source.replace(old, new, 1))
           
           assert 'last_init_kmsg=%.120s' in kernel_exit.read_text()
           assert 'current->pid == 1 && file->f_path.dentry' in read_write.read_text()
-          PY130DIAG
-          grep -q 'trial130_init_kmsg_last' fs/read_write.c
+          PY131DIAG
+          grep -q 'trial131_init_kmsg_last' fs/read_write.c
           grep -q 'last_init_kmsg=%.120s' kernel/exit.c
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' fs/susfs.c
 
-      - name: Prepare Trial 130 pinned build recipe
+      - name: Prepare Trial 131 pinned build recipe
         run: |
           set -euxo pipefail
-          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial130-build.yml
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial131-build.yml
 
-          python3 - <<'PY130'
+          python3 - <<'PY131'
           from pathlib import Path
-          p = Path('/tmp/trial130-build.yml')
+          p = Path('/tmp/trial131-build.yml')
           s = p.read_text()
 
           old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
-          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL130-CMDLINE-BYPASS-DIAG'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL131-UNAME-EARLY-FIX'
           if old_artifact not in s:
-              raise SystemExit('Trial130: Trial92 artifact name not found')
+              raise SystemExit('Trial131: Trial92 artifact name not found')
           s = s.replace(old_artifact, new_artifact)
 
-          # Trial130: update the stale Trial59 audit using line matching,
+          # Trial131: update the stale Trial59 audit using line matching,
           # avoiding fragile escaped-newline comparisons.
           lines = s.splitlines(keepends=True)
 
@@ -267,13 +278,13 @@ jobs:
           ]
           if len(stale_hits) != 1:
               raise SystemExit(
-                  f'Trial130: expected one stale Trial59 audit line, got {len(stale_hits)}'
+                  f'Trial131: expected one stale Trial59 audit line, got {len(stale_hits)}'
               )
 
           idx = stale_hits[0]
           indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
           lines[idx:idx + 1] = [
-              indent + '# Trial130: pinned Trial92 faccessat semantic audit\n',
+              indent + '# Trial131: pinned Trial92 faccessat semantic audit\n',
               indent + "grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n",
               indent + "grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n",
               indent + "grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n",
@@ -285,7 +296,7 @@ jobs:
           # Allow precisely this existing KSU command, retaining the other guards.
           needle = 'cmd == 0x40004b03U || cmd == 0x80004b63U ||'
           if s.count(needle) != 1:
-              raise SystemExit(f'Trial130: expected one ioctl whitelist, found {s.count(needle)}')
+              raise SystemExit(f'Trial131: expected one ioctl whitelist, found {s.count(needle)}')
           s = s.replace(needle,
               'cmd == 0x40004b03U || cmd == 0xc0004b04U ||\n'
               '                  cmd == 0x80004b63U ||', 1)
@@ -293,35 +304,35 @@ jobs:
           # check for the command that was blocked in Trial92 dmesg.
           anchor = '          if "cmd == 0x40004b03U" not in body:\n'
           if s.count(anchor) != 1:
-              raise SystemExit('Trial130: expected one pinned builder audit anchor')
+              raise SystemExit('Trial131: expected one pinned builder audit anchor')
           s = s.replace(anchor,
               '          if "cmd == 0xc0004b04U" not in body:\n'
               '              raise SystemExit("APPLY_SEPOLICY batch K04 allow path missing")\n'
               + anchor, 1)
 
           p.write_text(s)
-          PY130
+          PY131
 
-          grep -q 'TRIAL130-CMDLINE-BYPASS-DIAG' /tmp/trial130-build.yml
-          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial130-build.yml
-          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial130-build.yml
-          grep -q 'APPLY_SEPOLICY batch K04 allow path missing' /tmp/trial130-build.yml
-          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial130-build.yml
-          python3 - <<'PY130YAML'
+          grep -q 'TRIAL131-UNAME-EARLY-FIX' /tmp/trial131-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial131-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial131-build.yml
+          grep -q 'APPLY_SEPOLICY batch K04 allow path missing' /tmp/trial131-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial131-build.yml
+          python3 - <<'PY131YAML'
           import yaml
           from pathlib import Path
-          wf = yaml.safe_load(Path('/tmp/trial130-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial131-build.yml').read_text())
           assert len(wf.get('jobs', {})) == 1
-          print('Trial130 nested build recipe YAML valid')
-          PY130YAML
+          print('Trial131 nested build recipe YAML valid')
+          PY131YAML
 
-      - name: Execute Trial 130 build
+      - name: Execute Trial 131 build
         run: |
           set -euxo pipefail
-          python3 - <<'PY130EXEC'
+          python3 - <<'PY131EXEC'
           from pathlib import Path
           import yaml
-          wf = yaml.safe_load(Path('/tmp/trial130-build.yml').read_text())
+          wf = yaml.safe_load(Path('/tmp/trial131-build.yml').read_text())
           jobs = wf.get('jobs', {})
           if len(jobs) != 1:
               raise SystemExit(f'expected one build job, got {list(jobs)}')
@@ -333,18 +344,18 @@ jobs:
               if script is None:
                   print(f'skip action-only step: {name}')
                   continue
-              chunks += [f'echo "===== Trial 130: {name} ====="', script, '']
-          Path('/tmp/trial130-build.sh').write_text('\n'.join(chunks))
-          PY130EXEC
+              chunks += [f'echo "===== Trial 131: {name} ====="', script, '']
+          Path('/tmp/trial131-build.sh').write_text('\n'.join(chunks))
+          PY131EXEC
           # Fail before launching a long build if step separators were escaped incorrectly.
-          bash -n /tmp/trial130-build.sh
-          test "$(wc -l < /tmp/trial130-build.sh)" -gt 100
-          chmod +x /tmp/trial130-build.sh
-          bash /tmp/trial130-build.sh
-          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL130-CMDLINE-BYPASS-DIAG.zip
+          bash -n /tmp/trial131-build.sh
+          test "$(wc -l < /tmp/trial131-build.sh)" -gt 100
+          chmod +x /tmp/trial131-build.sh
+          bash /tmp/trial131-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL131-UNAME-EARLY-FIX.zip
           test -s arch/arm64/boot/Image
 
-      - name: Verify Trial 130 invariants
+      - name: Verify Trial 131 invariants
         run: |
           set -euxo pipefail
           test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
@@ -353,39 +364,39 @@ jobs:
           grep -q 'filename_lookup() consumes susfs_fname' fs/open.c
           grep -q 'return ready ? 0 : -ENOENT;' fs/susfs.c
           grep -q 'last_init_kmsg=%.120s' kernel/exit.c
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' fs/susfs.c
           grep -q 'current->pid == 1 && file->f_path.dentry' fs/read_write.c
           grep -q 'if (!susfs_spoof_cmdline_or_bootconfig(m))' fs/proc/cmdline.c
-          grep -q 'Trial130 diagnostic: use saved_command_line for PID 1' fs/proc/cmdline.c
           ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
           grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
           grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
-          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial130-build.yml
-          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial130-build.yml
-          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial130-build.yml
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial131-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial131-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial131-build.yml
 
-          mkdir -p .ci/trial130
+          mkdir -p .ci/trial131
           {
-            echo "Trial 130"
+            echo "Trial 131"
             echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
-            echo "runtime_change=Trial130 runtime with /proc/cmdline spoof read bypassed for isolation; faccessat, K04 and panic diagnostic retained"
+            echo "runtime_change=Trial131 guards SUSFS uname until initialized; cmdline fallback, faccessat, K04 and panic diagnostic retained"
             echo "ptrace_patch=NONE; NeoZygisk ptrace already succeeds"
             echo "susmap_semantics=Trial92 preserved; warning suppressed only"
             echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
             echo "ps5_uac1=preserved"
             sha256sum arch/arm64/boot/Image
-            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL130-CMDLINE-BYPASS-DIAG.zip
-          } | tee .ci/trial130/manifest.txt
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL131-UNAME-EARLY-FIX.zip
+          } | tee .ci/trial131/manifest.txt
 
-      - name: Upload Trial 130 outputs
+      - name: Upload Trial 131 outputs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL130-CMDLINE-BYPASS-DIAG
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL131-UNAME-EARLY-FIX
           if-no-files-found: warn
           compression-level: 0
           path: |
-            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL130-CMDLINE-BYPASS-DIAG.zip
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL131-UNAME-EARLY-FIX.zip
             arch/arm64/boot/Image
             System.map
             .config
-            .ci/trial130/
+            .ci/trial131/
