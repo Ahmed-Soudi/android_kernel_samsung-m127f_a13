@@ -1672,6 +1672,10 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 	hird_threshold = 12;
 
 	dwc->maximum_speed = usb_get_maximum_speed(dev);
+
+	/* PS3 UAC1 compatibility experiment: keep DWC3 on USB Full-Speed. */
+	dwc->maximum_speed = USB_SPEED_FULL;
+
 	dwc->dr_mode = usb_get_dr_mode(dev);
 	dwc->suspend_clk_freq = of_usb_get_suspend_clk_freq(dev);
 	dwc->hsphy_mode = of_usb_get_phy_mode(dev->of_node);
