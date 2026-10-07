@@ -202,7 +202,7 @@ static struct usb_endpoint_descriptor as_out_ep_desc  = {
 	.bmAttributes =		USB_ENDPOINT_SYNC_ADAPTIVE
 				| USB_ENDPOINT_XFER_ISOC,
 	.wMaxPacketSize	=	cpu_to_le16(UAC1_OUT_EP_MAX_PACKET_SIZE),
-	.bInterval =		4,
+	.bInterval =		1,
 };
 
 /* Class-specific AS ISO OUT Endpoint Descriptor */
@@ -233,7 +233,7 @@ static struct usb_endpoint_descriptor as_in_ep_desc  = {
 	.bmAttributes =		USB_ENDPOINT_SYNC_ASYNC
 				| USB_ENDPOINT_XFER_ISOC,
 	.wMaxPacketSize	=	cpu_to_le16(UAC1_OUT_EP_MAX_PACKET_SIZE),
-	.bInterval =		4,
+	.bInterval =		1,
 };
 
 /* Class-specific AS ISO OUT Endpoint Descriptor */
