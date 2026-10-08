@@ -1,0 +1,609 @@
+name: SUSFS Samsung 4.19 Stage 6 - Trial 140 UAC1 Full-Speed Encoding Test
+
+permissions:
+  contents: read
+  actions: write
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ps3-uac1-trial140-speed-investigation
+    paths:
+      - ".github/workflows/susfs-stage6-trial140-uac1-fullspeed.yml"
+
+jobs:
+  trial140:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Restore exact Trial 92 runtime-green source
+        run: |
+          set -euxo pipefail
+          git fetch origin ci-susfs-stage6-trial92-35934393973
+          git reset --hard c9022cdf5d640d267068172fba54c12e7d58103c
+          git submodule update --init --recursive
+          test "$(git rev-parse HEAD)" = "c9022cdf5d640d267068172fba54c12e7d58103c"
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+          test -s .ci/stage5/build-ksun-stage5.yml
+          test -s .github/patches/stage5-ksun-susfs-compile-probe.patch
+
+
+      - name: Force DWC3 Full-Speed and UAC1 1ms Full-Speed interval
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY140UAC'
+          from pathlib import Path
+          p = Path('drivers/usb/dwc3/core.c')
+          s = p.read_text()
+          old = "\tdwc->maximum_speed = usb_get_maximum_speed(dev);"
+          if s.count(old) != 1:
+              raise SystemExit(f'Trial140: expected one DWC3 maximum_speed assignment, got {s.count(old)}')
+          p.write_text(s.replace(old, old + "\n\t/* Trial140: PS3 UAC1 compatibility experiment: force USB Full-Speed. */\n\tdwc->maximum_speed = USB_SPEED_FULL;", 1))
+
+          p = Path('drivers/usb/gadget/function/f_uac1.c')
+          s = p.read_text()
+          old = "\t.bInterval =\t\t4,"
+          if s.count(old) != 2:
+              raise SystemExit(f'Trial140: expected two shared UAC1 endpoint intervals, got {s.count(old)}')
+          p.write_text(s.replace(old, "\t.bInterval =\t\t1,"))
+          PY140UAC
+          python3 - <<'PY140ENCODING'
+          from pathlib import Path
+          p = Path('drivers/usb/dwc3/gadget.c')
+          s = p.read_text()
+          old = 'case USB_SPEED_FULL:\n\t\treg |= DWC3_DCFG_FULLSPEED;'
+          new = 'case USB_SPEED_FULL:\n\t\treg |= DWC3_DCFG_FULLSPEED1;'
+          if s.count(old) != 1:
+              raise SystemExit('Trial140: expected exactly one gadget set_speed Full-Speed encoding')
+          p.write_text(s.replace(old, new, 1))
+          print('Trial140: DCFG Full-Speed encoding changed from 1 to 3')
+          PY140ENCODING
+          grep -q 'reg |= DWC3_DCFG_FULLSPEED1;' drivers/usb/dwc3/gadget.c
+          grep -q 'dwc->maximum_speed = USB_SPEED_FULL;' drivers/usb/dwc3/core.c
+          test "$(grep -c 'bInterval.*1,' drivers/usb/gadget/function/f_uac1.c)" -eq 2
+          ! grep -q 'bInterval.*4,' drivers/usb/gadget/function/f_uac1.c
+
+      - name: Preserve Trial 92 SUS_MAP semantics under clang 11
+        run: |
+          set -euxo pipefail
+          cat >> fs/proc/Makefile <<'EOF140WARN'
+
+          # trial140_preserve_trial92_susmap_semantics
+          CFLAGS_task_mmu.o += -Wno-logical-op-parentheses
+          EOF140WARN
+          grep -q 'trial140_preserve_trial92_susmap_semantics' fs/proc/Makefile
+          grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
+          ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
+
+      - name: Repair faccessat filename ownership before kernel build
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY140NAME'
+          from pathlib import Path
+          p = Path('fs/open.c')
+          s = p.read_text()
+          start = s.index('long do_faccessat(')
+          end = s.index('SYSCALL_DEFINE3(faccessat', start)
+          body = s[start:end]
+          if 'susfs_stage6_trial53_faccessat_redirect_only' not in body:
+              raise SystemExit('Trial140: expected pinned Trial92 redirect logic')
+          old_error = ("\t\t\tif (IS_ERR(redirected_fname)) {\n"
+                       "\t\t\t\tres = PTR_ERR(redirected_fname);\n"
+                       "\t\t\t\tgoto out;\n"
+                       "\t\t\t}")
+          new_error = ("\t\t\tif (IS_ERR(redirected_fname)) {\n"
+                       "\t\t\t\tres = PTR_ERR(redirected_fname);\n"
+                       "\t\t\t\tputname(susfs_fname);\n"
+                       "\t\t\t\tgoto out;\n"
+                       "\t\t\t}")
+          old_lookup = ("\tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);\n"
+                        "\tputname(susfs_fname);")
+          new_lookup = ("\t/* filename_lookup() consumes susfs_fname, including on lookup error. */\n"
+                        "\tres = filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);")
+          for old in (old_error, old_lookup):
+              if body.count(old) != 1:
+                  raise SystemExit('Trial140: pinned filename ownership anchor changed')
+          body = body.replace(old_error, new_error, 1).replace(old_lookup, new_lookup, 1)
+          if body.count('putname(susfs_fname);') != 2 or new_lookup not in body:
+              raise SystemExit('Trial140: filename ownership audit failed')
+          p.write_text(s[:start] + body + s[end:])
+          PY140NAME
+
+          grep -q 'filename_lookup() consumes susfs_fname' fs/open.c
+
+      - name: Repair early SUSFS cmdline read before kernel build
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY140CMDLINE'
+          from pathlib import Path
+          p = Path('fs/susfs.c')
+          s = p.read_text()
+          old = '''void susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
+          \tunsigned seq;
+          \tchar *buf = (char *)kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
+          
+          \tif (!buf) {
+          \t\treturn;
+          \t}
+          \tdo {
+          \t\tseq = read_seqbegin(&susfs_fake_cmdline_or_bootconfig_seqlock);
+          \t\tstrscpy(buf, fake_cmdline_or_bootconfig, SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
+          \t} while (read_seqretry(&susfs_fake_cmdline_or_bootconfig_seqlock, seq));
+          \tseq_puts(m, buf);
+          \tkfree(buf);
+          }'''
+          new = '''int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m) {
+          \tunsigned seq;
+          \tbool ready;
+          \tchar *buf = (char *)kmalloc(SUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE, GFP_KERNEL);
+          
+          \t/* A read before the userspace setter must use saved_command_line. */
+          \tif (!buf)
+          \t\treturn -ENOMEM;
+          \tdo {
+          \t\tseq = read_seqbegin(&susfs_fake_cmdline_or_bootconfig_seqlock);
+          \t\tready = fake_cmdline_or_bootconfig != NULL;
+          \t\tif (ready)
+          \t\t\tstrscpy(buf, fake_cmdline_or_bootconfig,
+          \t\t\t\tSUSFS_FAKE_CMDLINE_OR_BOOTCONFIG_SIZE);
+          \t} while (read_seqretry(&susfs_fake_cmdline_or_bootconfig_seqlock, seq));
+          \tif (ready)
+          \t\tseq_puts(m, buf);
+          \tkfree(buf);
+          \treturn ready ? 0 : -ENOENT;
+          }'''
+          if s.count(old) != 1:
+              raise SystemExit('Trial140: pinned SUSFS spoof helper changed')
+          p.write_text(s.replace(old, new, 1))
+          cmdline = Path('fs/proc/cmdline.c').read_text()
+          if cmdline.count('extern int susfs_spoof_cmdline_or_bootconfig(struct seq_file *m);') != 1 or cmdline.count('if (!susfs_spoof_cmdline_or_bootconfig(m))') != 1:
+              raise SystemExit('Trial140: cmdline fallback contract changed')
+          PY140CMDLINE
+          grep -q 'return ready ? 0 : -ENOENT;' fs/susfs.c
+          grep -q 'if (!susfs_spoof_cmdline_or_bootconfig(m))' fs/proc/cmdline.c
+
+      - name: Prevent SUSFS from blanking uname before userspace configures it
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY140UNAME'
+          from pathlib import Path
+          p = Path('fs/susfs.c')
+          s = p.read_text()
+          before = '''void susfs_spoof_uname(struct new_utsname* tmp) {
+          \tunsigned seq;
+
+          \tdo {
+          \t\tseq = read_seqbegin(&susfs_uname_seqlock);
+          \t\tstrscpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
+          \t\tstrscpy(tmp->version, my_uname.version, __NEW_UTS_LEN);
+          \t} while (read_seqretry(&susfs_uname_seqlock, seq));
+          }'''
+          after = '''void susfs_spoof_uname(struct new_utsname* tmp) {
+          \tunsigned seq;
+
+          \t/* First-stage init calls uname before any SUSFS setter runs. */
+          \tif (!static_branch_unlikely(&susfs_is_uname_spoof_buffer_set))
+          \t\treturn;
+
+          \tdo {
+          \t\tseq = read_seqbegin(&susfs_uname_seqlock);
+          \t\tstrscpy(tmp->release, my_uname.release, __NEW_UTS_LEN);
+          \t\tstrscpy(tmp->version, my_uname.version, __NEW_UTS_LEN);
+          \t} while (read_seqretry(&susfs_uname_seqlock, seq));
+          }'''
+          if s.count(before) != 1:
+              raise SystemExit('Trial140: pinned SUSFS uname helper changed')
+          p.write_text(s.replace(before, after, 1))
+          PY140UNAME
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' fs/susfs.c
+
+      - name: Preserve init kmsg in Samsung panic summary
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY140DIAG'
+          from pathlib import Path
+          
+          read_write = Path('fs/read_write.c')
+          source = read_write.read_text()
+          include_anchor = '#include <linux/uaccess.h>\n'
+          if source.count(include_anchor) != 1:
+              raise SystemExit('Trial140: pinned read_write include changed')
+          source = source.replace(include_anchor,
+                                  '#include <linux/string.h>\n' + include_anchor, 1)
+          
+          anchor = 'EXPORT_SYMBOL(kernel_write);\n\nssize_t vfs_write('
+          if source.count(anchor) != 1:
+              raise SystemExit('Trial140: vfs_write anchor changed')
+          source = source.replace(anchor, '''EXPORT_SYMBOL(kernel_write);
+          
+          /* Trial140: remember init's last /dev/kmsg line for Samsung panic history.
+           * This diagnostic does not modify the write, its return value, or the log.
+           */
+          char trial140_init_kmsg_last[160];
+          
+          ssize_t vfs_write(''', 1)
+          
+          old = '''\t\tif (ret > 0) {
+          \t\t\tfsnotify_modify(file);
+          \t\t\tadd_wchar(current, ret);
+          \t\t}'''
+          new = '''\t\tif (ret > 0) {
+          \t\t\t/* Capture only successful writes from PID 1 to /dev/kmsg. */
+          \t\t\tif (unlikely(current->pid == 1 && file->f_path.dentry &&
+          \t\t\t    !strcmp(file->f_path.dentry->d_name.name, "kmsg"))) {
+          \t\t\t\tchar line[sizeof(trial140_init_kmsg_last)];
+          \t\t\t\tsize_t i, n = min_t(size_t, ret, sizeof(line) - 1);
+          
+          \t\t\t\tif (!copy_from_user(line, buf, n)) {
+          \t\t\t\t\tline[n] = '\\0';
+          \t\t\t\t\tfor (i = 0; i < n; i++)
+          \t\t\t\t\t\tif (line[i] == '\\n' || line[i] == '\\r')
+          \t\t\t\t\t\t\tline[i] = ' ';
+          \t\t\t\t\tmemcpy(trial140_init_kmsg_last, line, n + 1);
+          \t\t\t\t}
+          \t\t\t}
+          \t\t\tfsnotify_modify(file);
+          \t\t\tadd_wchar(current, ret);
+          \t\t}'''
+          if source.count(old) != 1:
+              raise SystemExit('Trial140: pinned vfs_write successful-write block changed')
+          source = source.replace(old, new, 1)
+          read_write.write_text(source)
+          
+          kernel_exit = Path('kernel/exit.c')
+          source = kernel_exit.read_text()
+          old = '''#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
+          \tif (current->pid == 1) {
+          \t\tpr_err("[%s] trap before init(1) group exit, exit_code:%d\\n",
+          \t\t\t\tcurrent->comm, exit_code);
+          \t\tpanic("Attempted to kill init task group! exitcode=0x%08x\\n", exit_code);
+          \t}
+          #endif'''
+          new = '''#ifdef CONFIG_SEC_DEBUG_INIT_EXIT_PANIC
+          \tif (current->pid == 1) {
+          \t\textern char trial140_init_kmsg_last[160];
+          
+          \t\tpr_err("[%s] trap before init(1) group exit, exit_code:%d\\n",
+          \t\t\t\tcurrent->comm, exit_code);
+          \t\t/* Samsung's debug history retains the panic string when kmsg rolls. */
+          \t\tpanic("Attempted to kill init task group! exitcode=0x%08x last_init_kmsg=%.120s\\n",
+          \t\t      exit_code, trial140_init_kmsg_last);
+          \t}
+          #endif'''
+          if source.count(old) != 1:
+              raise SystemExit('Trial140: pinned Samsung init exit panic changed')
+          kernel_exit.write_text(source.replace(old, new, 1))
+          
+          assert 'last_init_kmsg=%.120s' in kernel_exit.read_text()
+          assert 'current->pid == 1 && file->f_path.dentry' in read_write.read_text()
+          PY140DIAG
+          grep -q 'trial140_init_kmsg_last' fs/read_write.c
+          grep -q 'last_init_kmsg=%.120s' kernel/exit.c
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' fs/susfs.c
+
+      - name: Prepare Trial 140 pinned build recipe
+        run: |
+          set -euxo pipefail
+          cp .ci/stage5/build-ksun-stage5.yml /tmp/trial140-build.yml
+
+          python3 - <<'PY140'
+          from pathlib import Path
+          p = Path('/tmp/trial140-build.yml')
+          s = p.read_text()
+
+          old_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL92-FBE-ZYGOTE-SERVICES'
+          new_artifact = 'M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL140-UAC1-FULLSPEED-ENCODING'
+          if old_artifact not in s:
+              raise SystemExit('Trial140: Trial92 artifact name not found')
+          s = s.replace(old_artifact, new_artifact)
+
+          # Trial140: update the stale Trial59 audit using line matching,
+          # avoiding fragile escaped-newline comparisons.
+          lines = s.splitlines(keepends=True)
+
+          stale_hits = [
+              i for i, line in enumerate(lines)
+              if 'susfs_stage6_trial59_faccessat_filename_ownership' in line
+          ]
+          if len(stale_hits) != 1:
+              raise SystemExit(
+                  f'Trial140: expected one stale Trial59 audit line, got {len(stale_hits)}'
+              )
+
+          idx = stale_hits[0]
+          indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
+          lines[idx:idx + 1] = [
+              indent + '# Trial140: pinned Trial92 faccessat semantic audit\n',
+              indent + "grep -q 'susfs_stage6_trial53_faccessat_redirect_only' fs/open.c\n",
+              indent + "grep -q 'ksu_handle_faccessat_samsung419' fs/open.c\n",
+              indent + "grep -q 'filename_lookup(dfd, susfs_fname, lookup_flags, &path, NULL);' fs/open.c\n",
+          ]
+          s = ''.join(lines)
+
+          # Trial92's Samsung 4.19 diagnostic whitelist returns ENOTTY on the
+          # APPLY_SEPOLICY batch command (0xc0004b04), preventing module rules.
+          # Allow precisely this existing KSU command, retaining the other guards.
+          needle = 'cmd == 0x40004b03U || cmd == 0x80004b63U ||'
+          if s.count(needle) != 1:
+              raise SystemExit(f'Trial140: expected one ioctl whitelist, found {s.count(needle)}')
+          s = s.replace(needle,
+              'cmd == 0x40004b03U || cmd == 0xc0004b04U ||\n'
+              '                  cmd == 0x80004b63U ||', 1)
+          # The pinned builder verifies the original whitelist. Add a specific
+          # check for the command that was blocked in Trial92 dmesg.
+          anchor = '          if "cmd == 0x40004b03U" not in body:\n'
+          if s.count(anchor) != 1:
+              raise SystemExit('Trial140: expected one pinned builder audit anchor')
+          s = s.replace(anchor,
+              '          if "cmd == 0xc0004b04U" not in body:\n'
+              '              raise SystemExit("APPLY_SEPOLICY batch K04 allow path missing")\n'
+              + anchor, 1)
+
+          p.write_text(s)
+          PY140
+
+          grep -q 'TRIAL140-UAC1-FULLSPEED-ENCODING' /tmp/trial140-build.yml
+          grep -q 'susfs_stage6_trial53_faccessat_redirect_only' /tmp/trial140-build.yml
+          grep -q 'ksu_handle_faccessat_samsung419' /tmp/trial140-build.yml
+          grep -q 'APPLY_SEPOLICY batch K04 allow path missing' /tmp/trial140-build.yml
+          ! grep -q 'susfs_stage6_trial59_faccessat_filename_ownership' /tmp/trial140-build.yml
+          python3 - <<'PY140YAML'
+          import yaml
+          from pathlib import Path
+          wf = yaml.safe_load(Path('/tmp/trial140-build.yml').read_text())
+          assert len(wf.get('jobs', {})) == 1
+          print('Trial140 nested build recipe YAML valid')
+          PY140YAML
+
+      - name: Add Trial140 ReZygisk fixes to pinned builder
+        run: |
+          set -euxo pipefail
+          cat > /tmp/trial140-kernel-patch.py <<'PY140KERNEL'
+          from pathlib import Path
+
+
+          def change(path, old, new, label):
+              file = Path(path)
+              source = file.read_text()
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"Trial140 {label}: expected one anchor, found {count}")
+              file.write_text(source.replace(old, new, 1))
+
+
+          base = Path("KernelSU-Next/kernel")
+          supercall = base / "supercall/supercall.c"
+          manager = base / "hook/syscall_hook_manager.c"
+
+          # Trial13B's diagnostic gate kept a narrow set of ioctls. ReZygisk needs
+          # the three existing KernelSU handlers for UID grants, unmount and manager ID.
+          change(
+              supercall,
+              "cmd == 0xc0004b04U ||\n        cmd == 0x80004b63U ||",
+              "cmd == 0xc0004b04U || cmd == 0xc0004b08U ||\n"
+              "        cmd == 0xc0004b09U || cmd == 0x80004b0aU ||\n"
+              "        cmd == 0x80004b63U ||",
+              "K08 K09 K10 allowlist",
+          )
+
+          change(
+              supercall,
+              '#include "supercall/internal.h"\n',
+              '#include "supercall/internal.h"\n'
+              '#include "infra/symbol_resolver.h"\n'
+              '#include "hook/patch_memory.h"\n',
+              "compat table dependencies",
+          )
+
+          # The 32-bit ARM reboot number is 88 in this device's unistd32.h. The native
+          # reboot hook only covers sys_call_table; compat_sys_call_table is separate.
+          compat = r'''#if defined(CONFIG_COMPAT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+          #define KSU_SAMSUNG_COMPAT_REBOOT_NR 88
+          static syscall_fn_t *ksu_compat_syscall_table;
+          static syscall_fn_t ksu_orig_compat_reboot_syscall;
+
+          static long __nocfi ksu_sys_compat_reboot_install_fd(const struct pt_regs *regs)
+          {
+              ksu_samsung419_install_driver_fd(regs);
+
+              if (likely(ksu_orig_compat_reboot_syscall))
+                  return ksu_orig_compat_reboot_syscall(regs);
+
+              return -ENOSYS;
+          }
+
+          int ksu_samsung419_hook_compat_reboot(void)
+          {
+              syscall_fn_t *table;
+              syscall_fn_t replacement = ksu_sys_compat_reboot_install_fd;
+              syscall_fn_t original;
+
+              table = (syscall_fn_t *)ksu_resolve_symbol_for_functable_hook(
+                  "compat_sys_call_table");
+              if (!table) {
+                  pr_err("Trial140 compat reboot: syscall table unavailable\n");
+                  return -ENOENT;
+              }
+
+              original = READ_ONCE(table[KSU_SAMSUNG_COMPAT_REBOOT_NR]);
+              if (!original || original == replacement)
+                  return -EINVAL;
+
+              ksu_orig_compat_reboot_syscall = original;
+              if (ksu_patch_text(&table[KSU_SAMSUNG_COMPAT_REBOOT_NR], &replacement,
+                                 sizeof(replacement), KSU_PATCH_TEXT_FLUSH_DCACHE)) {
+                  ksu_orig_compat_reboot_syscall = NULL;
+                  pr_err("Trial140 compat reboot: table patch failed\n");
+                  return -EIO;
+              }
+
+              ksu_compat_syscall_table = table;
+              pr_info("Trial140 compat reboot: KernelSU FD bootstrap installed\n");
+              return 0;
+          }
+
+          void ksu_samsung419_unhook_compat_reboot(void)
+          {
+              if (!ksu_compat_syscall_table || !ksu_orig_compat_reboot_syscall)
+                  return;
+
+              if (ksu_patch_text(&ksu_compat_syscall_table[KSU_SAMSUNG_COMPAT_REBOOT_NR],
+                                 &ksu_orig_compat_reboot_syscall,
+                                 sizeof(ksu_orig_compat_reboot_syscall),
+                                 KSU_PATCH_TEXT_FLUSH_DCACHE)) {
+                  pr_err("Trial140 compat reboot: table restore failed\n");
+                  return;
+              }
+
+              ksu_compat_syscall_table = NULL;
+              ksu_orig_compat_reboot_syscall = NULL;
+          }
+          #endif
+
+          '''
+          change(
+              supercall,
+              "long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)\n",
+              compat + "long __nocfi ksu_hook_reboot_install_fd(int orig_nr, const struct pt_regs *regs)\n",
+              "compat syscall wrapper",
+          )
+
+          change(
+              base / "supercall/supercall.h",
+              "extern syscall_fn_t ksu_orig_reboot_syscall;\n",
+              "extern syscall_fn_t ksu_orig_reboot_syscall;\n"
+              "int ksu_samsung419_hook_compat_reboot(void);\n"
+              "void ksu_samsung419_unhook_compat_reboot(void);\n",
+              "compat wrapper declarations",
+          )
+
+          change(
+              manager,
+              'pr_info("hook_manager: Trial15 direct reboot FD bootstrap installed\\n");',
+              'pr_info("hook_manager: Trial15 direct reboot FD bootstrap installed\\n");\n'
+              '    if (ksu_samsung419_hook_compat_reboot())\n'
+              '        pr_warn("Trial140: compat reboot FD bootstrap unavailable\\n");',
+              "compat hook registration",
+          )
+          change(
+              manager,
+              "ksu_syscall_table_unhook(__NR_reboot);",
+              "ksu_samsung419_unhook_compat_reboot();\n"
+              "    ksu_syscall_table_unhook(__NR_reboot);",
+              "compat hook restoration",
+          )
+
+          source = supercall.read_text()
+          assert all(token in source for token in (
+              "cmd == 0xc0004b08U", "cmd == 0xc0004b09U", "cmd == 0x80004b0aU",
+              '"compat_sys_call_table"', "KSU_SAMSUNG_COMPAT_REBOOT_NR 88",
+              "ksu_orig_compat_reboot_syscall(regs)",
+          ))
+          assert "#define __NR_reboot 88" in Path("arch/arm64/include/asm/unistd32.h").read_text()
+          assert "compat_sys_call_table[__NR_compat_syscalls]" in Path("arch/arm64/kernel/sys32.c").read_text()
+          print("Trial140: ReZygisk ioctl and 32-bit FD changes applied")
+          PY140KERNEL
+          python3 - <<'PY140INSERT'
+          from pathlib import Path
+          p = Path('/tmp/trial140-build.yml')
+          s = p.read_text()
+          anchor = '      - name: Configure M127F kernel\n'
+          addition = (
+              '      - name: Trial140 enable ReZygisk ioctl and 32-bit FD\n'
+              '        run: |\n'
+              '          set -euxo pipefail\n'
+              '          python3 /tmp/trial140-kernel-patch.py\n\n'
+          )
+          if s.count(anchor) != 1 or s.count(addition) != 0:
+              raise SystemExit('Trial140: expected one kernel-config anchor')
+          p.write_text(s.replace(anchor, addition + anchor, 1))
+          PY140INSERT
+          grep -q 'Trial140 enable ReZygisk ioctl and 32-bit FD' /tmp/trial140-build.yml
+          python3 -m py_compile /tmp/trial140-kernel-patch.py
+
+      - name: Execute Trial 140 build
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY140EXEC'
+          from pathlib import Path
+          import yaml
+          wf = yaml.safe_load(Path('/tmp/trial140-build.yml').read_text())
+          jobs = wf.get('jobs', {})
+          if len(jobs) != 1:
+              raise SystemExit(f'expected one build job, got {list(jobs)}')
+          steps = next(iter(jobs.values())).get('steps', [])
+          chunks = ['#!/usr/bin/env bash', 'set -euo pipefail', '']
+          for idx, step in enumerate(steps, 1):
+              name = step.get('name', f'step-{idx}')
+              script = step.get('run')
+              if script is None:
+                  print(f'skip action-only step: {name}')
+                  continue
+              chunks += [f'echo "===== Trial 140: {name} ====="', script, '']
+          Path('/tmp/trial140-build.sh').write_text('\n'.join(chunks))
+          PY140EXEC
+          # Fail before launching a long build if step separators were escaped incorrectly.
+          bash -n /tmp/trial140-build.sh
+          test "$(wc -l < /tmp/trial140-build.sh)" -gt 100
+          chmod +x /tmp/trial140-build.sh
+          bash /tmp/trial140-build.sh
+          test -s M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL140-UAC1-FULLSPEED-ENCODING.zip
+          test -s arch/arm64/boot/Image
+
+      - name: Verify Trial 140 invariants
+        run: |
+          set -euxo pipefail
+          test "$(git -C KernelSU-Next rev-parse HEAD)" = "3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+          ! grep -q 'ptrace_state_lifetime_fix' kernel/ptrace.c
+          grep -q 'cmd == 0xc0004b04U' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'cmd == 0xc0004b08U' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'cmd == 0xc0004b09U' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'cmd == 0x80004b0aU' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'Trial140 compat reboot: KernelSU FD bootstrap installed' KernelSU-Next/kernel/supercall/supercall.c
+          grep -q 'ksu_samsung419_unhook_compat_reboot();' KernelSU-Next/kernel/hook/syscall_hook_manager.c
+          grep -q 'filename_lookup() consumes susfs_fname' fs/open.c
+          grep -q 'return ready ? 0 : -ENOENT;' fs/susfs.c
+          grep -q 'last_init_kmsg=%.120s' kernel/exit.c
+          grep -q 'static_branch_unlikely(&susfs_is_uname_spoof_buffer_set)' fs/susfs.c
+          grep -q 'current->pid == 1 && file->f_path.dentry' fs/read_write.c
+          grep -q 'if (!susfs_spoof_cmdline_or_bootconfig(m))' fs/proc/cmdline.c
+          ! grep -q '((inode) && (inode)->i_mapping' include/linux/susfs_def.h
+          grep -q 'CFLAGS_task_mmu.o += -Wno-logical-op-parentheses' fs/proc/Makefile
+          grep -q 'susfs_stage6_trial92_fbe_zygote_services' .github/patches/stage5-ksun-susfs-compile-probe.patch
+          grep -q 'CONFIG_USB_CONFIGFS_F_UAC1=y' /tmp/trial140-build.yml
+          grep -q 'CONFIG_USB_F_UAC1=y' /tmp/trial140-build.yml
+          grep -q 'CONFIG_USB_U_AUDIO=y' /tmp/trial140-build.yml
+
+          mkdir -p .ci/trial140
+          {
+            echo "Trial 140"
+            echo "base=Trial92 runtime-green c9022cdf5d640d267068172fba54c12e7d58103c"
+            echo "runtime_change=Trial140 adds K08/K09/K10 ioctl and compat reboot FD; earlier uname and other fixes retained"
+            echo "ptrace_patch=NONE; NeoZygisk ptrace already succeeds"
+            echo "susmap_semantics=Trial92 preserved; warning suppressed only"
+            echo "ksun=3b18216f71df189ab3d1b1ce0bdb21be1268e771"
+            echo "ps5_uac1=preserved"
+            sha256sum arch/arm64/boot/Image
+            sha256sum M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL140-UAC1-FULLSPEED-ENCODING.zip
+          } | tee .ci/trial140/manifest.txt
+
+      - name: Upload Trial 140 outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL140-UAC1-FULLSPEED-ENCODING
+          if-no-files-found: warn
+          compression-level: 0
+          path: |
+            M127F-KSUN-v3.3.0-PS5-UAC1-SUSFS-TRIAL140-UAC1-FULLSPEED-ENCODING.zip
+            arch/arm64/boot/Image
+            System.map
+            .config
+            .ci/trial140/
